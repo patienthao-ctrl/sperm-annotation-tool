@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <radialGradient id="bg"><stop offset="0" stop-color="#17233d"/><stop offset="1" stop-color="#060a13"/></radialGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="4"/></filter>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <g opacity=".18" stroke="#65a5ff" stroke-width="2">
+    <path d="M0 180 C350 80 550 250 900 140 S1350 120 1600 210"/>
+    <path d="M0 520 C350 420 620 620 1000 470 S1400 420 1600 560"/>
+    <path d="M0 760 C400 650 700 850 1120 700 S1450 680 1600 780"/>
+  </g>
+  <g fill="none" stroke="#8bd6ff" opacity=".35">
+    <rect x="90" y="80" width="1420" height="740" rx="40" stroke-width="3"/>
+    <rect x="170" y="150" width="1260" height="600" rx="30" stroke-width="2"/>
+  </g>
+  <g opacity=".85">
+    <circle cx="420" cy="320" r="13" fill="#e9f7ff"/><circle cx="420" cy="320" r="5" fill="#6fc9ff"/>
+    <circle cx="860" cy="600" r="15" fill="#e9f7ff"/><circle cx="860" cy="600" r="6" fill="#6fc9ff"/>
+    <circle cx="1190" cy="350" r="11" fill="#e9f7ff"/><circle cx="1190" cy="350" r="4" fill="#6fc9ff"/>
+  </g>
+  <g stroke="#d9f3ff" stroke-width="8" fill="none" stroke-linecap="round">
+    <path d="M740 420 C700 390 650 390 610 415"/>
+    <path d="M1060 500 C1110 470 1160 470 1205 500"/>
+  </g>
+  <g fill="#fff">
+    <ellipse cx="750" cy="420" rx="14" ry="10"/><ellipse cx="1060" cy="500" rx="13" ry="9"/>
+  </g>
+  <g fill="#9ddcff" opacity=".65">
+    <circle cx="290" cy="650" r="7"/><circle cx="560" cy="180" r="5"/><circle cx="980" cy="230" r="7"/>
+    <circle cx="1350" cy="610" r="6"/><circle cx="1280" cy="190" r="4"/><circle cx="340" cy="480" r="5"/>
+  </g>
+  <text x="90" y="850" fill="#9ab1d0" font-family="Arial" font-size="24">MICROFLUIDIC CHANNEL / DEMO IMAGE</text>
+</svg>

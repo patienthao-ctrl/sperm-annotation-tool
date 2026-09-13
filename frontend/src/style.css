@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  color: #e7eefc;
+  background: #050816;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; min-width: 1180px; min-height: 100%; margin: 0; }
+body { min-height: 100vh; overflow-x: auto; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+
+.panel { border: 1px solid rgb(30 41 59); border-radius: 14px; background: rgba(15, 23, 42, .72); box-shadow: 0 16px 50px rgba(0, 0, 0, .16); }
+.panel-title { display:flex; align-items:center; justify-content:space-between; height:48px; padding:0 14px; border-bottom:1px solid rgb(30 41 59); font-size:13px; font-weight:600; }
+.badge { display:inline-flex; min-width:20px; height:20px; align-items:center; justify-content:center; border-radius:999px; background:rgb(30 41 59); color:rgb(148 163 184); font-size:10px; }
+.nav-btn { border-radius:8px; padding:8px 14px; color:rgb(148 163 184); font-size:12px; transition:all .15s ease; }
+.nav-btn:hover { color:white; }
+.nav-btn-active { background:rgb(99 102 241); color:white; box-shadow:0 8px 20px rgba(99,102,241,.18); }
+.btn-primary,.btn-secondary,.video-btn,.tool-btn { border-radius:8px; transition:all .15s ease; }
+.btn-primary { padding:8px 14px; background:rgb(99 102 241); color:white; font-size:12px; font-weight:600; }
+.btn-primary:hover { background:rgb(79 70 229); }
+.btn-primary:disabled { cursor:not-allowed; opacity:.5; }
+.btn-secondary { padding:8px 14px; border:1px solid rgb(51 65 85); background:rgb(30 41 59); color:rgb(203 213 225); font-size:12px; }
+.btn-secondary:hover { border-color:rgb(99 102 241); color:white; }
+.tool-btn { border:1px solid rgb(51 65 85); background:rgb(15 23 42); color:rgb(148 163 184); padding:6px 10px; font-size:11px; }
+.tool-btn.active { border-color:rgb(99 102 241); background:rgb(30 41 95); color:rgb(199 210 254); }
+.video-btn { border:1px solid rgb(51 65 85); background:rgb(15 23 42); color:rgb(203 213 225); padding:6px 10px; font-size:11px; }
+.video-btn.primary { border-color:rgb(99 102 241); background:rgb(79 70 229); color:white; }
+.input { min-width:0; border:1px solid rgb(51 65 85); border-radius:8px; background:rgb(2 6 23); padding:8px 10px; color:rgb(226 232 240); font-size:12px; outline:none; }
+.input:focus { border-color:rgb(99 102 241); }
+.stat-card { display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid rgb(30 41 59); border-radius:10px; background:rgb(2 6 23); padding:14px; font-size:11px; color:rgb(148 163 184); }
+.stat-card strong { color:rgb(226 232 240); font-size:20px; }
+.toast-enter-active,.toast-leave-active { transition: opacity .2s ease, transform .2s ease; }
+.toast-enter-from,.toast-leave-to { opacity: 0; transform: translate(-50%, 8px); }

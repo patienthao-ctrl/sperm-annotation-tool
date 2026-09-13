@@ -1,0 +1,10 @@
+fastapi==0.141.1
+numpy==2.5.3
+Pillow==12.3.0
+pydantic==2.13.5
+pydantic_settings==2.15.0
+torch==2.14.0
+transformers==5.17.0
+# python -m pip install opencv-python
+# python -m pip uninstall -y torch torchvision torchaudio
+# python -m pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu132

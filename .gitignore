@@ -1,0 +1,41 @@
+# macOS
+.DS_Store
+
+# 依赖
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 大文件 - SAM3 模型（队友需自行下载）
+backend/track_modul/
+
+# 测试数据
+backend/track_data/
+backend/data/app.db
+backend/data/app.json
+backend/tools/
+new_object_detection/
+design-discussion/
+.npm-cache/
+
+# 环境配置
+.env
+.env.local
+backend/.env
+
+# IDE
+.idea/
+.vscode/
+.trae/
+
+# 日志
+*.log
+/tmp/
+
+# 系统临时文件
+*.tmp
+*.bak
