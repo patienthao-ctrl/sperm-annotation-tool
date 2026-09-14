@@ -386,7 +386,10 @@ const createWorkspace = () => {
       annotationsByMedia.value = {
         ...annotationsByMedia.value,
         [mediaId]: allObjs.map((obj) =>
-          obj.id === draggingObjectId && obj.bbox ? { ...obj, bbox: newBbox } : obj
+          obj.id === draggingObjectId && obj.bbox
+            // 用户修改任何 bbox 都升级为 source='manual', 防止被 loadTrackingResult 用 API 旧 AI 结果覆盖
+            ? { ...obj, bbox: newBbox, source: 'manual' as const }
+            : obj
         ),
       }
       return
