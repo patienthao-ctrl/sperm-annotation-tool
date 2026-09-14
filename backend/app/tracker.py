@@ -8,7 +8,7 @@ import cv2
 from PIL import Image
 
 from .config import DEVICE, DTYPE, MODEL_ID
-from .services.anomaly_detector import AnomalyConfig, AnomalyDetector, AnomalyLevel
+from .services.anomaly_detector import AnomalyDetector, AnomalyConfig, AnomalyLevel
 from .services.sam3_engine import get_sam3_engine, read_video
 from .services.visualization import draw_frame, open_video_writer
 
@@ -163,20 +163,18 @@ def track_video(
     session = engine.make_tracker_session(frames)
     engine.add_manual_boxes(session, seed_frame, objects)
 
-    # ── 异常检测器：逐帧喂 bbox，检测 HARD 异常时暂停 tracking ──
-    # (Fix 4: 每次 track_video() 新建 detector，天然支持断点续跑)
+    # Anomaly detector: 每次 track_video 调用新建实例（Fix 4: 天然支持断点续跑）
     detector = AnomalyDetector(
         config=AnomalyConfig(),
         fps=source_fps,
-        width=width,
-        height=height,
+        frame_width=width,
+        frame_height=height,
     )
 
     # object_id → name 映射，让 tracking 结果继承用户标注的名字
     object_names: dict[int, str] = {int(o["object_id"]): o.get("name") or f"object-{o['object_id']}" for o in objects}
 
     new_rows: list[dict[str, Any]] = []
-    _anomaly_paused: dict[str, Any] | None = None
     for output in engine.propagate_manual(
         session,
         max_frames=requested,
@@ -221,13 +219,14 @@ def track_video(
             f"tracked_objects={len(object_rows)}"
         )
 
-        # ── 异常检测：逐帧喂 bbox ──
+        # ── 异常检测 ──
         frame_objs_for_detector: dict[int, list[float]] = {}
         for obj_row in object_rows:
             oid = int(obj_row["object_id"])
             frame_objs_for_detector[oid] = list(obj_row["bbox"])
         anomaly_report = detector.push(frame_idx, frame_objs_for_detector)
 
+        # HARD 异常 → 提前终止 tracking
         if anomaly_report.should_pause:
             pause_reasons = []
             for af in anomaly_report.frames:
@@ -235,27 +234,20 @@ def track_video(
                     pause_reasons.append(
                         f"object #{af.object_id}: {', '.join(af.reasons)}"
                     )
-            print(f"[anomaly] HARD 检测到 → 暂停 frame={frame_idx}: {pause_reasons}")
-            # 把异常信息写进 row（便于前端展示）
-            row.setdefault("anomalies", []).extend([
-                {
-                    "object_id": af.object_id,
-                    "level": af.level.value,
-                    "reasons": af.reasons,
-                }
-                for af in anomaly_report.frames
-            ])
-            # 保存 anomaly_paused 信息（result dict 在函数末尾构建，这里先放 side dict）
-            _anomaly_paused = {
+            print(f"[anomaly] HARD detected → pause frame={frame_idx}: {pause_reasons}")
+            result_anomaly_paused = {
                 "frame_index": frame_idx,
                 "reasons": pause_reasons,
                 "levels": {str(k): v.value for k, v in anomaly_report.object_levels.items()},
             }
-            break  # 提前终止 tracking
+            break
 
     merged_rows = _merge_rows(Path(output_json), new_rows)
     overlay_path = Path(output_json).parent / OVERLAY_FILE_NAME
     _render_overlay_video(video_file, overlay_path, meta, merged_rows)
+
+    # 如果 anomaly break 了，带上暂停信息
+    anomaly_paused = locals().get("result_anomaly_paused", None)
 
     result = {
         "frames": merged_rows,
@@ -278,7 +270,7 @@ def track_video(
             "fps": source_fps,
             "frameCount": source_frame_count,
         },
-        "anomalyPaused": _anomaly_paused,  # None 表示正常完成
+        "anomaly_paused": anomaly_paused,
     }
     print(f"[sam3] result jsonl: {output_json}")
     print(f"[sam3] overlay mp4: {overlay_path}")

@@ -39,13 +39,13 @@ def jsonable_bbox(bbox: list[float]) -> list[float]:
 
 class AnomalyScanRequest(BaseModel):
     mediaId: str
-    scanExistingTracker: bool = True  # 扫描已有的 tracker_results.json
+    mediaName: str | None = None
 
 
 class AnomalyFrameOut(BaseModel):
     frame_index: int
     object_id: int
-    level: str          # "normal" | "warning" | "anomaly" | "disappeared"
+    level: str
     reasons: list[str]
     details: dict[str, Any] = {}
 
@@ -54,5 +54,5 @@ class AnomalyScanResponse(BaseModel):
     mediaId: str
     totalFrames: int
     anomalyFrames: list[AnomalyFrameOut]
-    summary: dict[str, int]  # {"anomaly": 3, "warning": 5, "disappeared": 2}
-    shouldPauseAt: int | None = None  # 建议在哪一帧暂停
+    summary: dict[str, int]
+    shouldPauseAt: int | None = None
