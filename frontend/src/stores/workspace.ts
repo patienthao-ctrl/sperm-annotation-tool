@@ -648,7 +648,7 @@ const createWorkspace = () => {
           if (manualKeys.has(key)) continue
           const [x1, y1, x2, y2] = ann.bbox ?? [0, 0, 0, 0]
           const newObj: AnnotationObject = {
-            id: ann.id ?? `ai-${frame.frameIndex}-${ann.objectId}`,
+            id: `ai-${frame.frameIndex}-${ann.objectId}`,  // 强制唯一 id，不管后端返回什么
             objectId: ann.objectId,
             name: ann.name ?? `object-${ann.objectId}`,
             source: 'ai',
@@ -666,12 +666,10 @@ const createWorkspace = () => {
           existingByKey.set(key, newObj)
         }
       }
-      // 合并：手动标注 + 最终的 AI 标注
-      const finalAi = [...existingByKey.values()].filter((o) => o.source === 'ai')
-      merged.push(...finalAi)
 
       // ---------- 关键：用 AI tracking 的 objectId 补全手动标注 ----------
       // 策略：拿 AI 结果首帧的 bbox 和所有手动标注做 IoU 匹配
+      // 必须在 finalAi push 之前做，否则同帧同 oid 的手动/AI 会共存
       const seedFrame = filtered.find((f: any) => f.annotations?.length)
       if (seedFrame) {
         const seedAiBoxes = seedFrame.annotations.map((a: any) => {
@@ -713,6 +711,16 @@ const createWorkspace = () => {
           return obj
         })
       }
+
+      // 合并：手动标注 + 最终的 AI 标注
+      // 手动已有的 (frame, objectId) 不再加 AI 的 — 避免同帧同 oid 两条共存
+      const manualKeysAfterMatch = new Set(
+        merged.filter((o) => o.objectId != null).map((o) => `${o.frameIndex ?? 0}:${o.objectId}`)
+      )
+      const finalAi = [...existingByKey.values()]
+        .filter((o) => o.source === 'ai')
+        .filter((o) => !manualKeysAfterMatch.has(`${o.frameIndex ?? 0}:${o.objectId}`))
+      merged.push(...finalAi)
 
       annotationsByMedia.value = { ...annotationsByMedia.value, [mediaId]: merged }
     } catch {

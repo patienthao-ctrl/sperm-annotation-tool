@@ -528,7 +528,7 @@ def _tracker_rows_to_frames(rows: list[dict[str, Any]], fps: float = 0.0) -> lis
                 continue
             object_id = int(obj.get("object_id", obj.get("sam3_object_id", 0)))
             annotations.append({
-                "id": str(object_id),
+                "id": f"ai-{frame_index}-{object_id}",
                 "objectId": object_id,
                 "name": obj.get("name") or f"object-{object_id}",
                 "source": "ai",
