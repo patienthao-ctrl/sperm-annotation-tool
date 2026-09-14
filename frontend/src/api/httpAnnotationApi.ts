@@ -37,6 +37,22 @@ export const listAnnotationsByMedia = (mediaId: string) =>
 /** 删除一条自己的标注 */
 export const deleteAnnotation = (id: number) => http.del<{ ok: boolean }>(`/annotation/${id}`)
 
+/** 导出训练数据集（zip 下载） */
+export interface ExportDatasetRequest {
+  mediaId: string
+  mediaType?: string
+  mediaName?: string
+  mediaWidth?: number
+  mediaHeight?: number
+  format?: 'coco' | 'yolo' | 'both'
+  splitRatio?: number        // 0 = 不划分，0.8 = 80% train 20% val
+  classNames?: string[]
+  annotations: any[]         // annotationsByMedia[mediaId] 完整内容
+}
+
+export const exportDataset = (input: ExportDatasetRequest): Promise<Blob> =>
+  http.postBlob('/export/dataset', input)
+
 /* -------------------------- 组装 AnnotationApi -------------------------- */
 
 export const httpAnnotationApi: AnnotationApi = {

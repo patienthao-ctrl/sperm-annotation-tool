@@ -1,25 +1,44 @@
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { AnnotationObject, AnnotationTool, EffectResult, MediaAsset, SavedAnnotationFile } from '../types/annotation'
 // 登录、人工标注、视频目录、SAM3 Tracking 均走真实后端
-import { httpAnnotationApi } from '../api/httpAnnotationApi'
+import { httpAnnotationApi, exportDataset as apiExportDataset } from '../api/httpAnnotationApi'
 import { trackApi } from '../api/trackApi'
 import type { TrackingFrameResult } from '../types/annotation'
 
 const createWorkspace = () => {
   const api = httpAnnotationApi
 
-  const mediaAssets = ref<MediaAsset[]>([
-    {
-      id: 'img-demo-001',
-      name: 'microfluidic-sample.svg',
-      type: 'image',
-      url: '/demo/microfluidic-sample.svg',
-      width: 1600,
-      height: 900,
-    },
-  ])
+  // ── mediaAssets 持久化：刷新后 id 不变，annotationsByMedia 才能匹配 ──
+  const loadMediaAssets = (): MediaAsset[] => {
+    try {
+      const raw = localStorage.getItem('mediaAssets')
+      if (raw) return JSON.parse(raw)
+    } catch {}
+    return [
+      {
+        id: 'img-demo-001',
+        name: 'microfluidic-sample.svg',
+        type: 'image',
+        url: '/demo/microfluidic-sample.svg',
+        width: 1600,
+        height: 900,
+      },
+    ]
+  }
+  const mediaAssets = ref<MediaAsset[]>(loadMediaAssets())
+  let mediaSaveTimer: ReturnType<typeof setTimeout> | null = null
+  watch(mediaAssets, (val) => {
+    if (mediaSaveTimer) clearTimeout(mediaSaveTimer)
+    mediaSaveTimer = setTimeout(() => {
+      try {
+        // URL.createObjectURL 生成的 blob: URL 在刷新后失效，持久化前剔除
+        const persistable = val.map((m) => ({ ...m }))
+        localStorage.setItem('mediaAssets', JSON.stringify(persistable))
+      } catch {}
+    }, 300)
+  }, { deep: true })
 
-  const selectedMediaId = ref(mediaAssets.value[0].id)
+  const selectedMediaId = ref(mediaAssets.value[0]?.id ?? '')
   const activeTool = ref<AnnotationTool>('point')
   const objectNameInput = ref('rare sperm')
   const selectedObjectId = ref<string | null>(null)
@@ -33,8 +52,9 @@ const createWorkspace = () => {
   const trackingFrameCount = ref(5)
   const statusMessage = ref('就绪')
   const zoom = ref(1)
-  const zoomIn = (step = 0.1) => { zoom.value = Math.min(5, +(zoom.value + step).toFixed(2)) }
-  const zoomOut = (step = 0.1) => { zoom.value = Math.max(0.25, +(zoom.value - step).toFixed(2)) }
+  const isInteracting = () => !!tempBbox.value || !!draggingObjectId || !!bboxStart
+  const zoomIn = (step = 0.1) => { if (isInteracting()) return; zoom.value = Math.min(5, +(zoom.value + step).toFixed(2)) }
+  const zoomOut = (step = 0.1) => { if (isInteracting()) return; zoom.value = Math.max(0.25, +(zoom.value - step).toFixed(2)) }
   const zoomReset = () => { zoom.value = 1 }
   const deleteMedia = async (mediaId: string) => {
     const media = mediaAssets.value.find((m) => m.id === mediaId)
@@ -82,10 +102,27 @@ const createWorkspace = () => {
   const videoInputRef = ref<HTMLInputElement | null>(null)
   const effectFolderInputRef = ref<HTMLInputElement | null>(null)
 
-  const annotationsByMedia = ref<Record<string, AnnotationObject[]>>({
-    'img-demo-001': [],
-    'video-demo-001': [],
-  })
+  // 从 localStorage 恢复标注数据
+  const loadAnnotations = (): Record<string, AnnotationObject[]> => {
+    try {
+      const raw = localStorage.getItem('annotationsByMedia')
+      if (raw) return JSON.parse(raw)
+    } catch {}
+    return {
+      'img-demo-001': [],
+      'video-demo-001': [],
+    }
+  }
+  const annotationsByMedia = ref<Record<string, AnnotationObject[]>>(loadAnnotations())
+
+  // 自动持久化到 localStorage（debounce 300ms）
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  watch(annotationsByMedia, (val) => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      try { localStorage.setItem('annotationsByMedia', JSON.stringify(val)) } catch {}
+    }, 300)
+  }, { deep: true })
 
   // ── 撤销/重做栈 ──
   const undoStack: string[] = []
@@ -134,6 +171,18 @@ const createWorkspace = () => {
 
   /** 视频按真实 currentFrame 标注；Tracking 从当前人工标注帧开始。 */
   const currentMediaId = computed(() => selectedMediaId.value)
+
+  /** 全局 objectId 计数器：从现有最大 objectId 继续分配 */
+  const getNextObjectId = (mediaId?: string): number => {
+    let maxId = 0
+    for (const [mid, objs] of Object.entries(annotationsByMedia.value)) {
+      if (mediaId && mid !== mediaId) continue
+      for (const o of objs) {
+        if (typeof o.objectId === 'number' && o.objectId > maxId) maxId = o.objectId
+      }
+    }
+    return maxId + 1
+  }
   const currentObjects = computed(() => {
     const all = annotationsByMedia.value[currentMediaId.value] ?? []
     if (!isVideo.value) return all
@@ -173,6 +222,7 @@ const createWorkspace = () => {
     const name = objectNameInput.value.trim() || '未命名目标'
     const object: AnnotationObject = {
       id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      objectId: getNextObjectId(mediaId),
       name,
       source: 'manual',
       point: bbox ? undefined : { ...point },
@@ -572,25 +622,25 @@ const createWorkspace = () => {
       trackingFramesByMedia.value[mediaId] = filtered
 
       // 将 AI tracking 结果合并到 annotationsByMedia（统一管理）
-      // 策略：只补充本地没有的 AI 标注，不覆盖用户已修改/复制的标注
+      // 策略：同帧同 objectId 的新结果覆盖旧结果，手动标注永不被覆盖
       const width = media.width || 1
       const height = media.height || 1
       const existing = annotationsByMedia.value[mediaId] ?? []
-      // 本地已有标注的帧集合（手动或 AI），这些帧不再追加 AI 标注
-      const annotatedFrames = new Set(existing.map((o) => o.frameIndex ?? 0))
-      // 本地已有的 AI 标注的 (frameIndex, objectId) 对
-      const localAiKeys = new Set(existing
-        .filter((o) => o.source === 'ai')
-        .map((o) => `${o.frameIndex ?? 0}:${o.objectId ?? o.id}`))
-      const newAiObjs: AnnotationObject[] = []
+      // 手动标注的帧集合（AI 结果永远不要覆盖这些帧的手动标注）
+      const manualFrames = new Set(existing.filter((o) => o.source === 'manual').map((o) => o.frameIndex ?? 0))
+      // 按 (frameIndex, objectId) 建索引，方便覆盖
+      const keyOf = (o: AnnotationObject) => `${o.frameIndex ?? 0}:${o.objectId ?? o.id}`
+      const existingByKey = new Map(existing.map((o) => [keyOf(o), o]))
+      // 先把手动标注全量放进去
+      let merged: AnnotationObject[] = existing.filter((o) => o.source === 'manual').map((o) => ({ ...o }))
+
       for (const frame of filtered) {
-        // 跳过已有手动标注的帧（避免 AI 和手动标注重叠）
-        if (annotatedFrames.has(frame.frameIndex)) continue
+        // 跳过有手动标注的帧（AI 和手动标注重叠）
+        if (manualFrames.has(frame.frameIndex)) continue
         for (const ann of frame.annotations) {
-          const key = `${frame.frameIndex}:${ann.objectId}`
-          if (localAiKeys.has(key)) continue  // 本地已有，不覆盖
           const [x1, y1, x2, y2] = ann.bbox ?? [0, 0, 0, 0]
-          newAiObjs.push({
+          const key = `${frame.frameIndex}:${ann.objectId}`
+          const newObj: AnnotationObject = {
             id: ann.id ?? `ai-${frame.frameIndex}-${ann.objectId}`,
             objectId: ann.objectId,
             name: ann.name ?? `object-${ann.objectId}`,
@@ -604,12 +654,60 @@ const createWorkspace = () => {
             },
             frameIndex: frame.frameIndex,
             timestampMs: frame.timestampMs,
-          } as AnnotationObject)
+          } as AnnotationObject
+          // 新结果覆盖旧结果（续接追踪时覆盖第一遍的结果）
+          existingByKey.set(key, newObj)
         }
       }
-      if (newAiObjs.length) {
-        annotationsByMedia.value = { ...annotationsByMedia.value, [mediaId]: [...existing, ...newAiObjs] }
+      // 合并：手动标注 + 最终的 AI 标注
+      const finalAi = [...existingByKey.values()].filter((o) => o.source === 'ai')
+      merged.push(...finalAi)
+
+      // ---------- 关键：用 AI tracking 的 objectId 补全手动标注 ----------
+      // 策略：拿 AI 结果首帧的 bbox 和所有手动标注做 IoU 匹配
+      const seedFrame = filtered.find((f: any) => f.annotations?.length)
+      if (seedFrame) {
+        const seedAiBoxes = seedFrame.annotations.map((a: any) => {
+          const [x1, y1, x2, y2] = a.bbox ?? [0, 0, 0, 0]
+          return {
+            objectId: a.objectId,
+            name: a.name,
+            bbox: {
+              x: (x1 / width) * 100,
+              y: (y1 / height) * 100,
+              width: ((x2 - x1) / width) * 100,
+              height: ((y2 - y1) / height) * 100,
+            },
+          }
+        })
+        // IoU 计算
+        const bboxIoU = (a: any, b: any) => {
+          const ax2 = a.x + a.width, ay2 = a.y + a.height
+          const bx2 = b.x + b.width, by2 = b.y + b.height
+          const ix1 = Math.max(a.x, b.x), iy1 = Math.max(a.y, b.y)
+          const ix2 = Math.min(ax2, bx2), iy2 = Math.min(ay2, by2)
+          const iw = Math.max(0, ix2 - ix1), ih = Math.max(0, iy2 - iy1)
+          const inter = iw * ih
+          const areaA = a.width * a.height, areaB = b.width * b.height
+          return areaA + areaB - inter > 0 ? inter / (areaA + areaB - inter) : 0
+        }
+        // 只处理没有 objectId 的手动标注
+        merged = merged.map((obj) => {
+          if (obj.source !== 'manual' || obj.objectId != null || !obj.bbox) return obj
+          let bestIoU = 0, bestMatch: any = null
+          for (const box of seedAiBoxes) {
+            const iou = bboxIoU(obj.bbox, box.bbox)
+            if (iou > bestIoU) { bestIoU = iou; bestMatch = box }
+          }
+          // IoU > 0.3 才认为是同一个物体
+          if (bestMatch && bestIoU > 0.3) {
+            return { ...obj, objectId: bestMatch.objectId }
+          }
+          return obj
+        })
       }
+
+      annotationsByMedia.value = { ...annotationsByMedia.value, [mediaId]: merged }
     } catch {
       // 尚未生成 tracking_result.json 时静默处理：该帧不显示 AI 框。
     }
@@ -1010,6 +1108,7 @@ const createWorkspace = () => {
     const annotations = objects.map((obj) => {
       const item: Record<string, unknown> = {
         id: obj.id,
+        object_id: obj.objectId,
         name: obj.name,
         source: obj.source,
       }
@@ -1233,6 +1332,64 @@ const createWorkspace = () => {
     }
   }
 
+  /**
+   * 导出训练数据集（COCO / YOLO / both）
+   * 接收格式选择 + 划分设置，从 annotationsByMedia 中提取当前素材所有帧标注发给后端，
+   * 后端抽视频帧、转格式、打包 zip 返回。
+   */
+  const exportDataset = async (opts: {
+    format: 'coco' | 'yolo' | 'both'
+    splitRatio: number   // 0 = 不划分，0.8 = 80/20
+  }) => {
+    const mediaId = currentMediaId.value
+    const media = mediaAssets.value.find((item) => item.id === mediaId)
+    const objects = annotationsByMedia.value[mediaId] ?? []
+
+    if (!media) { showToast('请先选择素材'); return }
+    if (!objects.length) { showToast('当前素材没有标注可导出'); return }
+
+    const pixel = await getMediaPixelSize(media).catch(() => null)
+    const allFrames = new Set(objects.map((o: any) => o.frameIndex ?? 0))
+    const allNames = Array.from(new Set(objects.map((o: any) => o.name).filter(Boolean))) as string[]
+
+    isAiBusy.value = true
+    statusMessage.value = `正在导出数据集（${allFrames.size} 帧 × ${allNames.length} 类别）...`
+
+    try {
+      const blob = await apiExportDataset({
+        mediaId,
+        mediaType: media.type,
+        mediaName: media.name,
+        mediaWidth: pixel?.width ?? media.width,
+        mediaHeight: pixel?.height ?? media.height,
+        format: opts.format,
+        splitRatio: opts.splitRatio,
+        classNames: allNames,
+        annotations: JSON.parse(JSON.stringify(objects)),
+      })
+
+      // 下载 zip
+      const filename = `${media.name}_dataset.zip`
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+
+      const size_mb = (blob.size / 1024 / 1024).toFixed(2)
+      statusMessage.value = `✅ 数据集已导出：${filename} (${size_mb} MB, ${allFrames.size} 帧)`
+      showToast(`导出成功：${filename}`)
+    } catch (error: any) {
+      statusMessage.value = `导出失败：${error?.message ?? '未知错误'}`
+      showToast(statusMessage.value)
+    } finally {
+      isAiBusy.value = false
+    }
+  }
+
   const openEffectFolderPicker = () => {
     effectFolderInputRef.value?.click()
   }
@@ -1332,15 +1489,37 @@ const createWorkspace = () => {
 
   /**
    * 启动时从后端加载已有视频素材，刷新页面后素材列表不丢失。
+   * 关键修复：通过 serverMediaId 匹配已持久化（localStorage）的素材，
+   * 复用原 id（如 local-xxx），这样 annotationsByMedia 的 key 才能对上。
    */
   const loadServerMedia = async () => {
     try {
       const res = await trackApi.listMedia()
-      const existingIds = new Set(mediaAssets.value.map((m) => m.serverMediaId).filter(Boolean))
+      // 建立 serverMediaId -> MediaAsset 的索引
+      const byServerId = new Map<string, MediaAsset>()
+      for (const m of mediaAssets.value) {
+        if (m.serverMediaId) byServerId.set(m.serverMediaId, m)
+      }
+
       const additions: MediaAsset[] = []
       for (const item of res.items) {
-        if (existingIds.has(item.mediaId)) continue
-        additions.push({
+        const existing = byServerId.get(item.mediaId)
+        if (existing) {
+          // 已有记录：刷新后 blob: URL 必然失效，用后端新地址覆盖 url；保留原 id
+          if (item.videoUrl) existing.url = item.videoUrl
+          if (item.fps) existing.fps = item.fps
+          if (item.width) existing.width = item.width
+          if (item.height) existing.height = item.height
+          if (item.frameCount && item.fps) existing.duration = item.frameCount / item.fps
+
+          // 异步加载 tracking 结果并合并（不阻塞）
+          if (item.hasTrackingResult) {
+            void loadTrackingResult(existing.id)
+          }
+          continue
+        }
+        // 新素材：创建条目
+        const newAsset: MediaAsset = {
           id: `server-${item.mediaId}`,
           serverMediaId: item.mediaId,
           name: item.videoName,
@@ -1350,18 +1529,23 @@ const createWorkspace = () => {
           width: item.width || undefined,
           height: item.height || undefined,
           duration: item.frameCount && item.fps ? item.frameCount / item.fps : undefined,
-        })
-        trackingFramesByMedia.value[`server-${item.mediaId}`] = []
+        }
+        additions.push(newAsset)
+        trackingFramesByMedia.value[newAsset.id] = []
         if (item.hasTrackingResult) {
-          // 异步加载跟踪结果，不阻塞素材列表显示
           void trackApi.getResult(item.mediaId).then((result) => {
             const frames = 'frames' in result ? result.frames : [result]
-            trackingFramesByMedia.value[`server-${item.mediaId}`] = frames || []
+            trackingFramesByMedia.value[newAsset.id] = frames || []
           }).catch(() => {})
         }
       }
       if (additions.length) {
         mediaAssets.value = [...mediaAssets.value, ...additions]
+      }
+
+      // 如果当前选中的 media 不存在了（被删），重置到第一个
+      if (selectedMediaId.value && !mediaAssets.value.find((m) => m.id === selectedMediaId.value)) {
+        selectedMediaId.value = mediaAssets.value[0]?.id ?? ''
       }
     } catch {
       // 后端未启动时静默处理
@@ -1369,7 +1553,7 @@ const createWorkspace = () => {
   }
 
   return {
-    api, mediaAssets, selectedMediaId, activeTool, objectNameInput, selectedObjectId, currentFrame, currentTime, videoDuration, videoFps, frameInput, isPlaying, isAiBusy, trackingFrameCount, statusMessage, toastMessage, showToast, zoom, zoomIn, zoomOut, zoomReset, deleteMedia, saveFolderHandle, savedResults, effectResults, selectedEffectId, effectTime, effectPlaying, effectVideoRef, imageRef, videoRef, annotationHitRef, fileInputRef, videoInputRef, effectFolderInputRef, annotationsByMedia, trackingFramesByMedia, anomalyObjectIds, selectedMedia, isVideo, maxFrameIndex, currentMediaId, currentObjects, selectedObject, selectedEffect, formatTime, timeToFrame, frameToTime, getStagePoint, addObject, resetVideoViewToFirstFrame, ensureVideoFirstFrame, selectTool, onStageClick, tempBbox, onBboxDown, onBboxMove, onBboxUp, onObjectDropdownChange, selectObject, removeObject, renameObject, undo, redo, copyPreviousFrame, brightness, contrast, mediaFilterStyle, resetMediaFilter, annotatedFrameCount, clearSelection, openFilePicker, handleFiles, onImageLoaded, onVideoLoaded, onVideoTimeUpdate, loadTrackingResult, seekVideo, seekToInputFrame, seekByFrame, togglePlayback, onVideoEnded, onTimelineClick, runAiSegment, runAiTrack, selectSaveFolder, pad, fileTimestamp, drawAnnotationOverlayToCanvas, svgToCanvas, renderAnnotatedVideo, getMediaPixelSize, buildSam3AnnotationsJson, generateAnnotationsJson, saveBlobToSelectedFolder, saveAnnotation, openEffectFolderPicker, handleEffectFolder, loadEffects, onEffectTimeUpdate, toggleEffectPlayback, selectEffect, effectOverlayObjects, resetAnnotationViewForMedia, loadServerMedia
+    api, mediaAssets, selectedMediaId, activeTool, objectNameInput, selectedObjectId, currentFrame, currentTime, videoDuration, videoFps, frameInput, isPlaying, isAiBusy, trackingFrameCount, statusMessage, toastMessage, showToast, zoom, zoomIn, zoomOut, zoomReset, deleteMedia, saveFolderHandle, savedResults, effectResults, selectedEffectId, effectTime, effectPlaying, effectVideoRef, imageRef, videoRef, annotationHitRef, fileInputRef, videoInputRef, effectFolderInputRef, annotationsByMedia, trackingFramesByMedia, anomalyObjectIds, selectedMedia, isVideo, maxFrameIndex, currentMediaId, currentObjects, selectedObject, selectedEffect, formatTime, timeToFrame, frameToTime, getStagePoint, addObject, resetVideoViewToFirstFrame, ensureVideoFirstFrame, selectTool, onStageClick, tempBbox, onBboxDown, onBboxMove, onBboxUp, onObjectDropdownChange, selectObject, removeObject, renameObject, undo, redo, copyPreviousFrame, brightness, contrast, mediaFilterStyle, resetMediaFilter, annotatedFrameCount, clearSelection, openFilePicker, handleFiles, onImageLoaded, onVideoLoaded, onVideoTimeUpdate, loadTrackingResult, seekVideo, seekToInputFrame, seekByFrame, togglePlayback, onVideoEnded, onTimelineClick, runAiSegment, runAiTrack, selectSaveFolder, pad, fileTimestamp, drawAnnotationOverlayToCanvas, svgToCanvas, renderAnnotatedVideo, getMediaPixelSize, buildSam3AnnotationsJson, generateAnnotationsJson, saveBlobToSelectedFolder, saveAnnotation, exportDataset, openEffectFolderPicker, handleEffectFolder, loadEffects, onEffectTimeUpdate, toggleEffectPlayback, selectEffect, effectOverlayObjects, resetAnnotationViewForMedia, loadServerMedia
   }
 }
 

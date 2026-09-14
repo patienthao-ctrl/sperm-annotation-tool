@@ -15,7 +15,7 @@ const {
   clearSelection, openFilePicker, handleFiles, onImageLoaded, onVideoLoaded,
   onVideoTimeUpdate, seekToInputFrame, togglePlayback, onVideoEnded,
   onTimelineClick, runAiSegment, runAiTrack, selectSaveFolder, generateAnnotationsJson,
-  saveAnnotation, resetAnnotationViewForMedia, seekByFrame,
+  saveAnnotation, exportDataset, resetAnnotationViewForMedia, seekByFrame,
   zoom, zoomIn, zoomOut, zoomReset, deleteMedia,
 } = useWorkspace()
 
@@ -23,7 +23,36 @@ const {
 const scrollContainerRef = ref<HTMLDivElement | null>(null)
 const containerW = ref(0)
 const containerH = ref(0)
+// 关键：contain 基准只在素材切换或首次有尺寸时锁定一次，
+// 后续容器尺寸变化（如底部播放条出现/消失）不再影响 zoom 对应的实际画面大小
+const containBase = ref<{ w: number; h: number } | null>(null)
 let resizeObserver: ResizeObserver | null = null
+
+// ── 导出训练数据集弹窗 ──
+const exportDialogOpen = ref(false)
+const exportFormat = ref<'coco' | 'yolo' | 'both'>('coco')
+const exportSplitRatio = ref(0.8)   // 0 = 不划分
+const doingExport = ref(false)
+
+const allFrameCount = computed(() => {
+  const objs = annotationsByMedia.value[currentMediaId.value] ?? []
+  return new Set(objs.map((o: any) => o.frameIndex ?? 0)).size
+})
+const allClassNameList = computed(() => {
+  const objs = annotationsByMedia.value[currentMediaId.value] ?? []
+  return Array.from(new Set(objs.map((o: any) => o.name).filter(Boolean))) as string[]
+})
+
+async function doExportDataset() {
+  if (doingExport.value) return
+  doingExport.value = true
+  try {
+    await exportDataset({ format: exportFormat.value, splitRatio: exportSplitRatio.value })
+    exportDialogOpen.value = false
+  } finally {
+    doingExport.value = false
+  }
+}
 
 const onKeyDown = (e: KeyboardEvent) => {
   // 输入框内不触发快捷键
@@ -116,22 +145,34 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown)
 })
 
-// 根据容器尺寸、素材宽高比和缩放比例计算画布实际显示尺寸
+// 根据锁定的 contain 基准和 zoom 计算画布尺寸
 const stageSize = computed(() => {
+  if (!containBase.value) return { w: 0, h: 0 }
+  return { w: Math.round(containBase.value.w * zoom.value), h: Math.round(containBase.value.h * zoom.value) }
+})
+
+// 锁定 contain 基准：素材切换时重置，首次有有效容器尺寸时计算
+const lockContainBase = () => {
   const ratio = (selectedMedia.value?.width || 16) / (selectedMedia.value?.height || 9)
   const cw = containerW.value
   const ch = containerH.value
-  if (!cw || !ch) return { w: 0, h: 0 }
-  // 100% 时画面完整显示在容器内（contain）；放大后按比例放大
+  if (!cw || !ch) return
   const containW = Math.min(cw, ch * ratio)
   const containH = containW / ratio
-  return { w: Math.round(containW * zoom.value), h: Math.round(containH * zoom.value) }
-})
+  containBase.value = { w: containW, h: containH }
+}
 
 watch(selectedMediaId, async (newId) => {
+  containBase.value = null  // 素材切换时解锁
   await nextTick()
+  lockContainBase()        // 立即尝试锁定（此时容器可能已有尺寸）
   await resetAnnotationViewForMedia(newId)
   scrollContainerRef.value?.scrollTo({ top: 0, left: 0 })
+})
+
+// ResizeObserver 只在 containBase 未锁定时更新，锁定后忽略后续尺寸变化
+watch([containerW, containerH], () => {
+  if (!containBase.value) lockContainBase()
 })
 </script>
 <template>
@@ -206,7 +247,7 @@ watch(selectedMediaId, async (newId) => {
               <div
                 ref="scrollContainerRef"
                 class="absolute inset-0 flex overflow-auto bg-black p-5"
-                @wheel.prevent="(e) => { if (e.ctrlKey || e.metaKey) { if (e.deltaY < 0) zoomIn(0.1); else zoomOut(0.1); } }"
+                @wheel="(e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); if (e.deltaY < 0) zoomIn(0.1); else zoomOut(0.1); } }"
               >
                 <div
                   class="relative m-auto shrink-0"
@@ -343,6 +384,7 @@ watch(selectedMediaId, async (newId) => {
               </div>
               <div class="flex gap-2">
                 <button class="btn-secondary" @click="clearSelection">取消选择</button>
+                <button class="btn-secondary" :disabled="isAiBusy || !annotatedFrameCount" @click="exportDialogOpen = true">导出训练数据集</button>
                 <button class="btn-primary" :disabled="isAiBusy" @click="saveAnnotation">保存标注</button>
               </div>
             </div>
@@ -428,6 +470,91 @@ watch(selectedMediaId, async (newId) => {
 <transition name="toast">
   <div v-if="toastMessage" class="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-emerald-400/30 bg-slate-900/95 px-5 py-3 text-sm text-emerald-200 shadow-2xl backdrop-blur">
     ✓ {{ toastMessage }}
+  </div>
+</transition>
+
+<!-- 导出训练数据集弹窗 -->
+<transition name="fade">
+  <div v-if="exportDialogOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" @click.self="exportDialogOpen = false">
+    <div class="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+        <h2 class="text-base font-semibold text-slate-100">📦 导出训练数据集</h2>
+        <button class="text-slate-500 hover:text-slate-300" @click="exportDialogOpen = false">✕</button>
+      </div>
+
+      <div class="space-y-5 px-6 py-5">
+        <!-- 数据概览 -->
+        <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-xs">
+          <div class="mb-2 text-[11px] uppercase tracking-wider text-slate-500">数据概览</div>
+          <div class="grid grid-cols-3 gap-3 text-slate-300">
+            <div>
+              <div class="text-lg font-semibold text-indigo-300">{{ allFrameCount }}</div>
+              <div class="text-[10px] text-slate-500">标注帧数</div>
+            </div>
+            <div>
+              <div class="text-lg font-semibold text-emerald-300">{{ allClassNameList.length }}</div>
+              <div class="text-[10px] text-slate-500">类别数</div>
+            </div>
+            <div>
+              <div class="text-lg font-semibold text-amber-300">{{ isVideo ? '视频' : '图片' }}</div>
+              <div class="text-[10px] text-slate-500">素材类型</div>
+            </div>
+          </div>
+          <div v-if="allClassNameList.length" class="mt-3 text-[11px] text-slate-500">
+            类别：<span class="text-slate-300">{{ allClassNameList.join(' · ') }}</span>
+          </div>
+        </div>
+
+        <!-- 格式选择 -->
+        <div>
+          <label class="mb-2 block text-xs font-medium text-slate-400">输出格式</label>
+          <div class="grid grid-cols-3 gap-2">
+            <button
+              v-for="fmt in ([
+                { v: 'coco', label: 'COCO', desc: 'YOLO/DETR 标准' },
+                { v: 'yolo', label: 'YOLO', desc: 'YOLOv5/v8 训练' },
+                { v: 'both', label: '都要', desc: '两种格式都生成' },
+              ] as const)"
+              :key="fmt.v"
+              class="rounded-lg border px-3 py-2 text-left text-xs transition"
+              :class="exportFormat === fmt.v
+                ? 'border-indigo-400 bg-indigo-500/10 text-indigo-200'
+                : 'border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-500'"
+              @click="exportFormat = fmt.v"
+            >
+              <div class="font-semibold">{{ fmt.label }}</div>
+              <div class="mt-0.5 text-[10px] opacity-70">{{ fmt.desc }}</div>
+            </button>
+          </div>
+        </div>
+
+        <!-- 划分比例 -->
+        <div>
+          <label class="mb-2 flex items-center justify-between text-xs font-medium text-slate-400">
+            <span>训练 / 验证集划分</span>
+            <span class="text-slate-500">
+              {{ exportSplitRatio === 0 ? '不划分' : `${Math.round(exportSplitRatio * 100)} / ${Math.round((1 - exportSplitRatio) * 100)}` }}
+            </span>
+          </label>
+          <input type="range" min="0" max="0.9" step="0.1" v-model.number="exportSplitRatio"
+            class="w-full accent-indigo-400" />
+          <div class="mt-1 flex justify-between text-[10px] text-slate-600">
+            <span>全部训练集</span><span>80/20</span><span>90/10</span>
+          </div>
+        </div>
+
+        <p class="rounded-md bg-slate-950/60 p-3 text-[11px] leading-relaxed text-slate-500">
+          💡 导出后会自动抽视频帧、转像素坐标、打包 zip 下载。COCO 格式包含标准 annotations.json；YOLO 格式包含每帧 txt + data.yaml 训练配置。
+        </p>
+      </div>
+
+      <div class="flex gap-2 border-t border-slate-800 px-6 py-4">
+        <button class="btn-secondary flex-1" @click="exportDialogOpen = false">取消</button>
+        <button class="btn-primary flex-1" :disabled="doingExport || allFrameCount === 0" @click="doExportDataset">
+          {{ doingExport ? '正在导出...' : '生成并下载 ZIP' }}
+        </button>
+      </div>
+    </div>
   </div>
 </transition>
 </template>

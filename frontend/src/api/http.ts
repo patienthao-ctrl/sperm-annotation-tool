@@ -59,4 +59,27 @@ export const http = {
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PUT', body: body === undefined ? undefined : JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+
+  /** 下载二进制文件（zip / 图片等） */
+  postBlob: async (path: string, body?: unknown): Promise<Blob> => {
+    const token = tokenStore.get()
+    let res: Response
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+    } catch {
+      throw { message: '无法连接后端，请确认 FastAPI 已启动', status: 0 } as ApiError
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw { message: (data as any)?.message ?? `请求失败 (${res.status})`, status: res.status } as ApiError
+    }
+    return res.blob()
+  },
 }

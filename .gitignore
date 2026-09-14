@@ -39,3 +39,6 @@ backend/.env
 # 系统临时文件
 *.tmp
 *.bak
+
+# 方法对比测试产物
+method_compare_results/
