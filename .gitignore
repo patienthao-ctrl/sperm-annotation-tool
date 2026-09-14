@@ -42,3 +42,4 @@ backend/.env
 
 # 方法对比测试产物
 method_compare_results/
+docs/superpowers/
