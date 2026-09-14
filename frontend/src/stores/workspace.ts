@@ -732,10 +732,20 @@ const createWorkspace = () => {
     }
     const loop = (_now: number, metadata: VideoFrameCallbackMetadata) => {
       if (videoRef.value !== video) return
-      currentTime.value = Number.isFinite(metadata.mediaTime) ? metadata.mediaTime : video.currentTime
-      currentFrame.value = timeToFrame(currentTime.value)
+      const mediaTime = Number.isFinite(metadata.mediaTime) ? metadata.mediaTime : video.currentTime
+      const rounded = timeToFrame(mediaTime)
+      currentTime.value = mediaTime
+      // 暂停时不让 rVFC 改 currentFrame — mediaTime 可能有浮点抖动导致 round 出错
+      // 暂停时 frame 由 seekVideo / syncVideoFrameState 正确设定
+      if (video.paused) {
+        if (!video.ended) {
+          // paused 时只跑一次就停, 不 re-arm
+        }
+        return
+      }
+      currentFrame.value = rounded
       frameInput.value = currentFrame.value
-      if (!video.paused && !video.ended) {
+      if (!video.ended) {
         videoFrameCallbackId = video.requestVideoFrameCallback(loop)
       }
     }
@@ -757,9 +767,11 @@ const createWorkspace = () => {
     videoRef.value.currentTime = safeTime
     currentTime.value = safeTime
     currentFrame.value = timeToFrame(safeTime)
+    frameInput.value = currentFrame.value
     if (isVideo.value && Date.now() - lastTrackingPollAt > 1000) { lastTrackingPollAt = Date.now(); void loadTrackingResult(currentMediaId.value, true) }
-    await nextTick()
-    syncVideoFrameState()
+    // NOTE: 不再调 syncVideoFrameState() — 它可能在 seeked 事件还没完成时
+    // 读到旧值 / rVFC 的 mediaTime 浮点抖动值, 把我们刚设对的 currentFrame 覆盖回去
+    // 让 timeupdate (onVideoTimeUpdate) 和最终的 seeked 事件来做确认同步
     scheduleVideoFrameSync()
   }
 
