@@ -118,6 +118,9 @@ class _ObjectState:
     is_dead: bool = False  # Fix 1: terminal flag, never recovers
     dead_at_frame: int | None = None  # Fix 1: frame index of DISAPPEARED
     history: list = field(default_factory=list)
+    # NEW: pause 去重 — 同一 object 连续 HARD 只暂停第一次
+    # Fix 4: 防止 ANOMALY 卡死循环 (Fix 3 副作用: history 冻结)
+    has_paused: bool = False
 
 
 @dataclass
@@ -393,12 +396,22 @@ class AnomalyDetector:
             report.object_levels[oid] = st.level
 
         # ------------------------------------------------------------------
-        # Step 3: aggregate should_pause (Fix 5: multi-target)
+        # Step 3: aggregate should_pause
+        # Fix 4 (卡死循环): 同一 object 只暂停第一次 HARD
+        # 防止 Fix 3 副作用 — history 冻结后永远 HARD → 永远暂停
         # ------------------------------------------------------------------
-        for st in self.states.values():
+        for oid, st in self.states.items():
             if st.level in (AnomalyLevel.ANOMALY, AnomalyLevel.DISAPPEARED):
-                report.should_pause = True
-                break
+                # DISAPPEARED 也需要检查 (is_dead=True) — 它应该暂停一次
+                if not st.has_paused:
+                    st.has_paused = True
+                    report.should_pause = True
+                    break
+                # 已经暂停过了 → 不再重复暂停
+        # NEW: object 恢复到 NORMAL → 重置 has_paused (DISAPPEARED 不会恢复)
+        for st in self.states.values():
+            if st.level == AnomalyLevel.NORMAL and st.has_paused:
+                st.has_paused = False
 
         self.reports.append(report)
         return report
