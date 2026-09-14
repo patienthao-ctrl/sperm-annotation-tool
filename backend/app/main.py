@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import cv2
+
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -15,7 +17,7 @@ from pydantic import BaseModel
 from .auth import current_user, hash_password, sign_jwt, verify_password
 from .config import DB_FILE, DEVICE, DTYPE, HOST, JWT_SECRET, MAX_VIDEO_BYTES, MODEL_ID, PORT, TRACK_DATA_DIR, TRACK_FRAMES
 from .db import create_user, delete_annotation, get_user, get_user_by_id, init_db, insert_annotations, list_annotations
-from .schemas import AuthRequest, ManualAnnotationRequest, TrackRequest
+from .schemas import AnomalyFrameOut, AnomalyScanRequest, AnomalyScanResponse, AuthRequest, ManualAnnotationRequest, TrackRequest
 from .tracker import RESULT_FILE_NAME, OVERLAY_FILE_NAME, get_tracker_engine, track_video
 
 app = FastAPI(title="SAM3 Annotation Backend", version="3.0.0")
@@ -364,12 +366,22 @@ def _run_tracking_task(task_id: str, req: TrackRequest, video: Path, seed_file: 
     _set_task(task_id, status="running", message="SAM3 tracking running")
     try:
         result = track_video(str(video), str(seed_file), str(output_file), max_frames=req.maxFrames, bbox_mode="pixel", start_frame=req.startFrame)
-        _set_task(
-            task_id,
-            status="success",
-            message="completed",
-            processedFrames=result.get("processedFrames", 0),
-        )
+        anomaly_paused = result.get("anomalyPaused")
+        if anomaly_paused:
+            _set_task(
+                task_id,
+                status="paused",
+                message=f"anomaly detected @ frame {anomaly_paused['frame_index']}",
+                processedFrames=result.get("processedFrames", 0),
+                anomaly_paused=anomaly_paused,
+            )
+        else:
+            _set_task(
+                task_id,
+                status="success",
+                message="completed",
+                processedFrames=result.get("processedFrames", 0),
+            )
     except Exception as exc:
         import traceback
         traceback.print_exc()
@@ -1050,6 +1062,77 @@ def _write_dataset_info(work_dir: Path, media_name: str, media_type: str,
         f"  python train.py --img 640 --batch 16 --epochs 100 --data data.yaml --weights yolov5n.pt",
     ]
     (work_dir / "dataset_info.txt").write_text("\n".join(lines), encoding="utf-8")
+
+
+@app.post("/api/anomaly/scan", response_model=AnomalyScanResponse)
+def scan_anomalies(req: AnomalyScanRequest, user: dict[str, Any] = Depends(current_user)) -> AnomalyScanResponse:
+    """对已有 tracker_results.json 做事后异常扫描"""
+    from .services.anomaly_detector import AnomalyConfig, AnomalyDetector
+
+    directory = resolve_media_dir(req.mediaId) or media_dir(req.mediaId)
+    if not directory.is_dir():
+        raise HTTPException(404, f"media {req.mediaId} not found")
+
+    # 读 video meta
+    mj = directory / "media.json"
+    video_meta: dict[str, Any] = {}
+    if mj.is_file():
+        try:
+            video_meta = json.loads(mj.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # probe video 获取 width/height/fps
+    video_file = find_video(directory)
+    width, height, fps = 640, 480, 30.0
+    if video_file:
+        cap = cv2.VideoCapture(str(video_file))
+        if cap.isOpened():
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0) or 640
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0) or 480
+            fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0) or 30.0
+        cap.release()
+
+    # 读 tracker_results.json (JSONL)
+    tracker_file = directory / RESULT_FILE_NAME
+    rows = _read_tracker_jsonl(tracker_file) if tracker_file.is_file() else []
+
+    detector = AnomalyDetector(config=AnomalyConfig(), fps=fps, width=width, height=height)
+    all_frames: list[AnomalyFrameOut] = []
+    summary: dict[str, int] = {"anomaly": 0, "warning": 0, "disappeared": 0}
+    pause_at: int | None = None
+
+    for row in rows:
+        fi = int(row.get("frame_index", 0))
+        frame_objs: dict[int, list[float]] = {}
+        for obj in row.get("objects", []):
+            oid = int(obj.get("object_id", 0))
+            bbox = obj.get("bbox")
+            if isinstance(bbox, list) and len(bbox) == 4:
+                frame_objs[oid] = list(bbox)
+        report = detector.push(fi, frame_objs)
+
+        for af in report.frames:
+            all_frames.append(AnomalyFrameOut(
+                frame_index=af.frame_index,
+                object_id=af.object_id,
+                level=af.level.value,
+                reasons=af.reasons,
+                details=af.details,
+            ))
+            if af.level.value in summary:
+                summary[af.level.value] += 1
+
+        if report.should_pause and pause_at is None:
+            pause_at = fi
+
+    return AnomalyScanResponse(
+        mediaId=req.mediaId,
+        totalFrames=len(rows),
+        anomalyFrames=all_frames,
+        summary=summary,
+        shouldPauseAt=pause_at,
+    )
 
 
 if __name__ == "__main__":
