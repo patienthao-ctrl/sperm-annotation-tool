@@ -774,7 +774,10 @@ const createWorkspace = () => {
 
   const seekByFrame = async (delta: number) => {
     if (!isVideo.value) return
-    await seekVideo(currentTime.value + delta / videoFps.value)
+    // 用 currentFrame (整数帧号) 做基准, 不用 currentTime (可能有小数误差)
+    const target = Math.max(0, Math.min(maxFrameIndex.value, currentFrame.value + delta))
+    if (target === currentFrame.value) return
+    await seekVideo(frameToTime(target))
   }
 
   const togglePlayback = async () => {

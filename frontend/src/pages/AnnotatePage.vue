@@ -62,10 +62,12 @@ const onKeyDown = (e: KeyboardEvent) => {
 
   switch (e.key) {
     case 'ArrowLeft':
+      if (e.repeat) return  // 防长按连跳
       e.preventDefault()
       seekByFrame(-1)
       break
     case 'ArrowRight':
+      if (e.repeat) return  // 防长按连跳
       e.preventDefault()
       seekByFrame(1)
       break
