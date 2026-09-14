@@ -8,7 +8,7 @@ const {
   isAiBusy, statusMessage, toastMessage,
   imageRef, videoRef, annotationHitRef, fileInputRef, videoInputRef,
   annotationsByMedia, selectedMedia, isVideo, maxFrameIndex, currentMediaId,
-  currentObjects, selectedObject, anomalyObjectIds, clearAnomalyHighlight, formatTime, addObject, resetVideoViewToFirstFrame, trackingFrameCount,
+  currentObjects, selectedObject, anomalyObjectIds, anomalyFrames, formatTime, addObject, resetVideoViewToFirstFrame, trackingFrameCount,
   ensureVideoFirstFrame, selectTool, onStageClick, tempBbox, onBboxDown, onBboxMove,
   onBboxUp, onObjectDropdownChange, selectObject, removeObject, renameObject, undo, redo,
   copyPreviousFrame, brightness, contrast, mediaFilterStyle, resetMediaFilter, annotatedFrameCount,
@@ -298,11 +298,10 @@ watch([containerW, containerH], () => {
                         <rect
                           v-if="obj.bbox"
                           :x="obj.bbox.x" :y="obj.bbox.y" :width="obj.bbox.width" :height="obj.bbox.height"
-                          :fill="selectedObjectId === obj.id ? 'rgba(251,191,36,.20)' : (anomalyObjectIds.includes(obj.objectId ?? -1) ? 'rgba(239,68,68,.18)' : 'rgba(99,102,241,.08)')"
-                          :stroke="anomalyObjectIds.includes(obj.objectId ?? -1) ? '#ef4444' : objColor(obj.objectId ?? 0, selectedObjectId === obj.id)"
-                          :stroke-width="anomalyObjectIds.includes(obj.objectId ?? -1) ? 1.2 : (selectedObjectId === obj.id ? 1.0 : 0.4)"
-                          :stroke-dasharray="anomalyObjectIds.includes(obj.objectId ?? -1) ? '1.5 0.8' : (selectedObjectId === obj.id ? '2 1' : '')"
-                          :class="anomalyObjectIds.includes(obj.objectId ?? -1) ? 'anomaly-blink' : ''"
+                          :fill="selectedObjectId === obj.id ? 'rgba(251,191,36,.20)' : 'rgba(99,102,241,.08)'"
+                          :stroke="objColor(obj.objectId ?? 0, selectedObjectId === obj.id)"
+                          :stroke-width="selectedObjectId === obj.id ? 1.0 : 0.4"
+                          :stroke-dasharray="selectedObjectId === obj.id ? '2 1' : ''"
                           vector-effect="non-scaling-stroke"
                         />
                         <circle v-if="obj.point && !obj.bbox" :cx="obj.point.x" :cy="obj.point.y" r="1" :fill="objColor(obj.objectId ?? 0, selectedObjectId === obj.id)" />
@@ -325,19 +324,6 @@ watch([containerW, containerH], () => {
                 SAM3 正在运行；人工标注已暂时锁定
               </div>
 
-              <!-- 异常暂停 Banner -->
-              <div
-                v-if="anomalyObjectIds.length > 0"
-                class="absolute left-1/2 top-8 z-40 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-red-400/50 bg-red-950/85 px-4 py-2 text-[12px] text-red-200 shadow-lg backdrop-blur"
-              >
-                <span class="text-base leading-none">⚠️</span>
-                <span>检测到异常 Tracking！涉及 objectId: <b class="text-red-100">{{ anomalyObjectIds.join(', ') }}</b></span>
-                <button
-                  class="ml-1 rounded border border-red-400/40 bg-red-500/20 px-2 py-0.5 text-[11px] font-medium text-red-100 transition hover:bg-red-500/35"
-                  @click="clearAnomalyHighlight"
-                >忽略</button>
-              </div>
-
               <!-- 鼠标坐标 -->
               <div v-if="mousePixel" class="pointer-events-none absolute left-8 top-8 z-40 rounded-lg border border-slate-700 bg-slate-950/85 px-3 py-1.5 text-[11px] text-slate-300 backdrop-blur">
                 x: {{ mousePixel.x }}, y: {{ mousePixel.y }}
@@ -357,6 +343,11 @@ watch([containerW, containerH], () => {
                 <button class="min-w-[48px] px-2 py-1 text-center hover:bg-slate-700" @click="zoomReset" title="重置">{{ Math.round(zoom * 100) }}%</button>
                 <button class="rounded px-2 py-1 hover:bg-slate-700" @click="zoomIn()" title="放大">+</button>
               </div>
+            </div>
+
+            <div v-if="anomalyObjectIds.length > 0" class="shrink-0 border-t border-amber-700 bg-amber-950/80 px-4 py-2 text-[11px] text-amber-300">
+              ⚠️ 检测到异常，Tracking 已暂停。请修正第 {{ currentFrame }} 帧的标注框（异常对象：
+              {{ anomalyObjectIds.join(', ') }}），然后重新点击 AI Tracking 继续。
             </div>
 
             <div v-if="isVideo" class="shrink-0 border-t border-slate-800 bg-slate-950/80 px-4 py-3">
@@ -383,6 +374,15 @@ watch([containerW, containerH], () => {
                     :key="f"
                     class="absolute top-1/2 h-2 w-0.5 -translate-y-1/2 rounded-full bg-emerald-400"
                     :style="{ left: `${maxFrameIndex ? (f / maxFrameIndex) * 100 : 0}%` }"
+                  ></div>
+                  <!-- 异常帧标记 -->
+                  <div
+                    v-for="(af, i) in anomalyFrames"
+                    :key="'anom-' + i"
+                    class="absolute top-0 h-5 w-1 -translate-x-1/2 rounded-full"
+                    :class="af.level === 'anomaly' ? 'bg-red-500' : af.level === 'disappeared' ? 'bg-purple-500' : 'bg-amber-500'"
+                    :style="{ left: `${maxFrameIndex ? (af.frame_index / maxFrameIndex) * 100 : 0}%` }"
+                    :title="`frame ${af.frame_index}: ${af.reasons.join(', ')}`"
                   ></div>
                   <div class="absolute top-0 h-5 w-1 -translate-x-1/2 rounded-full bg-white shadow" :style="{ left: `${videoDuration ? (currentTime / videoDuration) * 100 : 0}%` }"></div>
                 </div>
@@ -572,13 +572,3 @@ watch([containerW, containerH], () => {
   </div>
 </transition>
 </template>
-
-<style scoped>
-/* 异常 bbox 闪烁：虚线边框流动 */
-.anomaly-blink {
-  animation: anomaly-dash 0.6s linear infinite;
-}
-@keyframes anomaly-dash {
-  to { stroke-dashoffset: -4.6; }  /* 负方向，让虚线向左流动 */
-}
-</style>
