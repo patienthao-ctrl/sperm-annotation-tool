@@ -631,20 +631,22 @@ const createWorkspace = () => {
       const width = media.width || 1
       const height = media.height || 1
       const existing = annotationsByMedia.value[mediaId] ?? []
-      // 手动标注的帧集合（AI 结果永远不要覆盖这些帧的手动标注）
-      const manualFrames = new Set(existing.filter((o) => o.source === 'manual').map((o) => o.frameIndex ?? 0))
-      // 按 (frameIndex, objectId) 建索引，方便覆盖
+      // 被手动修改过的 (frameIndex, objectId) 集合 — 精准保护, 只跳过用户改过的那一个
+      const manualKeys = new Set(existing
+        .filter((o) => o.source === 'manual' && o.objectId != null)
+        .map((o) => `${o.frameIndex ?? 0}:${o.objectId}`))
+      // 手动新建 (objectId=null) 也保留; 有 objectId 的才走 key 粒度保护
       const keyOf = (o: AnnotationObject) => `${o.frameIndex ?? 0}:${o.objectId ?? o.id}`
       const existingByKey = new Map(existing.map((o) => [keyOf(o), o]))
       // 先把手动标注全量放进去
       let merged: AnnotationObject[] = existing.filter((o) => o.source === 'manual').map((o) => ({ ...o }))
 
       for (const frame of filtered) {
-        // 跳过有手动标注的帧（AI 和手动标注重叠）
-        if (manualFrames.has(frame.frameIndex)) continue
         for (const ann of frame.annotations) {
-          const [x1, y1, x2, y2] = ann.bbox ?? [0, 0, 0, 0]
           const key = `${frame.frameIndex}:${ann.objectId}`
+          // 跳过被用户手动修改过的那一个 (其他同帧同 objectId 的正常更新)
+          if (manualKeys.has(key)) continue
+          const [x1, y1, x2, y2] = ann.bbox ?? [0, 0, 0, 0]
           const newObj: AnnotationObject = {
             id: ann.id ?? `ai-${frame.frameIndex}-${ann.objectId}`,
             objectId: ann.objectId,
