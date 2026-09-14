@@ -33,24 +33,22 @@ class AnomalyConfig:
     """All tunable thresholds for the detector."""
 
     BASELINE_WINDOW: int = 5
-    HYSTERESIS_FRAMES: int = 2       # 快速响应: 连续 2 帧硬偏离触发
-    RECOVERY_FRAMES: int = 3
     DISAPPEAR_WARN: int = 2
-    DISAPPEAR_ALERT: int = 4
-    # 面积阈值 (精子小, SAM3 mask 面积天然抖 2-3 倍, 只抓极端跳框/合并)
-    AREA_SHRINK_SOFT: float = 0.2
-    AREA_SHRINK_HARD: float = 0.1
-    AREA_GROW_SOFT: float = 4.0
-    AREA_GROW_HARD: float = 8.0      # 面积涨 8 倍才 HARD (防止 mask 正常抖动)
+    DISAPPEAR_ALERT: int = 3
+    # 面积阈值 (精子小, SAM3 mask 面积会抖但 >3.5x 就是真异常)
+    AREA_SHRINK_SOFT: float = 0.35
+    AREA_SHRINK_HARD: float = 0.25
+    AREA_GROW_SOFT: float = 2.5
+    AREA_GROW_HARD: float = 3.5
     # 位移阈值 (主要检测指标: center_shift 抓真实跳飞)
     # cfg 值 * fps_scale(30/fps) = 实际阈值
-    # 15fps video: 55 * 2 = 110px; 30fps video: 55 * 1 = 55px
-    CENTER_SHIFT_SOFT: float = 35.0
-    CENTER_SHIFT_HARD: float = 55.0  # 位移超过 55px(cfg) → 跳飞嫌疑
-    # 宽高比 (精子会转, 宽高比天然变化大)
-    ASPECT_CHANGE_SOFT: float = 2.0
-    ASPECT_CHANGE_HARD: float = 2.8
-    EDGE_MARGIN_PX: float = 30.0  # Fix 2: 30px buffer, uses bbox endpoints
+    # 15fps video: 40 * 2 = 80px; 30fps video: 40 * 1 = 40px
+    CENTER_SHIFT_SOFT: float = 25.0
+    CENTER_SHIFT_HARD: float = 40.0
+    # 宽高比 (精子会转, 但翻转 >2x 是真异常)
+    ASPECT_CHANGE_SOFT: float = 1.5
+    ASPECT_CHANGE_HARD: float = 2.0
+    EDGE_MARGIN_PX: float = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +352,8 @@ class AnomalyDetector:
                         reasons.append(f"aspect_change={ar_ratio:.3f} SOFT")
 
             # --- Hysteresis counters ---
+            # HARD events (shift/area/aspect) are INSTANT — 1 frame → ANOMALY
+            # Only SOFT events accumulate (2 frames → WARNING)
             if hard_score > 0:
                 st.hard_count += 1
                 st.soft_count = 0
@@ -367,19 +367,14 @@ class AnomalyDetector:
                 st.hard_count = 0
                 st.soft_count = 0
 
-            # --- Level transitions (hysteresis state machine) ---
-            if st.hard_count >= cfg.HYSTERESIS_FRAMES:
+            # --- Level transitions ---
+            # HARD (any metric) → instant ANOMALY (单帧事件: 跳飞/面积爆炸/宽高比翻转)
+            if hard_score >= 1:
                 st.level = AnomalyLevel.ANOMALY
-            elif (
-                st.soft_count >= cfg.HYSTERESIS_FRAMES
-                and st.level == AnomalyLevel.NORMAL
-            ):
+            # SOFT × 2 → WARNING (连续温和异常)
+            elif st.soft_count >= 2 and st.level == AnomalyLevel.NORMAL:
                 st.level = AnomalyLevel.WARNING
-            elif (
-                st.recover_count >= cfg.RECOVERY_FRAMES
-                and st.level != AnomalyLevel.NORMAL
-            ):
-                st.level = AnomalyLevel.NORMAL
+            # DISAPPEARED → handled separately below (needs accumulation)
 
             # Fix 3: commit to history ONLY when no HARD anomaly this frame,
             # so anomalous bboxes cannot pollute the median baseline.
