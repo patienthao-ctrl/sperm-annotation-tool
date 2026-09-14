@@ -296,6 +296,8 @@ class AnomalyDetector:
 
             # Fix 3: baseline uses STABLE history only (not current frame)
             recent = st.history[-cfg.BASELINE_WINDOW:] if st.history else []
+            history_ready = len(recent) >= cfg.BASELINE_WINDOW
+
             base = _median_bbox(recent)
 
             reasons: list[str] = []
@@ -371,17 +373,24 @@ class AnomalyDetector:
                 st.soft_count = 0
 
             # --- Level transitions ---
+            # DEBUG: log only when anomaly detected
+            if reasons:
+                print(f"[detector] frame={frame_index} oid={oid} hard={hard_score} soft={soft_score} reasons={reasons} hist={len(st.history)}")
+            if not history_ready:
+                # Fix 7: SAM3 initial bboxes noisy — detect for UI hints but
+                # don't escalate level or pause. History still accumulates.
+                pass
             # HARD (any metric) → instant ANOMALY (单帧事件: 跳飞/面积爆炸/宽高比翻转)
-            if hard_score >= 1:
+            elif hard_score >= 1:
                 st.level = AnomalyLevel.ANOMALY
             # SOFT × 2 → WARNING (连续温和异常)
             elif st.soft_count >= 2 and st.level == AnomalyLevel.NORMAL:
                 st.level = AnomalyLevel.WARNING
             # DISAPPEARED → handled separately below (needs accumulation)
 
-            # Fix 3: commit to history ONLY when no HARD anomaly this frame,
-            # so anomalous bboxes cannot pollute the median baseline.
-            if hard_score < 1.0:
+            # Fix 3 + Fix 7: commit history when clean OR when history not ready yet.
+            # During warm-up (history not ready), always append so baseline stabilises.
+            if hard_score < 1.0 or not history_ready:
                 st.history.append([float(b) for b in bbox])
 
             report.frames.append(

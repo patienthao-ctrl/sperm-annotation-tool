@@ -48,6 +48,9 @@ export interface AnnotationObject {
   frameIndex?: number
   timestampMs?: number
   anomaly?: { type: string; ratio: number; prevArea: number; currArea: number }
+  anomaly_level?: 'normal' | 'warning' | 'anomaly' | 'disappeared'
+  anomaly_reasons?: string[]
+  anomaly_details?: Record<string, number>
 }
 
 export interface FrameAnnotations {

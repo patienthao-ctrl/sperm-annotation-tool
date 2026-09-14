@@ -540,6 +540,9 @@ def _tracker_rows_to_frames(rows: list[dict[str, Any]], fps: float = 0.0) -> lis
                 "sam3ObjectId": obj.get("sam3_object_id", object_id),
                 "maskArea": obj.get("mask_area"),
                 "anomaly": obj.get("anomaly"),
+                "anomaly_level": obj.get("anomaly_level"),
+                "anomaly_reasons": obj.get("anomaly_reasons"),
+                "anomaly_details": obj.get("anomaly_details"),
             })
         frames.append({
             "frameIndex": frame_index,

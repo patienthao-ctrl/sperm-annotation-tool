@@ -226,6 +226,15 @@ def track_video(
             frame_objs_for_detector[oid] = list(obj_row["bbox"])
         anomaly_report = detector.push(frame_idx, frame_objs_for_detector)
 
+        # ── 把 anomaly level + reasons 写入每个 object row ──
+        for af in anomaly_report.frames:
+            for obj_row in object_rows:
+                if int(obj_row["object_id"]) == af.object_id:
+                    obj_row["anomaly_level"] = af.level.value
+                    obj_row["anomaly_reasons"] = af.reasons
+                    obj_row["anomaly_details"] = af.details
+                    break
+
         # HARD 异常 → 提前终止 tracking
         if anomaly_report.should_pause:
             pause_reasons = []

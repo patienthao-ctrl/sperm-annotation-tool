@@ -661,7 +661,10 @@ const createWorkspace = () => {
             },
             frameIndex: frame.frameIndex,
             timestampMs: frame.timestampMs,
-          } as AnnotationObject
+            anomaly_level: ann.anomaly_level ?? undefined,
+            anomaly_reasons: ann.anomaly_reasons ?? undefined,
+            anomaly_details: ann.anomaly_details ?? undefined,
+          }
           // 新结果覆盖旧结果（续接追踪时覆盖第一遍的结果）
           existingByKey.set(key, newObj)
         }
@@ -1016,23 +1019,45 @@ const createWorkspace = () => {
     ctx.font = `${Math.max(14, width / 80)}px sans-serif`
     ctx.textBaseline = 'bottom'
     objects.forEach((obj) => {
+      // 根据 anomaly 状态选择颜色
+      const level = obj.anomaly_level
+      const hasReasons = obj.anomaly_reasons && obj.anomaly_reasons.length > 0
+      let fillColor = 'rgba(99,102,241,0.12)'   // 默认: 紫蓝
+      let strokeColor = '#818cf8'
+      if (level === 'anomaly') {
+        fillColor = 'rgba(239,68,68,0.18)'
+        strokeColor = '#ef4444'                   // 红 = 暂停级异常
+      } else if (level === 'disappeared') {
+        fillColor = 'rgba(234,179,8,0.18)'
+        strokeColor = '#eab308'                   // 黄 = 消失
+      } else if (level === 'warning' || hasReasons) {
+        fillColor = 'rgba(251,146,60,0.18)'
+        strokeColor = '#fb923c'                   // 橙 = 有异常迹象但未暂停
+      }
+
       if (obj.bbox) {
         const x = obj.bbox.x / 100 * width
         const y = obj.bbox.y / 100 * height
         const w = obj.bbox.width / 100 * width
         const h = obj.bbox.height / 100 * height
-        ctx.fillStyle = 'rgba(99,102,241,0.12)'
-        ctx.strokeStyle = '#818cf8'
+        ctx.fillStyle = fillColor
+        ctx.strokeStyle = strokeColor
         ctx.fillRect(x, y, w, h)
         ctx.strokeRect(x, y, w, h)
-        ctx.fillStyle = '#ffffff'
-        ctx.fillText(obj.name, x, Math.max(16, y - 4))
+        // 异常对象显示警告图标和原因
+        if (level === 'anomaly' || hasReasons) {
+          ctx.fillStyle = strokeColor
+          ctx.fillText(`⚠ ${obj.name}`, x, Math.max(16, y - 4))
+        } else {
+          ctx.fillStyle = '#ffffff'
+          ctx.fillText(obj.name, x, Math.max(16, y - 4))
+        }
       } else if (obj.point) {
         const x = obj.point.x / 100 * width
         const y = obj.point.y / 100 * height
         ctx.beginPath()
         ctx.arc(x, y, Math.max(4, width / 180), 0, Math.PI * 2)
-        ctx.fillStyle = '#818cf8'
+        ctx.fillStyle = strokeColor
         ctx.fill()
         ctx.fillStyle = '#ffffff'
         ctx.fillText(obj.name, x + 8, y - 6)
