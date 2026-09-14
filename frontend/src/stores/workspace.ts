@@ -161,6 +161,7 @@ const createWorkspace = () => {
   const deletedTrackingIds = ref<Record<string, Set<string>>>({})
   // 异常物体 ID 列表（面积突变等），用于高亮
   const anomalyObjectIds = ref<number[]>([])
+  const clearAnomalyHighlight = () => { anomalyObjectIds.value = [] }
   let trackingLoadSerial = 0
   let lastTrackingPollAt = 0
   let videoFrameCallbackId: number | null = null
@@ -905,18 +906,43 @@ const createWorkspace = () => {
       })
       trackingFrameCount.value = task.maxFrames || task.trackFrames || trackingFrameCount.value
       statusMessage.value = `SAM3 正在运行：第 ${startFrame} 帧开始处理 ${trackingFrameCount.value} 帧`
+      let pausedEarly = false
       for (;;) {
         const status = await trackApi.getStatus(task.taskId)
         if (status.status === 'success') break
         if (status.status === 'failed') throw new Error(status.message || 'SAM3 Tracking 失败')
+        if (status.status === 'paused' && status.anomaly_paused) {
+          pausedEarly = true
+          const ap = status.anomaly_paused
+          const pauseFrame = ap.frame_index
+          const reasons = ap.reasons || []
+
+          // 跳转到异常帧
+          currentFrame.value = pauseFrame
+          await seekVideo(frameToTime(pauseFrame))
+
+          // 高亮异常 objectId（level !== normal 的）
+          anomalyObjectIds.value = Object.entries(ap.levels || {})
+            .filter(([, v]) => v && v !== 'normal')
+            .map(([k]) => Number(k))
+
+          statusMessage.value = `⚠️ Tracking 暂停 @ frame ${pauseFrame}: ${reasons.join('; ') || '检测到异常'}`
+          showToast(`检测到异常，已暂停在第 ${pauseFrame} 帧。涉及 objectId: ${anomalyObjectIds.value.join(', ') || '无'}`)
+          break
+        }
         await new Promise((resolve) => setTimeout(resolve, 700))
       }
-      await loadTrackingResult(mediaId, true)
-      if (mediaId === currentMediaId.value) {
-        const next = findNextUnannotatedFrame(startFrame + 1)
-        await seekVideo(frameToTime(next))
-        statusMessage.value = `Tracking 完成：${startFrame}～${Math.min(startFrame + trackingFrameCount.value - 1, maxFrameIndex.value)}`
-        showToast('SAM3 追踪完成')
+      // 暂停时不跑 loadTrackingResult 自动跳转逻辑，只加载已有帧结果便于查看
+      if (pausedEarly) {
+        await loadTrackingResult(mediaId, true)
+      } else {
+        await loadTrackingResult(mediaId, true)
+        if (mediaId === currentMediaId.value) {
+          const next = findNextUnannotatedFrame(startFrame + 1)
+          await seekVideo(frameToTime(next))
+          statusMessage.value = `Tracking 完成：${startFrame}～${Math.min(startFrame + trackingFrameCount.value - 1, maxFrameIndex.value)}`
+          showToast('SAM3 追踪完成')
+        }
       }
     } catch (error) {
       if (mediaId === currentMediaId.value) {
@@ -1553,7 +1579,7 @@ const createWorkspace = () => {
   }
 
   return {
-    api, mediaAssets, selectedMediaId, activeTool, objectNameInput, selectedObjectId, currentFrame, currentTime, videoDuration, videoFps, frameInput, isPlaying, isAiBusy, trackingFrameCount, statusMessage, toastMessage, showToast, zoom, zoomIn, zoomOut, zoomReset, deleteMedia, saveFolderHandle, savedResults, effectResults, selectedEffectId, effectTime, effectPlaying, effectVideoRef, imageRef, videoRef, annotationHitRef, fileInputRef, videoInputRef, effectFolderInputRef, annotationsByMedia, trackingFramesByMedia, anomalyObjectIds, selectedMedia, isVideo, maxFrameIndex, currentMediaId, currentObjects, selectedObject, selectedEffect, formatTime, timeToFrame, frameToTime, getStagePoint, addObject, resetVideoViewToFirstFrame, ensureVideoFirstFrame, selectTool, onStageClick, tempBbox, onBboxDown, onBboxMove, onBboxUp, onObjectDropdownChange, selectObject, removeObject, renameObject, undo, redo, copyPreviousFrame, brightness, contrast, mediaFilterStyle, resetMediaFilter, annotatedFrameCount, clearSelection, openFilePicker, handleFiles, onImageLoaded, onVideoLoaded, onVideoTimeUpdate, loadTrackingResult, seekVideo, seekToInputFrame, seekByFrame, togglePlayback, onVideoEnded, onTimelineClick, runAiSegment, runAiTrack, selectSaveFolder, pad, fileTimestamp, drawAnnotationOverlayToCanvas, svgToCanvas, renderAnnotatedVideo, getMediaPixelSize, buildSam3AnnotationsJson, generateAnnotationsJson, saveBlobToSelectedFolder, saveAnnotation, exportDataset, openEffectFolderPicker, handleEffectFolder, loadEffects, onEffectTimeUpdate, toggleEffectPlayback, selectEffect, effectOverlayObjects, resetAnnotationViewForMedia, loadServerMedia
+    api, mediaAssets, selectedMediaId, activeTool, objectNameInput, selectedObjectId, currentFrame, currentTime, videoDuration, videoFps, frameInput, isPlaying, isAiBusy, trackingFrameCount, statusMessage, toastMessage, showToast, zoom, zoomIn, zoomOut, zoomReset, deleteMedia, saveFolderHandle, savedResults, effectResults, selectedEffectId, effectTime, effectPlaying, effectVideoRef, imageRef, videoRef, annotationHitRef, fileInputRef, videoInputRef, effectFolderInputRef, annotationsByMedia, trackingFramesByMedia, anomalyObjectIds, clearAnomalyHighlight, selectedMedia, isVideo, maxFrameIndex, currentMediaId, currentObjects, selectedObject, selectedEffect, formatTime, timeToFrame, frameToTime, getStagePoint, addObject, resetVideoViewToFirstFrame, ensureVideoFirstFrame, selectTool, onStageClick, tempBbox, onBboxDown, onBboxMove, onBboxUp, onObjectDropdownChange, selectObject, removeObject, renameObject, undo, redo, copyPreviousFrame, brightness, contrast, mediaFilterStyle, resetMediaFilter, annotatedFrameCount, clearSelection, openFilePicker, handleFiles, onImageLoaded, onVideoLoaded, onVideoTimeUpdate, loadTrackingResult, seekVideo, seekToInputFrame, seekByFrame, togglePlayback, onVideoEnded, onTimelineClick, runAiSegment, runAiTrack, selectSaveFolder, pad, fileTimestamp, drawAnnotationOverlayToCanvas, svgToCanvas, renderAnnotatedVideo, getMediaPixelSize, buildSam3AnnotationsJson, generateAnnotationsJson, saveBlobToSelectedFolder, saveAnnotation, exportDataset, openEffectFolderPicker, handleEffectFolder, loadEffects, onEffectTimeUpdate, toggleEffectPlayback, selectEffect, effectOverlayObjects, resetAnnotationViewForMedia, loadServerMedia
   }
 }
 

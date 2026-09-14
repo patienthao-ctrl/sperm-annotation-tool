@@ -41,6 +41,13 @@ export interface TrackStatusResponse {
   pausedFrame?: number
   pausedObjects?: Array<{ object_id: number; type: string; ratio: number; prevArea: number; currArea: number }>
   processedFrames?: number
+  /** 异常暂停信息（后端 anomaly_detector 触发时返回；正常完成时为 undefined） */
+  anomaly_paused?: {
+    frame_index: number
+    reasons: string[]
+    /** objectId 字符串 → 状态值："normal" | "soft" | "hard" | "disappeared" */
+    levels: Record<string, string>
+  }
 }
 
 export interface TrackResultFile {
