@@ -1,4 +1,4 @@
-"""Disposable Compose acceptance: real upload → A/B/C → YOLO + restart check.
+"""Disposable Compose acceptance: real upload → review pass → YOLO + restart check.
 
 Requires APP_DATA_ROOT under work/ and an explicit loopback SMOKE_ORIGIN.
 Never run against production. Credentials are kept only in ignored work/.
@@ -46,10 +46,10 @@ if '--verify-restart' in sys.argv:
     saved = json.loads(state.read_text()); token = saved['token']
     assert request('/api/auth/me')['username'] == saved['username']
     assert request('/api/track/workspace/'+saved['media'])['manualAnnotations']
-    assert request('/api/confirmation/sessions/'+saved['sid'])['state'] == 'confirmed'
+    assert request('/api/annotation-review/media/'+saved['media'])['status'] == 'passed'
     assert request('/api/datasets/exports/'+saved['export'])['state'] == 'ready'
     assert request('/api/datasets/exports/'+saved['export']+'/download', raw=True).startswith(b'PK')
-    print('PASS restart: login token, workspace, confirmation and training ZIP persisted')
+    print('PASS restart: login token, workspace, review pass and training ZIP persisted')
     sys.exit(0)
 
 username = 'smoke-'+uuid.uuid4().hex[:10]
@@ -76,25 +76,16 @@ objects = [{'id':f'manual-{i}', 'objectId':1, 'source':'manual', 'name':'sperm',
 request('/api/annotation/annotations/manual','POST',{'mediaId':media,'mediaName':username+'.avi','mediaType':'video','mediaWidth':80,'mediaHeight':60,'objects':objects})
 assert request('/api/annotation/media/'+media)['total'] == 2
 request('/api/track/workspace/'+media,'PUT',{'manualAnnotations':objects})
-preview = request('/api/review/media/'+media+'/completion-preview')
-session = request('/api/review/media/'+media+'/complete','POST',{'expectedSourceRevision':preview['sourceRevision'],'confirmComplete':True,'explicitEmptyFrameRanges':[]})['session']
-sid = session['id']
-request('/api/review/sessions/'+sid+'/claim','POST',{})
-for i in range(2):
-    path = f'/api/review/sessions/{sid}/frames/{i}'
-    frame = request(path)
-    request(path+'/submit','POST',{'expectedFrameRevision':frame['frameRevision'],'patch':[]})
-session = request('/api/review/sessions/'+sid)
-assert session['state'] != 'reviewed'
-request('/api/review/sessions/'+sid+'/freeze','POST',{'expectedSessionRevision':session['revision']})
-c = next(s for s in request('/api/confirmation/sessions')['items'] if s['baselineId'] == session['baselineId'])
-sid = c['id']
-request('/api/confirmation/sessions/'+sid+'/claim','POST',{})
-c = request('/api/confirmation/sessions/'+sid)
-assert c['progress']['totalChanges'] == 0 and c['state'] != 'confirmed'
-request('/api/confirmation/sessions/'+sid+'/finalize','POST',{'expectedSessionRevision':c['revision']})
-c = request('/api/confirmation/sessions/'+sid)
-job = request('/api/datasets/exports','POST',{'finalVersionIds':[c['finalVersionId']],'format':'yolo','splitRatio':0.5})
+review = '/api/annotation-review/media/'+media
+current = request(review+'/start','POST')
+rid = current['review']['reviewId']
+assert current['status'] == 'open' and current['review']['total'] > 0
+for item in current['review']['items']:
+    request(review+'/items/'+item['id'],'PUT',{'reviewId':rid,'result':'empty' if item['kind'] == 'unknown' else 'ok'})
+assert request(review+'/pass','POST',{'reviewId':rid})['status'] == 'passed'
+preview = request('/api/datasets/annotations/'+media+'/preview')
+final = request('/api/datasets/annotations/'+media+'/snapshot','POST',{'expectedSourceRevision':preview['sourceRevision'],'confirmComplete':True,'explicitEmptyFrameRanges':[]})['finalVersionId']
+job = request('/api/datasets/exports','POST',{'finalVersionIds':[final],'format':'yolo','splitRatio':0.5})
 for _ in range(60):
     job = request('/api/datasets/exports/'+job['exportId'])
     if job['state'] in {'ready','failed'}: break
@@ -105,6 +96,6 @@ assert 'data.yaml' in archive.namelist()
 assert len([n for n in archive.namelist() if n.endswith('.jpg')]) == 2
 assert len([n for n in archive.namelist() if n.endswith('.txt')]) == 2
 state.parent.mkdir(exist_ok=True)
-state.write_text(json.dumps({'token':token,'username':username,'media':media,'sid':sid,'export':job['exportId']}))
+state.write_text(json.dumps({'token':token,'username':username,'media':media,'export':job['exportId']}))
 state.chmod(0o600)
-print('PASS real video upload, workspace, explicit B/C completion and YOLO images/labels')
+print('PASS real video upload, workspace, explicit review pass and YOLO images/labels')
