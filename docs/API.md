@@ -12,9 +12,9 @@
 
 | 方法与路径 | 作用 |
 | --- | --- |
-| `GET /api/annotation-review/media/{id}` | `status: none/open/passed/stale`、`currentRevision`（逐帧内容摘要）、`unknownFrames`、当前或最近一轮 `review{reviewId,round,state,lastActorId,lastActivityAt,items[{id,kind,startFrame,endFrame,frame,message,objectId?,objectIds?,category?,source?,anchor?,region?,index?,countInFrame?,observations?,adoptObjectId?,detectorAgrees?,lastFrame?,lastBox?,bbox?,check}],checked,total,escalated,passedBy,passedAt,changes}`、`lastPassed`。`lastActorId` 取最近检查人，无检查时为开始人；`lastActivityAt` 同理。从未保存工作区时返回 `none` 与 `notReady` 说明，不报错。Tracking 运行中也可读取 |
+| `GET /api/annotation-review/media/{id}` | `status: none/open/passed/stale`、`currentRevision`（逐帧内容摘要）、`unknownFrames`、当前或最近一轮 `review{reviewId,round,state,lastActorId,lastActivityAt,items[{id,kind,startFrame,endFrame,frame,message,objectId?,objectIds?,category?,source?,anchor?,region?,index?,countInFrame?,observations?,adoptObjectId?,detectorAgrees?,lastFrame?,lastBox?,ratio?,followupOf?,bbox?,check}],checked,total,escalated,passedBy,passedAt,changes}`、`lastPassed`。`lastActorId` 取最近检查人，无检查时为开始人；`lastActivityAt` 同理。从未保存工作区时返回 `none` 与 `notReady` 说明，不报错。Tracking 运行中也可读取 |
 | `POST /api/annotation-review/media/{id}/start` | 已有进行中的轮次则原样返回；已通过且内容未变返回 409 `REVIEW_ALREADY_PASSED`；Tracking 运行中 409 `SOURCE_BUSY` |
-| `PUT /api/annotation-review/media/{id}/items/{itemId}` | `{reviewId, result:'ok'|'fixed'|'empty'|'not_target'}`，`empty` 仅用于 `unknown` 项，`not_target` 仅用于 `missing/static` 项；可改判。`not_target` 在同一事务写 `annotation_review_exclusions`，改为其他结果时同事务撤销。`missing/static` 项提交 `ok` 时，若其观测帧内容与本轮开始时不同，服务端记为 `fixed`。非当前轮 409 `REVIEW_NOT_CURRENT`，已结束 409 `REVIEW_CLOSED`。随机抽检 ≥2 帧 `fixed` 时追加 `min(30,max(10,ceil(帧数×0.05)))` 帧（`escalation:true`） |
+| `PUT /api/annotation-review/media/{id}/items/{itemId}` | `{reviewId, result:'ok'|'fixed'|'empty'|'not_target'}`，`empty` 仅用于 `unknown` 项，`not_target` 仅用于 `missing/static` 项；可改判。`not_target` 在同一事务写 `annotation_review_exclusions`，改为其他结果时同事务撤销。`missing/static` 项提交 `ok` 时，若其观测帧内容与本轮开始时不同，服务端记为 `fixed`。非当前轮 409 `REVIEW_NOT_CURRENT`，已结束 409 `REVIEW_CLOSED`。任一项（`unknown`、`missing/static` 除外）首次记为 `fixed` 时追加一项 `kind:'followup'`（`followupOf` 为原项 ID，前后各 5 帧，`objectIds` 为该项帧内本轮被改动的对象）；不再随机加抽，`escalated` 只对旧轮次可能为 true |
 | `POST /api/annotation-review/media/{id}/pass` | `{reviewId}`；有未检查项 409 `REVIEW_INCOMPLETE`，仍有未确认的未知帧 409 `UNKNOWN_FRAMES`；成功固定 `passed_revision` 和修改记录 |
 | `GET /api/annotation-review/summary` | `{items:{mediaId: status}}`，列表用，不读追踪文件 |
 | `POST /api/annotation-review/media/{id}/reset-annotations` | 原 `/api/review/media/{id}/reset-annotations` 迁移至此，正文与幂等语义不变；不再因历史送审拒绝 |
@@ -171,6 +171,8 @@ ZIP 包含 15 个必需 CSV/JSONL、2 个可选历史表（存在时）和 manif
 ### 点选头部
 
 `POST /api/track/head-box/{media_id}`（需登录）：`{frameIndex,x,y}` 为原始帧号和原图像素点击坐标；返回 `{frameIndex,width,height,bbox:[x1,y1,x2,y2],confidence}`。只提供候选，不写工作区或建立对象 ID。422 表示坐标/候选无效或歧义，404 表示素材/帧不存在，503 表示模型不可用或忙。日志 `annotation.head_click` 记录素材、帧、框、耗时与失败原因。
+
+`POST /api/track/object-crops/{media_id}`（需登录）：`{items:[{frameIndex,bbox:[x1,y1,x2,y2]}], size}`，1–60 帧、`size` 48–160，框为原图像素（取客户端当前工作区）。返回一张 JPEG：第 i 张缩略图在第 `i % X-Crop-Columns` 列、第 `floor(i / X-Crop-Columns)` 行，每张为框中心周围 2.5 倍边长的原始帧裁剪并画出框；读不到的帧序号列在 `X-Crop-Missing`，该格留空，不用其他帧代替。只读，不写工作区。422 参数无效，404 素材不存在。日志 `annotation.object_crops`。
 
 服务需安装 `backend/requirements-head-detector.txt` 并配置 `HEAD_DETECTOR_MODEL` 指向可信自训练 YOLO 头部权重（默认 backend/track_modul/head-detector.pt），`HEAD_DETECTOR_DEVICE` 默认 cpu，可显式设 cuda:0。惰性加载、单请求推理，不自动下载模型。权重不纳入 Git；当前 SAM3 Release 不包含此检测权重，不能将已有离线包当作已具备该功能的模型包。
 

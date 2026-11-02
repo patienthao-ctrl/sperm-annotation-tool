@@ -223,3 +223,35 @@ def test_intermittent_detector_does_not_make_head_size_flicker():
     run(rows,reverse,candidates)
     sizes=[o['bbox'][2]-o['bbox'][0] for row in rows[2:-2] for o in row['objects']]
     assert max(sizes)-min(sizes)<.001
+
+
+def test_debris_inflated_tracker_box_shrinks_to_detector_size_when_detector_backs_off():
+    rows,reverse,candidates=scenario(15)
+    for i in range(6,9):
+        # Debris beside the head: both SAM3 directions swallow it, and the
+        # detector's confidence on the obscured head drops below 0.7.
+        rows[i]['objects'][0]['bbox']=[10+i,10,26+i,28]
+        reverse[i][91]=[10+i,10,26+i,28]
+        candidates[i]=[[10+i,10,20+i,20,.5]]
+    run(rows,reverse,candidates)
+    for i in range(6,9):
+        b=rows[i]['objects'][0]['bbox']
+        assert b[2]-b[0]==pytest.approx(10) and b[3]-b[1]==pytest.approx(10)
+        # Centred on the tracker box, never moved onto the debris candidate.
+        assert ((b[0]+b[2])/2,(b[1]+b[3])/2)==pytest.approx((18+i,19))
+
+
+def test_size_candidate_needs_detector_support_and_never_overrides_manual():
+    rows,reverse,candidates=scenario(9)
+    for i in range(9):
+        rows[i]['objects'][0]['bbox']=[10+i,10,26+i,28];reverse[i][91]=[10+i,10,26+i,28]
+    for i in range(2,9):candidates[i]=[]
+    before=copy.deepcopy(rows)
+    run(rows,reverse,candidates)  # Two supported frames only: no typical size, keep tracker geometry.
+    assert [r['objects'][0]['bbox'] for r in rows[2:]]==[r['objects'][0]['bbox'] for r in before[2:]]
+    rows,reverse,candidates=scenario(12)
+    for i in range(6,9):
+        rows[i]['objects'][0]['bbox']=[10+i,10,26+i,28];reverse[i][91]=[10+i,10,26+i,28];candidates[i]=[]
+    manual={7:{1:[17,10,33,28]}}
+    run(rows,reverse,candidates,manual=manual)
+    assert rows[7]['objects'][0]['bbox']==pytest.approx([17,10,33,28])

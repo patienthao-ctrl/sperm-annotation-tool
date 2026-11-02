@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { canvasZoomKey } from '../workbench/viewTransform'
 import AnnotationDatasetExport from '../components/AnnotationDatasetExport.vue'
 import AnnotationReviewPanel from '../components/AnnotationReviewPanel.vue'
+import LinkedEditCard from '../components/LinkedEditCard.vue'
 import ReviewZoomPreview from '../components/ReviewZoomPreview.vue'
 import AnnotationMinimap from '../components/AnnotationMinimap.vue'
 import WorkbenchShell from '../components/WorkbenchShell.vue'
@@ -714,7 +715,7 @@ async function retrySave(){
 }
 function enhancement(preset:string){if(preset==='原图'){resetMediaFilter();inverted.value=false}else if(preset==='暗场'){brightness.value=150;contrast.value=125}else{brightness.value=100;contrast.value=160}}
 function keys(e:KeyboardEvent){
-  if(document.querySelector('[data-user-guide][open], [data-object-delete-dialog][open], [data-reimport-dialog]'))return
+  if(document.querySelector('[data-user-guide][open], [data-object-delete-dialog][open], [data-reimport-dialog], [data-object-filmstrip]'))return
 
   if(e.isComposing||e.keyCode===229||document.querySelector('[data-completion-dialog]'))return
   if(help.value){if(e.key==='Escape'){help.value=false;e.preventDefault()}if(e.key==='Tab'){const nodes=Array.from(helpDialog.value?.querySelectorAll<HTMLElement>('button,input,[tabindex="0"]')||[]);if(nodes.length){e.preventDefault();const i=nodes.indexOf(document.activeElement as HTMLElement);nodes[(i+(e.shiftKey?-1:1)+nodes.length)%nodes.length]?.focus()}}return}
@@ -936,6 +937,8 @@ onUnmounted(()=>{cancelReviewLocate();window.removeEventListener('pointerdown',c
         <details v-if="trackingCalibrationSummary.length" class="tracking-calibration"><summary>已保存的正常确认（{{ trackingCalibrationSummary.length }} 个对象）</summary><div v-for="item in trackingCalibrationSummary" :key="item.objectId" :data-calibration-object-id="item.objectId"><span>对象 {{ item.objectId }}<template v-if="item.sampleCount"> · {{ item.sampleCount }} 次正常运动确认</template><template v-if="item.geometryFrame!=null"> · 第 {{ item.geometryFrame+1 }} 帧尺寸已确认</template><template v-if="item.overlapCount"> · {{ item.overlapCount }} 个重叠组合已确认（{{ item.overlapPartnerIds.map(id=>'对象 '+id).join('、') }}）</template></span><button class="quiet-button" :disabled="feedbackBlocked||trackingFeedbackPending" @click="resetTrackingCalibration(item.objectId)">恢复默认判断</button></div></details>
         <div v-if="trackingFeedbackError && trackingFeedbackPendingAction?.decision==='reset'" class="tracking-feedback-error" role="alert">{{ trackingFeedbackError }}<button class="quiet-button" :disabled="trackingFeedbackBusy" @click="retryTrackingAnomalyFeedback">重试恢复默认判断</button></div>
       </section>
+      <!-- Pause review has its own panel and evidence scroll area; range edits wait until it is resolved. ; it sits after AI tracking so annotators keep that card in place. -->
+      <LinkedEditCard v-if="isVideo && !collaborationConflict && !showPauseFeedback" :compact="reviewing" />
       <section class="shell-card annot-objects" aria-label="当前帧对象">
         <div class="shell-card-head"><strong>本帧</strong><span class="annot-count" data-testid="frame-object-count">{{ currentObjects.length }} 个框</span><span class="annot-split"><i class="manual" />人工 {{ frameManualCount }}<i class="ai" />AI {{ frameAiCount }}</span></div>
         <div class="object-selection" data-testid="selected-object-actions">

@@ -497,10 +497,12 @@ def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha)
             raise ReviewError(
                 "SOURCE_VIDEO_CHANGED", "原始视频已变化，与审查时的视频不一致"
             )
+        edited = None
         if "directFrames" in v:
-            from .annotation_review import review_decisions as export_review_decisions
+            from .annotation_review import review_decisions as export_review_decisions, review_edited
             with closing(connect()) as c:
                 review_decisions.extend(export_review_decisions(c, m["media_id"], m["sha256"]))
+                edited = review_edited(c, m["media_id"])
         manifest["sources"].append(
             {
                 "finalVersionId": v["final"]["id"],
@@ -587,6 +589,8 @@ def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha)
                         {
                             "objectId": obj["objectId"],
                             "yoloLine": line_no if body["format"] != "coco" else None,
+                            # True when a reviewer added or changed this box; None for legacy A/B/F sources.
+                            "reviewEdited": None if edited is None else obj["objectId"] in edited.get(fi, ()),
                             "cocoAnnotationId": ann_id + 1
                             if body["format"] != "yolo"
                             else None,
@@ -702,6 +706,7 @@ YOLO 标签为 class_id cx cy w h，坐标按实际图像尺寸归一化，类�
 manifest.json 记录逐图片 sampleId、原始帧、视频、最终版本及 auditReference；文件名包含数据集身份。
 provenance/ 保留完整 A/B/最终框。完整人员与操作历史固定在服务端，通过运维审计导出命令获取。
 review/decisions.jsonl 记录审查员对漏标候选的判断（是精子 / 不是精子），可作为检测模型的困难样本，不是 YOLO 标签。
+manifest.json 的 samples[].objects[].reviewEdited 为 true 表示该框由审查员新增或修改过（追踪原结果有误），可用于加权训练或误差分析。
 """,
         encoding="utf-8",
     )

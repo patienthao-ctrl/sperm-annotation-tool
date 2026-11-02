@@ -2,7 +2,8 @@
 
 Reviewers correct boxes in the same workspace the annotator uses; there is no second
 copy to compare. A round lists the frames worth a human look (tracking doubts, count
-jumps, whole-frame coverage, unknown frames, random samples). Passing records what
+jumps, box size/exit geometry, whole-frame coverage, unknown frames, random samples, and
+a re-check around each correction). Passing records what
 changed since the round started, and export requires a pass on the current content.
 """
 
@@ -31,11 +32,9 @@ REREVIEW_SAMPLE_MIN = 3
 REREVIEW_SAMPLE_MAX = 10
 COVERAGE_SEGMENTS = 100
 COVERAGE_MAX = 10
-ESCALATION_RATE = .05
-ESCALATION_MIN = 10
-ESCALATION_MAX = 30
-# Two corrected random samples means the clip is not reliably labelled.
-ESCALATE_AFTER_FIXED_SAMPLES = 2
+# A correction usually has the same cause in the frames around it (decision 0002):
+# re-check that window instead of drawing more random frames.
+FOLLOWUP_SPAN = 5
 COUNT_JUMP = 3
 COUNT_WINDOW = 3
 COVERAGE_POINTS = (0.25, 0.5, 0.75)
@@ -58,8 +57,20 @@ MISSING_POLICY = dict(minFrames=REVERSE_MIN_FRAMES, gap=REVERSE_GAP_FRAMES, edge
 COUNT_POLICY = dict(sampleRate=SAMPLE_RATE,sampleMin=SAMPLE_MIN,sampleMax=SAMPLE_MAX,
                     rereviewRate=REREVIEW_SAMPLE_RATE,rereviewMin=REREVIEW_SAMPLE_MIN,rereviewMax=REREVIEW_SAMPLE_MAX,
                     coverageSegments=COVERAGE_SEGMENTS,coverageMax=COVERAGE_MAX,
-                    escalationRate=ESCALATION_RATE,escalationMin=ESCALATION_MIN,escalationMax=ESCALATION_MAX)
-EVIDENCE_POLICY = 'actionable-review-v6-' + digest([CANDIDATE_MATCH_POLICY, DUPLICATE_POLICY, MISSING_POLICY, COUNT_POLICY])[7:23]
+                    followupSpan=FOLLOWUP_SPAN)
+# Box geometry of tracked objects: an object's box suddenly much larger/smaller
+# than its own neighbours (debris merged into the mask), an object far larger
+# than the clip's typical head, and tracks ending at the frame edge (residual
+# boxes after the sperm left).
+SIZE_WINDOW = 5
+SIZE_JUMP_HIGH = 1.6
+SIZE_JUMP_LOW = .6
+SIZE_OVERSIZED = 1.8
+SIZE_MIN_FRAMES = 3
+EXIT_TAIL_FRAMES = 3
+GEOMETRY_POLICY = dict(window=SIZE_WINDOW, high=SIZE_JUMP_HIGH, low=SIZE_JUMP_LOW, oversized=SIZE_OVERSIZED,
+                       minFrames=SIZE_MIN_FRAMES, exitTail=EXIT_TAIL_FRAMES)
+EVIDENCE_POLICY = 'actionable-review-v7-' + digest([CANDIDATE_MATCH_POLICY, DUPLICATE_POLICY, MISSING_POLICY, COUNT_POLICY, GEOMETRY_POLICY])[7:23]
 
 
 def migrate(c):
@@ -179,10 +190,6 @@ def coverage_frames(frame_count):
     return [min(frame_count-1,math.floor((index+.5)*frame_count/segments)) for index in range(segments)]
 
 
-def escalation_count(frame_count):
-    return min(ESCALATION_MAX,max(ESCALATION_MIN,math.ceil(frame_count*ESCALATION_RATE)))
-
-
 def spans(frames):
     out = []
     for i in sorted(frames):
@@ -233,13 +240,13 @@ IDENTITY_FINDINGS = {'endpoint_disagreement','endpoint_identity_uncertain','join
 CATEGORIES = {'unlabelled_candidate':'missing','reverse_only':'missing','reverse_disagreement':'missing',
               'association_uncertain':'association','tracking_lost':'association',
               'detector_mismatch':'position','head_boundary':'position'}
-CATEGORY_LABELS = {'missing':'可能漏标','association':'可能重复或跟错','position':'框偏离头部',
-                   'static':'静止目标','check':'自动检查失败'}
-CATEGORY_PRIORITY = {'missing':0,'association':1,'position':2,'static':3,'check':4}
+CATEGORY_LABELS = {'missing':'可能漏标','association':'可能重复或跟错','exit':'出画尾帧','position':'框偏离头部',
+                   'size':'框大小异常','static':'静止目标','check':'自动检查失败'}
+CATEGORY_PRIORITY = {'missing':0,'association':1,'exit':1,'position':2,'size':2,'static':3,'check':4}
 
 
 def item_order(item):
-    priority={'unknown':0,'changed':3,'count':3,'coverage':4,'sample':5}.get(item['kind'],3)
+    priority={'unknown':0,'changed':3,'followup':3,'count':3,'coverage':4,'sample':5}.get(item['kind'],3)
     if item['kind']=='doubt':priority=CATEGORY_PRIORITY.get(item.get('category'),4)
     source={'reverse':0,'disagreement':1,'detector':2}.get(item.get('source'),0) if item.get('category')=='missing' else 0
     return priority,source,item['startFrame'],item.get('index',0),item['endFrame'],item.get('category',''),item.get('message','')
@@ -532,6 +539,83 @@ def track_ended_items(rows, frames_list, info, stats, only=None):
     return items
 
 
+def _manual_ids(rows):
+    return {r.get('source_frame_index',r.get('frame_index')):
+            set(r.get('_reviewManualIds',[]))|{o.get('objectId',o.get('object_id')) for o in r.get('_reviewObjects',r.get('objects',[]))
+                                               if o.get('source') in ('manual','manual_endpoint')} for r in rows}
+
+
+def _area(box):
+    return (box[2]-box[0])*(box[3]-box[1])
+
+
+def object_series(frames_list):
+    series={}
+    for fi,objects in enumerate(frames_list):
+        for obj in objects or []:
+            oid=obj.get('objectId',obj.get('object_id'));box=obj.get('bbox')
+            if isinstance(oid,int) and valid_box(box):series.setdefault(oid,[]).append((fi,box))
+    return series
+
+
+def _overlaps(start, end, only):
+    return only is None or (start<=only[1] and only[0]<=end)
+
+
+def _object_item(category, source, oid, frames, frame, message, **extra):
+    item=dict(kind='doubt',category=category,source=source,objectIds=[oid],objectId=oid,startFrame=frames[0],endFrame=frames[-1],
+              frame=frame,labels=[CATEGORY_LABELS[category]],message=message,candidates=[],bbox=None,
+              observations=[dict(frameIndex=fi,objectIds=[oid],candidates=[]) for fi in frames])
+    item.update(extra)
+    return item
+
+
+def size_items(frames_list, rows, info, stats, only=None):
+    """Boxes much larger or smaller than the same object's neighbours, and objects far above the clip's head size."""
+    manual=_manual_ids(rows);width,height=(info or {}).get('width',0),(info or {}).get('height',0)
+    head_w=stats['width'] if stats else None;items=[]
+    for oid,path in sorted(object_series(frames_list).items()):
+        flagged={}
+        for k,(fi,box) in enumerate(path):
+            if oid in manual.get(fi,()):continue
+            near=[_area(b) for j,(fj,b) in enumerate(path) if j!=k and abs(fj-fi)<=SIZE_WINDOW]
+            if len(near)<2:continue
+            ratio=_area(box)/statistics.median(near)
+            # A box clipped by the frame edge shrinks naturally; exits are listed separately.
+            if ratio<=SIZE_JUMP_LOW and near_edge(box,width,height,head_w):continue
+            if ratio>=SIZE_JUMP_HIGH or ratio<=SIZE_JUMP_LOW:flagged[fi]=ratio
+        for start,end in spans(flagged):
+            if not _overlaps(start,end,only):continue
+            frames=list(range(start,end+1));worst=max(frames,key=lambda fi:abs(math.log(flagged[fi])))
+            items.append(_object_item('size','size_jump',oid,frames,worst,f'框面积约为前后帧的 {flagged[worst]:.1f} 倍',ratio=round(flagged[worst],2)))
+        if stats and len(path)>=SIZE_MIN_FRAMES:
+            typical=statistics.median(_area(b) for _,b in path)
+            ratio=typical/stats['area'] if stats['area']>0 else 0
+            usable=[(fi,b) for fi,b in path if oid not in manual.get(fi,()) and _overlaps(fi,fi,only)]
+            if ratio>=SIZE_OVERSIZED and usable:
+                fi=min(usable,key=lambda x:(abs(_area(x[1])-typical),x[0]))[0]
+                items.append(_object_item('size','oversized',oid,[fi],fi,f'整条轨迹的框约为本视频头框的 {ratio:.1f} 倍',ratio=round(ratio,2)))
+    return items
+
+
+def exit_items(rows, frames_list, info, stats, only=None):
+    """Tracks ending at the frame edge: the last boxes may remain after the sperm left."""
+    if not frames_list:return []
+    exited=set()
+    for row in rows:exited.update(((row.get('reviewEvidence') or {}).get('boundaryExit') or {}).get('exitedObjectIds') or [])
+    manual=_manual_ids(rows);final=len(frames_list)-1
+    width,height=(info or {}).get('width',0),(info or {}).get('height',0);head_w=stats['width'] if stats else None
+    items=[]
+    for oid,path in sorted(object_series(frames_list).items()):
+        last,box=path[-1]
+        if last>=final or oid in exited or oid in manual.get(last,()) or not near_edge(box,width,height,head_w):continue
+        frames=[fi for fi,_ in path[-EXIT_TAIL_FRAMES:]]
+        if not _overlaps(frames[0],frames[-1],only):continue
+        items.append(_object_item('exit','edge_exit',oid,frames,last,'轨迹在画面边缘结束',lastFrame=last,lastBox=box,
+                                  anchor=box,region=box_region(box,info)))
+    return items
+
+
 def doubt_items(rows, only=None, *, info=None, frames_list=None, exclusions=None):
     """Actionable reasons only, with bounded marks and exact per-frame locations."""
     frames_list=frames_list if frames_list is not None else _frames_from_rows(rows,info)
@@ -547,6 +631,8 @@ def doubt_items(rows, only=None, *, info=None, frames_list=None, exclusions=None
              for item in items for o in item['observations']]
     items+=detector_items(findings_by_frame,info,stats,claimed,frames_list,exclusions)
     items+=track_ended_items(rows,frames_list,info,stats,only)
+    items+=size_items(frames_list,rows,info,stats,only)
+    items+=exit_items(rows,frames_list,info,stats,only)
     for category,findings in grouped.items():
         if category in ('missing','static'):continue
         batches=[]
@@ -669,6 +755,19 @@ def review_decisions(c, media_id, source_sha256):
                             category=item['category'],source=item.get('source'),result=check['result'],
                             reviewId=row['id'],itemId=item['id']))
     return [d for frame in sorted(by_frame) for d in by_frame[frame]]
+
+
+def review_edited(c, media_id):
+    """Objects a reviewer added or changed in any passed round: {frameIndex: {objectId}}.
+
+    Training exports mark these boxes so model work can weight or study what the
+    tracker got wrong (decision 0002). Annotator edits before review are not included.
+    """
+    out={}
+    for row in c.execute("SELECT changes_json FROM annotation_reviews WHERE media_id=? AND state='passed' AND changes_json IS NOT NULL",(media_id,)):
+        for frame in json.loads(row['changes_json']).get('frames',[]):
+            out.setdefault(frame['frameIndex'],set()).update(frame.get('added',[])+frame.get('moved',[]))
+    return out
 
 
 def refresh_doubts(c, row, frames_list, rows, info=None):
@@ -844,18 +943,31 @@ def check(media_id, review_id, item_id, result, actor, current_frames=None):
         else:
             c.execute("UPDATE annotation_review_exclusions SET revoked_at=?,revoked_by=? WHERE review_id=? AND item_id=? AND revoked_at IS NULL",
                       (checked_at, actor, review_id, item_id))
-        done = checks(c, review_id)
-        fixed = sum(1 for i in items if i["kind"] == "sample" and done.get(i["id"], {}).get("result") == "fixed")
-        if not row["escalated"] and fixed >= ESCALATE_AFTER_FIXED_SAMPLES:
-            frames_list = json.loads(row["start_frames_json"])
-            extra = samples(review_id, frames_list, items, escalation_count(len(frames_list)), "escalation")
-            for k, x in enumerate(extra, len(items) + 1):
-                x.update(id=f"sample-{k}", escalation=True,
-                         message="加严抽检")
-            items += extra
-            c.execute("UPDATE annotation_reviews SET items_json=?,escalated=1 WHERE id=?", (packed(items), review_id))
-            log.warning("annotation_review.escalated media=%s review=%s fixed_samples=%s added=%s", media_id, review_id, fixed, len(extra))
+        extra = followup_item(item, items, json.loads(row["start_frames_json"]), current_frames) if result == "fixed" else None
+        if extra:
+            items.append(extra)
+            c.execute("UPDATE annotation_reviews SET items_json=? WHERE id=?", (packed(items), review_id))
+            log.info("annotation_review.followup_added media=%s review=%s item=%s frames=%s-%s objects=%s",
+                     media_id, review_id, item_id, extra["startFrame"], extra["endFrame"], extra["objectIds"])
         return round_data(c, latest(c, media_id))
+
+
+def followup_item(item, items, start_frames, current_frames):
+    """One re-check of the frames around a correction, once per corrected item."""
+    if item["kind"] in ("unknown", "followup") or item.get("category") in ("missing", "static"):return None
+    if any(i.get("followupOf") == item["id"] for i in items):return None
+    n = len(start_frames)
+    if n == 0:return None
+    start, end = max(0, item["startFrame"] - FOLLOWUP_SPAN), min(n - 1, item["endFrame"] + FOLLOWUP_SPAN)
+    ids = set()
+    if current_frames is not None:
+        for fi in range(item["startFrame"], min(item["endFrame"], n - 1, len(current_frames) - 1) + 1):
+            before = {o["objectId"]: o for o in start_frames[fi] or []}
+            after = {o["objectId"]: o for o in current_frames[fi] or []}
+            ids.update(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+    ids = sorted(ids)
+    return dict(id=f"followup-{item['id']}", kind="followup", followupOf=item["id"], startFrame=start, endFrame=end,
+                frame=start, objectIds=ids, objectId=ids[0] if len(ids) == 1 else None, message="修正处前后帧复查")
 
 
 def diff(old, new):

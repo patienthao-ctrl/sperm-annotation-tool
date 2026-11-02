@@ -1,4 +1,4 @@
-"""Annotation review checklist, escalation, pass record, staleness and the export gate."""
+"""Annotation review checklist, follow-up re-checks, pass record, staleness and the export gate."""
 
 import json
 import uuid
@@ -122,25 +122,34 @@ def test_full_round_escalates_records_changes_and_gates_export(source):
     assert review.status(MID, source, INFO)["status"] == "open"
 
 
-def test_two_fixed_samples_add_escalation_samples_once(source):
+def test_fixed_item_adds_one_followup_around_it_instead_of_random_samples(source):
     frames = frames_with_counts([2] * 40)
-    rid = "arev_escalate"
+    rid = "arev_followup"
     items = review.build_items(rid, frames, [])
     with db.connect() as c:
         c.execute(
             "INSERT INTO annotation_reviews(id,media_id,round,state,started_by,started_at,start_revision,start_frames_json,items_json) VALUES (?,?,?,?,?,?,?,?,?)",
-            (rid, "escalate-media", 1, "open", 1, "now", review.revision(frames), json.dumps(frames), json.dumps(items)),
+            (rid, "followup-media", 1, "open", 1, "now", review.revision(frames), json.dumps(frames), json.dumps(items)),
         )
-    sample_ids = [i["id"] for i in items if i["kind"] == "sample"]
-    state = review.check("escalate-media", rid, sample_ids[0], "fixed", 1)
-    assert not state["escalated"]
-    state = review.check("escalate-media", rid, sample_ids[1], "fixed", 1)
-    extra = [i for i in state["items"] if i.get("escalation")]
-    assert state["escalated"] and len(extra) == 10
-    covered = {i["frame"] for i in items}
-    assert not covered & {i["frame"] for i in extra}
-    state = review.check("escalate-media", rid, sample_ids[2], "fixed", 1)
-    assert len(state["items"]) == len(items) + 10
+    samples = [i for i in items if i["kind"] == "sample"]
+    first = samples[0]
+    current = json.loads(json.dumps(frames))
+    current[first["frame"]][1]["bbox"] = [12, 10, 16, 14]  # The reviewer shrank object 2 there.
+    state = review.check("followup-media", rid, first["id"], "fixed", 1, current)
+    followups = [i for i in state["items"] if i["kind"] == "followup"]
+    assert len(followups) == 1 and not state["escalated"]
+    f = followups[0]
+    assert f["followupOf"] == first["id"] and f["objectIds"] == [2]
+    assert (f["startFrame"], f["endFrame"]) == (max(0, first["frame"] - 5), min(39, first["frame"] + 5))
+    # Re-marking the same item, or an honest "ok", adds nothing more.
+    state = review.check("followup-media", rid, first["id"], "fixed", 1, current)
+    state = review.check("followup-media", rid, samples[1]["id"], "ok", 1, current)
+    assert len([i for i in state["items"] if i["kind"] == "followup"]) == 1
+    assert len(state["items"]) == len(items) + 1
+    # Several corrections never add random frames.
+    for s in samples[1:4]:
+        state = review.check("followup-media", rid, s["id"], "fixed", 1, current)
+    assert {i["id"] for i in state["items"] if i["kind"] == "sample"} == {i["id"] for i in samples}
 
 
 def test_pass_rejects_frames_that_are_still_unknown(source):
@@ -358,7 +367,6 @@ def test_sampling_and_coverage_scale_with_video_length():
     assert len([i for i in long_items if i['kind']=='sample'])==20
     assert len([i for i in long_items if i['kind']=='coverage'])==10
     assert review.sample_count(25)==5 and review.sample_count(25,True)==3
-    assert review.escalation_count(25)==10 and review.escalation_count(1000)==30
 
 
 def test_round_reports_last_actor_and_activity(source):
@@ -537,3 +545,63 @@ def test_export_decisions_keep_archived_checks_but_newer_ok_supersedes_them():
                   (media+'2',media,2,'passed',1,'now','revision','[]',json.dumps([item])))
         c.execute('INSERT INTO annotation_review_checks VALUES (?,?,?,?,?)',(media+'2','doubt-1','ok',1,'now'))
         assert review.review_decisions(c,media,'sha')==[]
+
+
+def track(boxes, oid=1):
+    return [[{"objectId": oid, "bbox": b, "classKey": "sperm"}] if b else [] for b in boxes]
+
+
+def plain_rows(frames):
+    return [dict(source_frame_index=fi,_reviewObjects=frames[fi] or [],objects=[],reviewEvidence=dict(findings=[])) for fi in range(len(frames))]
+
+
+GEOMETRY_INFO = {'width': 1000, 'height': 800}
+
+
+def test_box_inflated_by_debris_is_one_size_item_at_the_worst_frame():
+    normal = [100, 100, 110, 110]
+    boxes = [normal] * 20
+    boxes[8] = [100, 100, 116, 118]  # Debris merged into the mask for two frames.
+    boxes[9] = [100, 100, 118, 120]
+    frames = track(boxes)
+    items = [i for i in review.doubt_items(plain_rows(frames), info=GEOMETRY_INFO, frames_list=frames) if i.get('category') == 'size']
+    assert len(items) == 1
+    item = items[0]
+    assert (item['startFrame'], item['endFrame'], item['frame']) == (8, 9, 9) and item['objectIds'] == [1]
+    assert item['source'] == 'size_jump' and item['ratio'] >= 1.6
+
+
+def test_manual_boxes_steady_tracks_and_edge_clipping_are_not_size_items():
+    normal = [100, 100, 110, 110]
+    boxes = [normal] * 20
+    boxes[8] = [100, 100, 118, 120]
+    frames = track(boxes)
+    frames[8][0]['source'] = 'manual'  # A human chose this padding on purpose.
+    assert not [i for i in review.doubt_items(plain_rows(frames), info=GEOMETRY_INFO, frames_list=frames) if i.get('category') == 'size']
+    edge = [[0, 100, 10, 110]] * 10 + [[0, 100, 4, 110]] * 2 + [None] * 3
+    frames = track(edge)
+    assert not [i for i in review.doubt_items(plain_rows(frames), info=GEOMETRY_INFO, frames_list=frames) if i.get('category') == 'size']
+
+
+def test_object_far_above_clip_head_size_is_listed_once():
+    small = [[{"objectId": oid, "bbox": [200 * oid, 300, 200 * oid + 10, 310], "classKey": "sperm"} for oid in (1, 2, 3)] for _ in range(12)]
+    for frame in small:
+        frame.append({"objectId": 4, "bbox": [700, 300, 716, 320], "classKey": "sperm"})
+    items = [i for i in review.doubt_items(plain_rows(small), info=GEOMETRY_INFO, frames_list=small) if i.get('category') == 'size']
+    assert [(i['source'], i['objectIds']) for i in items] == [('oversized', [4])]
+    assert items[0]['startFrame'] == items[0]['endFrame']
+
+
+def test_track_ending_at_frame_edge_lists_its_last_frames_unless_exit_was_confirmed():
+    boxes = [[400 - 40 * k, 300, 410 - 40 * k, 310] for k in range(11)] + [None] * 4  # Swims out to the left.
+    boxes[10] = [0, 300, 10, 310]
+    frames = track(boxes)
+    rows = plain_rows(frames)
+    items = review.doubt_items(rows, info=GEOMETRY_INFO, frames_list=frames)
+    exits = [i for i in items if i.get('category') == 'exit']
+    assert len(exits) == 1 and (exits[0]['startFrame'], exits[0]['endFrame'], exits[0]['frame']) == (8, 10, 10)
+    assert exits[0]['objectId'] == 1 and not [i for i in items if i.get('source') == 'track_ended']
+    rows[10]['reviewEvidence']['boundaryExit'] = dict(exitedObjectIds=[1])
+    assert not [i for i in review.doubt_items(rows, info=GEOMETRY_INFO, frames_list=frames) if i.get('category') == 'exit']
+    inside = track([[400, 300, 410, 310]] * 10 + [None] * 3)
+    assert not [i for i in review.doubt_items(plain_rows(inside), info=GEOMETRY_INFO, frames_list=inside) if i.get('category') == 'exit']

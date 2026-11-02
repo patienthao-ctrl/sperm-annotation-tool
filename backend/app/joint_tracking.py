@@ -10,7 +10,13 @@ from .endpoint_tracking import iou
 from .review_evidence import valid_box
 
 log = logging.getLogger('review.tracking')
-POLICY = 'joint-head-v1'
+POLICY = 'joint-head-v2'
+# Decision 0002: when the detector is not adopted for a frame (low confidence,
+# a competing candidate such as debris next to the head), SAM3 boxes may have
+# swallowed the debris. Offer the object's usual detector size around the
+# tracker centre; the temporal path still chooses.
+SIZE_SUPPORT_MIN = 3
+SIZE_LOOSE_RATIO = 1.3
 
 
 def center(b):return ((b[0]+b[2])/2,(b[1]+b[3])/2)
@@ -47,9 +53,27 @@ def detector_assignments(anchors, candidates):
     return result
 
 
-def options(f,r,d,manual,fraction):
+def typical_size(boxes):
+    """Median detector width/height of one identity, or None without enough support."""
+    if len(boxes)<SIZE_SUPPORT_MIN:return None
+    widths=sorted(b[2]-b[0] for b in boxes);heights=sorted(b[3]-b[1] for b in boxes)
+    return widths[len(widths)//2],heights[len(heights)//2]
+
+
+def resized(b,size,width,height):
+    (cx,cy),(w,h)=center(b),size
+    x0=min(max(0.,cx-w/2),max(0.,width-w));y0=min(max(0.,cy-h/2),max(0.,height-h))
+    return [x0,y0,min(float(width),x0+w),min(float(height),y0+h)]
+
+
+def options(f,r,d,manual,fraction,typical=None,width=None,height=None):
     if manual is not None:return [('M',manual,0.)]
     available=[(k,b) for k,b in [('F',f),('R',r),('D',d)] if b is not None]
+    sized=[]
+    if d is None and typical is not None and width and height:
+        limit=SIZE_LOOSE_RATIO*math.hypot(*typical)
+        for b in (f,r):
+            if b is not None and scale(b)>limit:sized.append(resized(b,typical,width,height))
     # Consensus only among geometrically close boxes. Never average heads that
     # disagree in position, and never interpolate a missing observation.
     groups=[]
@@ -61,6 +85,10 @@ def options(f,r,d,manual,fraction):
         median=[sorted(b[i] for b in group)[len(group)//2] for i in range(4)]
         available.append(('C',median))
     scored=[]
+    for b in sized:
+        # Same centre as the loose tracker box: judged by size continuity in
+        # temporal_path, not by its (intended) disagreement with that box.
+        scored.append(('S',b,.25))
     for kind,b in available:
         cost={'F':.3*fraction,'R':.3*(1-fraction),'D':.15,'C':.05}[kind]
         if f is not None:cost+=.6*(1-iou(b,f))
@@ -137,10 +165,11 @@ def combine_tracks(rows,reverse,matches,candidates,*,width,height,manual=None,ex
     for fi in order:
         anchors={oid:[b for b in [forward[fi].get(oid),reverse.get(fi,{}).get(inverse.get(oid))] if b is not None] for oid in scope if oid not in excluded.get(fi,set())}
         assigned[fi]=detector_assignments(anchors,candidates[fi])
+    sizes={oid:typical_size([assigned[fi][oid] for fi in order if oid in assigned[fi]]) for oid in scope}
     paths={};choices={}
     lifetimes={oid:[fi for fi in order if oid in forward[fi] or inverse.get(oid) in reverse.get(fi,{})] for oid in scope}
     for oid in sorted(scope):
-        choices[oid]={fi:([] if oid in excluded.get(fi,set()) else options(forward[fi].get(oid),reverse.get(fi,{}).get(inverse.get(oid)),assigned[fi].get(oid),manual.get(fi,{}).get(oid),fi/max(1,end))) for fi in order}
+        choices[oid]={fi:([] if oid in excluded.get(fi,set()) else options(forward[fi].get(oid),reverse.get(fi,{}).get(inverse.get(oid)),assigned[fi].get(oid),manual.get(fi,{}).get(oid),fi/max(1,end),sizes[oid],width,height)) for fi in order}
         paths[oid]=temporal_path(order,choices[oid])
     # Keep identities separate. If selected boxes collapse onto one visible
     # head, prefer a distinct supported alternative; otherwise request review.

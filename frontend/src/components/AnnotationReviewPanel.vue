@@ -26,10 +26,13 @@ const groups: { kind: ItemKind; category?: string; label: string; hint: string }
   { kind: 'unknown', label: '未标注帧', hint: '这些帧没有任何框。补标，或确认确实没有精子。' },
   { kind: 'doubt', category: 'missing', label: reviewLabels.missing, hint: '小圆圈提示可能漏标的位置；请核对是否有未框出的精子头。' },
   { kind: 'doubt', category: 'association', label: reviewLabels.association, hint: '强调的框可能重复或跟错目标，结合前后帧检查。' },
+  { kind: 'doubt', category: 'exit', label: reviewLabels.exit, hint: '轨迹在画面边缘结束，最后几帧可能是精子离开后残留的框。' },
   { kind: 'doubt', category: 'position', label: reviewLabels.position, hint: '检查强调的框是否贴合精子头，可直接微调。' },
+  { kind: 'doubt', category: 'size', label: reviewLabels.size, hint: '框比同一对象前后帧大或小很多，常见于杂质被包进框里，或框整体偏大。' },
   { kind: 'doubt', category: 'static', label: reviewLabels.static, hint: '位置几乎不动的目标，可能是杂质，也可能是不活动的精子。整段视频同一位置只问一次。' },
   { kind: 'doubt', category: 'check', label: reviewLabels.check, hint: '自动检查未完成，请人工核对本段画面。' },
   { kind: 'changed', label: '通过后的改动', hint: '上次审查通过后改过的帧，确认改得对。' },
+  { kind: 'followup', label: '修正处前后复查', hint: '刚修正处的前后几帧常有同样的问题（框偏大、残留框），逐帧看一遍。' },
   { kind: 'count', label: '计数突变', hint: '框数和前后帧差 3 个以上，常见于漏标、重复框或跟错。' },
   { kind: 'coverage', label: '整帧查漏标', hint: '看完整幅画面，找没有框的精子头。' },
   { kind: 'sample', label: '随机抽检', hint: '随机挑的帧，检查每个框和有没有漏标。' },
@@ -38,7 +41,6 @@ const groupOf = (item: ReviewItem) => groups.find(g => g.kind === item.kind && (
 const round = computed(() => state.value?.status === 'open' ? state.value.review : null)
 const items = computed(() => round.value?.items ?? [])
 const grouped = computed(() => groups.map(g => ({ ...g, items: items.value.filter(i => groupOf(i) === g) })).filter(g => g.items.length))
-const fixedSamples = computed(() => items.value.filter(i => i.kind === 'sample' && i.check?.result === 'fixed').length)
 const remaining = computed(() => items.value.filter(i => !i.check).length)
 const canPass = computed(() => !!round.value && remaining.value === 0)
 const concurrentReviewer = computed(() => {
@@ -74,6 +76,9 @@ const checkedLabel = (i: ReviewItem) => i.check ? (missing(i) && i.check.result 
 // One plain sentence per card; the buttons carry the choices.
 function question(i: ReviewItem) {
   if (i.source === 'track_ended') return `对象 ${i.objectId} 从这一帧起没有框了。它还在画面里吗？灰色虚线为上一帧位置；若仍在画面内，请补框。`
+  if (i.source === 'edge_exit') return `对象 ${i.objectId} 在画面边缘结束。逐帧看${frames(i)}：精子已离开的帧请删除残留框，被边缘截断的框请收缩。`
+  if (i.source === 'size_jump' || i.source === 'oversized') return `对象 ${i.objectId}：${i.message}。检查框是否包进了杂质或偏大，收缩后可把尺寸应用到相邻帧。`
+  if (i.kind === 'followup') return `${objectsText(i) ? `${objectsText(i)}：` : ''}刚修正的帧前后（${frames(i)}）常有同样的问题，逐帧看一遍。`
   if (missing(i)) {
     if (reviewCategory(i) === 'static') return '这个目标几乎不动：可能是杂质，也可能是不动的精子。'
     const seen = i.source === 'disagreement' ? '正反向追踪对这个头的位置不一致，这里没有框' : i.source === 'detector' ? '检测器在这里看到一个头，但没有框' : `SAM3 反向追踪在 ${i.observations?.length ?? 1} 帧看到一个头，但没有框`
@@ -108,9 +113,9 @@ const adoptsTrack = (i: ReviewItem) => i.kind === 'doubt' && reviewCategory(i) =
 const zoomPreview = computed(() => {
   const item = current.value
   if (!item || item.kind !== 'doubt') return null
-  if (!(missing(item) || item.source === 'track_ended')) return null
+  if (!(missing(item) || item.source === 'track_ended' || item.source === 'edge_exit')) return null
   const observation = item.observations?.find(o => o.frameIndex === props.currentFrame)
-  const box = observation?.candidates[0] ?? item.anchor ?? item.lastBox
+  const box = observation?.candidates?.[0] ?? item.anchor ?? item.lastBox
   if (!box?.length) return null
   const frame = observation ? props.currentFrame : item.frame
   const sequence = item.index && item.countInFrame ? `${item.index}/${item.countInFrame}` : ''
@@ -182,7 +187,6 @@ defineExpose({ primary, secondary, tertiary, next })
           <progress :max="round.total" :value="round.checked" /><span data-testid="review-progress">{{ round.checked }} / {{ round.total }}</span>
         </div>
         <p v-if="concurrentReviewer" class="review-warning" role="status" data-testid="review-concurrent">用户 #{{ concurrentReviewer.actor }} 也在审查这段视频（最近一次操作 {{ concurrentReviewer.minutes }} 分钟前），同时修改可能互相覆盖。</p>
-        <p v-if="round.escalated" class="review-warning" role="status">抽检发现 {{ fixedSamples }} 帧有错，已加抽 10 帧。</p>
 
         <div v-if="current" class="review-current" data-testid="review-current" :data-item="current.id">
           <div class="review-current-head">

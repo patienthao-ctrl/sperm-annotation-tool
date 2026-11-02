@@ -119,7 +119,7 @@ seed 的临时写入或替换失败保留旧文件，临时文件清理后可重
 | 游标 | `review_bookmarks`、`confirmation_bookmarks`，按用户与任务隔离、版本独立 |
 | 幂等 | `review_write_receipts` 与业务变化同一事务；`training_exports` 有操作者+请求键唯一约束 |
 | 导出 | `training_exports` 存任务设置、进度、manifest、错误、完成状态 |
-| 审查 | `annotation_reviews` 每视频每轮一行：轮次、状态 open/passed、开始人/时间、开始时逐帧内容（`start_frames_json`）、清单（`items_json`）、是否加严；通过时记录通过人/时间、内容摘要 `passed_revision`、通过时逐帧内容、列表用的工作区/追踪文件标记 `passed_stamp`、修改记录 `changes_json`。`annotation_review_checks` 每项一行：结果 ok/fixed/empty/not_target、检查人、时间。只追加轮次，不改写旧轮。`annotation_review_exclusions` 记录“不是精子”的排除位置：`id/media_id/review_id/item_id/source/frames_json/actor_id/created_at/revoked_at/revoked_by`；`frames_json` 为原图像素 `[{frameIndex,bbox:[x1,y1,x2,y2]}]`，只追加和撤销，不物理删除。静止排除写 `source=static`，其他来源只在 ±5 帧范围生效；旧静止记录从对应清单及归档恢复类型 |
+| 审查 | `annotation_reviews` 每视频每轮一行：轮次、状态 open/passed、开始人/时间、开始时逐帧内容（`start_frames_json`）、清单（`items_json`，含修正后追加的 `followup` 复查项）、是否加严（旧轮次字段，新轮次恒为 0）；通过时记录通过人/时间、内容摘要 `passed_revision`、通过时逐帧内容、列表用的工作区/追踪文件标记 `passed_stamp`、修改记录 `changes_json`。`annotation_review_checks` 每项一行：结果 ok/fixed/empty/not_target、检查人、时间。只追加轮次，不改写旧轮。`annotation_review_exclusions` 记录“不是精子”的排除位置：`id/media_id/review_id/item_id/source/frames_json/actor_id/created_at/revoked_at/revoked_by`；`frames_json` 为原图像素 `[{frameIndex,bbox:[x1,y1,x2,y2]}]`，只追加和撤销，不物理删除。静止排除写 `source=static`，其他来源只在 ±5 帧范围生效；旧静止记录从对应清单及归档恢复类型 |
 | 审计身份/证据 | `audit_source_identity` 保存部署身份；`training_export_audits` 按 export_id 唯一保存规范 JSON、采集时间和 SHA；触发器禁止更新/删除 |
 
 A/B/F 不随浏览、缩放、草稿、重新确认或退回重审而改写。F 的对象集合和类别继承 A，只选择几何来源。当前帧重审使用上述事件表；旧问题标记表不作为这一流程的状态来源。

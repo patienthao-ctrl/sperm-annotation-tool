@@ -50,7 +50,7 @@ def start(media_id: str, user: User):
 @router.put("/media/{media_id}/items/{item_id}")
 def check(media_id: str, item_id: str, body: Check, user: User):
     current = None
-    if body.result == "ok":
+    if body.result in ("ok", "fixed"):
         with source_read():
             directory, _, info = media_context(media_id, allow_tracking=True)
             current = review.load_cached(media_id, directory, info)[0]
