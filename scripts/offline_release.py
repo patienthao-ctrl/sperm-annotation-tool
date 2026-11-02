@@ -21,6 +21,8 @@ import tarfile
 
 PACKAGE_FILES = ['update-offline.sh', 'export-audit.sh', 'scripts/offline_update.py', 'scripts/offline_legacy.json',
                  'compose.yaml', 'compose.gpu.yaml', '.env.docker.example']
+# Run on the server before the tools archive is unpacked, so it is a separate Release asset.
+STANDALONE_ASSETS = ['install-offline.sh']
 GITHUB_ASSET_LIMIT = 2 * 1024**3
 DEFAULT_PART_SIZE = 2_000_000_000
 VERSION = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')
@@ -120,7 +122,7 @@ def package(source, version, revision, mode, output, part_size):
     history = run(['git', 'rev-list', revision], source).splitlines()
     require(history and history[0] == revision and all(re.fullmatch('[0-9a-f]{40}', x) for x in history)
             and len(set(history)) == len(history), 'Git history must contain the selected commit and valid ancestors')
-    for relative in PACKAGE_FILES:
+    for relative in PACKAGE_FILES + STANDALONE_ASSETS:
         require((source / relative).is_file(), 'Selected revision does not contain ' + relative)
     tags = {'backend': 'sperm-annotation-backend:%s-%s' % (version, mode), 'frontend': 'sperm-annotation-frontend:' + version}
     images = {name: image_identity(tag, revision, version, mode, source) for name, tag in tags.items()}
@@ -165,6 +167,8 @@ def _write_assets(source, version, revision, mode, output, part_size, history, t
         for relative in PACKAGE_FILES:
             archive.add(source / relative, arcname=relative, recursive=False,
                         filter=lambda info: _plain(info, 0o755 if info.name.endswith('.sh') else 0o644))
+    for name in STANDALONE_ASSETS:
+        shutil.copyfile(source / name, output / name)
     assets = sorted(p.name for p in output.iterdir())
     for name in assets:
         require((output / name).stat().st_size < GITHUB_ASSET_LIMIT, 'Release asset is too large: ' + name)
@@ -183,16 +187,18 @@ def release_notes(manifest, tools_name):
     return '\n'.join([
         '医院离线更新包：%s（GPU，linux/amd64），源码提交 `%s`。' % (manifest['version'], manifest['revision']),
         '',
-        '1. 在联网电脑下载本页**全部**附件（%s、所有 `images.tar.partNN`、SHA256SUMS），放入同一文件夹，整体传入医院服务器的新目录，例如 `/opt/sperm-updates/%s/`。' % (tools_name, manifest['version']),
-        '2. 在该目录执行：',
-        '```bash',
-        'tar -xzf %s' % tools_name,
-        'bash update-offline.sh --assemble',
-        'bash update-offline.sh /原部署目录 --check',
-        'bash update-offline.sh /原部署目录',
+        '1. 联网电脑一条命令下载本页全部附件并核对 SHA256（Windows PowerShell；macOS/Linux 用同名 .py）：',
+        '```powershell',
+        '.\\download-offline-release.ps1 -Version %s' % manifest['version'],
         '```',
+        '   脚本在仓库根目录；也可手工下载本页全部附件（%s、`images.tar.partNN`、install-offline.sh、SHA256SUMS）放进同一文件夹。' % tools_name,
+        '2. 把整个文件夹传入医院服务器的新目录（例如 `/opt/sperm-updates/%s/`），在该目录执行：' % manifest['version'],
+        '```bash',
+        'bash install-offline.sh /原部署目录',
+        '```',
+        '   脚本依次核对附件、解开工具、合并校验分块、升级前检查，经确认后升级并显示状态；任一步失败即停止。',
         '',
-        '完整步骤、回滚和故障恢复见仓库 docs/DOCKER_DEPLOYMENT.md 第 6、8 节。SHA256 只用于发现传输损坏，请只从本仓库 Releases 页面下载。',
+        '分步命令、回滚和故障恢复见仓库 docs/DOCKER_DEPLOYMENT.md 第 6、8 节。SHA256 只用于发现传输损坏，请只从本仓库 Releases 页面下载。',
         '',
     ])
 

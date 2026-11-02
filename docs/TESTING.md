@@ -92,7 +92,7 @@ npm run build --prefix frontend
 | 训练导出/门禁/版本 | `test_training_export.py`、`test_quality_audit.py`、`test_export_audit_script.py` | `training-export-browser.mjs`（审查门槛、按视频划分、附原视频、多视频合并、响应丢失重放、改动后失效、统计导出） |
 | 标注/审查工作台一致性 | 上述对应页面回归、构建 | `workbench-consistency-browser.mjs`：两种模式两尺寸浅深主题、同一画布与工具、审查隐藏追踪、清单定位与帧条、专注、760/390 窄屏与使用说明隔离 |
 | 数据库查询/升级、Docker 发布 | `test_annotation_result_dedupe.py`、`test_deployment_preflight.py`、`test_docker_deployment_contract.py`、`test_model_distribution.py` | [容器验收](details/testing-delivery.md)；不是只运行前端构建 |
-| 完整离线包、旧版识别、备份升级与回滚 | `test_offline_update.py`、`test_offline_release.py`（Releases 分块、`--assemble`）、`scripts/test_build_offline.ps1` | [离线升级验收](details/testing-delivery.md#完整离线升级验收)；模拟 Docker 不代替真实导入和数据恢复 |
+| 完整离线包、旧版识别、备份升级与回滚 | `test_offline_update.py`、`test_offline_release.py`（Releases 分块、`--assemble`）、`test_offline_oneclick.py`（一键下载与服务器一键升级）、`scripts/test_build_offline.ps1` | [离线升级验收](details/testing-delivery.md#完整离线升级验收)；模拟 Docker 不代替真实导入和数据恢复 |
 
 括号为当前脚本检查数量，**不是每次修改自动通过的结果**。测试源位于 `backend/tests/` 与 `frontend/tests/`。
 

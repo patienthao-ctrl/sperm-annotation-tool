@@ -185,7 +185,7 @@ def fake_tools(tmp_path, monkeypatch):
     images = tmp_path / "fake-images.tar"
     images.write_bytes(payload_of(5 * PART + 9))
     source = tmp_path / "source"
-    for relative in ["update-offline.sh", "scripts/offline_update.py"]:
+    for relative in ["update-offline.sh", "scripts/offline_update.py", "install-offline.sh"]:
         (source / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relative, source / relative)
     for relative in ["export-audit.sh", "scripts/offline_legacy.json", "compose.yaml", "compose.gpu.yaml", ".env.docker.example"]:
@@ -202,7 +202,7 @@ def test_release_assets_download_assemble_and_verify(updater, release, fake_tool
     assets = tmp_path / "assets"
     manifest, parts, tools = release.package(source, "v1.3.0", REVISION, "gpu", assets, PART)
     names = sorted(p.name for p in assets.iterdir())
-    assert names == sorted(["SHA256SUMS", tools.name] + ["images.tar.part%02d" % i for i in range(1, 7)])
+    assert names == sorted(["SHA256SUMS", "install-offline.sh", tools.name] + ["images.tar.part%02d" % i for i in range(1, 7)])
     assert all((assets / n).stat().st_size <= PART for n in names if ".part" in n)
     for line in (assets / "SHA256SUMS").read_text().splitlines():
         digest, name = line.split("  ")

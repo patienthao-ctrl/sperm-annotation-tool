@@ -26,7 +26,7 @@
 
 ## 怎样读大文档
 
-每份文档开头有几行“要点”，先读要点；再用 `grep -n '^#' docs/<文件>` 看章节，只读与任务相关的章节。当前大小（KB）：WORKFLOW 34、API 36、STORAGE_LAYOUT 29、ANNOTATION 26、DOCKER_DEPLOYMENT 29、TESTING 19、PROJECT_STRUCTURE 12。新增内容放进已有章节；一节超过约 5 KB、且只在少数任务中用到时，移到 `details/`。
+每份文档开头有几行“要点”，先读要点；再用 `grep -n '^#' docs/<文件>` 看章节，只读与任务相关的章节。当前大小（KB）：WORKFLOW 34、API 36、STORAGE_LAYOUT 29、ANNOTATION 26、DOCKER_DEPLOYMENT 30、TESTING 19、PROJECT_STRUCTURE 12。新增内容放进已有章节；一节超过约 5 KB、且只在少数任务中用到时，移到 `details/`。
 
 ## 给工具使用者的说明
 

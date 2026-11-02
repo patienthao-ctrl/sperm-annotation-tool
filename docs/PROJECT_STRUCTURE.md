@@ -11,7 +11,7 @@ Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前�
 | 职责 | 实现入口 |
 | --- | --- |
 | Docker 部署入口 | 根目录 `deploy.sh` / `deploy.ps1`、`compose.yaml` / `compose.gpu.yaml`、`.env.docker.example` |
-| 完整离线更新包与服务器升级 | 根目录 `build-offline.ps1` / `update-offline.sh`、`scripts/offline_update.py`（含 `--assemble` 分块合并）/ `offline_legacy.json`；版本标签自动发布 Releases 包：`.github/workflows/release-images.yml` 的 `offline-package` 与 `scripts/offline_release.py`；制作、版本识别、备份、恢复与回滚见 Docker 部署说明 |
+| 完整离线更新包与服务器升级 | 根目录 `build-offline.ps1` / `update-offline.sh`、`scripts/offline_update.py`（含 `--assemble` 分块合并）/ `offline_legacy.json`；版本标签自动发布 Releases 包：`.github/workflows/release-images.yml` 的 `offline-package` 与 `scripts/offline_release.py`；一键下载 `download-offline-release.ps1` / `.py`，服务器一键升级 `install-offline.sh`；制作、版本识别、备份、恢复与回滚见 Docker 部署说明 |
 | Chrome 93 / HTTP 兼容 | `frontend/src/utils/browserCompat.ts`；`scripts/build_compat_update.py` / `install_compat_update.sh` 仅保留历史专项修复用途 |
 | 容器启动前检查 | `backend/app/deployment_check.py`、`backend/docker-entrypoint.sh` |
 | 模型随仓库交付 | `model-distribution/manifest.json` 与 `LICENSE-SAM.txt`、`scripts/prepare_model.py` / `build_model_bundle.py` |

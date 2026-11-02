@@ -183,11 +183,18 @@ git push target v1.3.0   # target 换成指向 huangwww11222/sperm-annotation �
 | --- | --- |
 | `sperm-annotation-<版本>-gpu-linux-amd64-files.tar.gz` | `manifest.json`、`parts.json`、`update-offline.sh`、`export-audit.sh`、`scripts/`、部署配置参考文件 |
 | `images.tar.part01` … | 前后端完整镜像归档的分块 |
-| `SHA256SUMS` | 以上所有附件的 SHA256，可在下载电脑上用 `sha256sum -c SHA256SUMS` 先核对 |
+| `install-offline.sh` | 服务器端一键升级入口；解开工具前就要运行，所以单独作为附件 |
+| `SHA256SUMS` | 以上所有附件的 SHA256 |
 
 同名 Release 已存在时工作流拒绝覆盖，修正后发布新版本号。工作流在 GitHub 托管机器上构建，只证明包已生成，不代表 GPU 推理已在医院服务器验收。CPU 仅人工模式或非标签提交仍用下面的手工方式制作。
 
-医院服务器不能访问 GitHub：由维护者或医院人员在联网电脑打开该版本页面，下载**全部附件**放入同一文件夹，再人工传入医院服务器的新目录，例如 `/opt/sperm-updates/v1.3.0/`。内网传输没有单文件大小限制。
+医院服务器不能访问 GitHub，由维护者或医院人员在联网电脑下载后人工传入。在仓库根目录用一条命令下载指定版本的全部附件并核对 SHA256SUMS（省略版本参数时取最新的 vX.Y.Z 离线包，自动跳过 SAM3 模型等其他 Release 和预发布版本）：
+
+```powershell
+.\download-offline-release.ps1 -Version v1.3.0
+```
+
+macOS/Linux 使用 `python3 download-offline-release.py --version v1.3.0`，两者行为相同。脚本只访问公开的 Release 地址，不需要 GitHub 登录，文件保存到 `sperm-annotation-<版本>/`。再次运行时跳过已核对的文件；下载损坏会重新下载（最多 3 次），仍不符时停止且不留下坏文件。也可在浏览器中手工下载该版本全部附件放进同一文件夹。把整个文件夹传入医院服务器的新目录，例如 `/opt/sperm-updates/v1.3.0/`；内网传输没有单文件大小限制。
 
 **备用：联网 Windows 电脑手工制作。** 准备 Git、Docker Desktop 的 Linux 容器模式和 PowerShell 5.1+。准备电脑无需 GPU、Python 或 Node.js；应用依赖在 Docker 内构建。确认 `docker info --format '{{.OSType}}'` 输出 `linux`。镜像构建和导出占用额外磁盘，包大小取决于 GPU 依赖；首次构建需要下载基础镜像、Python 与 npm 依赖。
 
@@ -216,9 +223,25 @@ git fetch --tags
 
 输出目录包括完整前后端 `images.tar`、含提交号/镜像身份/文件校验的 `manifest.json`、`update-offline.sh`、配套 `scripts/` 和部署配置参考文件。包不含 `.env`、密码、业务视频、数据库或模型；现有医院模型继续复用。构建日志位于制作机器 `work/offline-build-<编号>/build.log`，构建失败不会发布完整目标目录。手工包不分块，交付时传入**整个目录及其子目录**，不能只发 `.sh` 或只换校验清单。
 
-#### B. 医院服务器先检查
+#### B. 医院服务器一键升级
 
-把更新包放入独立目录，例如 `/opt/sperm-updates/<版本>/`，保留原部署 `/opt/sperm-annotation/sperm-annotation-offline/`。以下 `/新包目录` 和 `/原部署目录` 均替换为实际绝对路径。
+把更新包放入独立目录，例如 `/opt/sperm-updates/<版本>/`，保留原部署 `/opt/sperm-annotation/sperm-annotation-offline/`。以下 `/新包目录` 和 `/原部署目录` 均替换为实际绝对路径。确认所有使用者可以短暂停用后，在新包目录执行：
+
+```bash
+cd /新包目录
+bash install-offline.sh /原部署目录
+```
+
+脚本按顺序执行六步，任一步失败立即停止并说明原因，按提示处理后重新运行即可：
+
+1. 核对 `SHA256SUMS` 列出的全部附件（手工包没有此文件则跳过）；
+2. 解开 `*-files.tar.gz`（手工包已含工具则跳过）；
+3. `update-offline.sh --assemble` 合并并校验分块（无 `parts.json` 则跳过）；
+4. `update-offline.sh /原部署目录 --check` 升级前检查，不停服务、不导入镜像；
+5. 提示所有使用者保存并退出、没有追踪或导出任务，输入 `yes` 才继续，其他输入即取消且服务不受影响；
+6. `update-offline.sh /原部署目录` 正式升级，随后打印 `--status` 和验收提示。
+
+一键脚本只依次调用下面同一组命令，不跳过任何版本、契约、空间、备份或恢复检查；升级失败时的恢复与回滚仍按第 8 节。以下分步命令用于排查问题或分步执行。
 
 从 Releases 下载的包先在新包目录解开工具并合并分块（手工包没有 `parts.json`，跳过这一步）：
 

@@ -43,7 +43,7 @@ cd sperm-annotation
 
 ## 医院内网：持续交付离线更新
 
-已安装的医院服务器通过完整离线更新包升级。推送 `vX.Y.Z` 版本标签后，GitHub Actions 自动制作 GPU 更新包并发布到仓库 [Releases](https://github.com/huangwww11222/sperm-annotation/releases)；在联网电脑下载该版本全部附件，传入医院服务器新目录，解开 `*-files.tar.gz` 后先运行 `bash update-offline.sh --assemble` 合并并校验分块。也可在联网 Windows 电脑（Git、Docker Desktop Linux 容器模式）于干净的仓库目录手工制作：
+已安装的医院服务器通过完整离线更新包升级。推送 `vX.Y.Z` 版本标签后，GitHub Actions 自动制作 GPU 更新包并发布到仓库 [Releases](https://github.com/huangwww11222/sperm-annotation/releases)；在联网电脑运行 `.\download-offline-release.ps1 -Version vX.Y.Z`（macOS/Linux 用 `python3 download-offline-release.py`）下载全部附件并核对 SHA256，把文件夹传入医院服务器新目录后执行 `bash install-offline.sh /原部署目录`，脚本依次完成核对、合并、检查、确认停机、升级和状态显示。也可在联网 Windows 电脑（Git、Docker Desktop Linux 容器模式）于干净的仓库目录手工制作：
 
 ```powershell
 git pull --ff-only

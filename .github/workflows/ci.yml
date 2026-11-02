@@ -108,3 +108,8 @@ jobs:
       - name: Offline release packaging contract (mock Git and Docker)
         shell: powershell
         run: .\scripts\test_build_offline.ps1
+      - name: Release download script on Windows PowerShell 5.1 (local fake GitHub)
+        shell: powershell
+        run: |
+          python -m pip install pytest
+          python -m pytest backend/tests/test_offline_oneclick.py -k powershell -q
