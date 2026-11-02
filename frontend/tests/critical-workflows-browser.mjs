@@ -136,7 +136,8 @@ try {
   } else {
     await page.getByTestId('tracking-error').waitFor(); await ready()
     check((await page.getByTestId('tracking-error').innerText()).includes('未启用'), 'CPU deployment reports disabled AI and keeps manual annotation usable')
-    for (const n of [2,3]) {await jump(n);await button('复制上一帧 C').click();await poll(async () => (await workspace()).manualAnnotations.length===n,'copied frame saved')}
+    // The copy-previous-frame button was retired with the unified workbench; annotate the remaining frames directly.
+    for (const n of [2,3]) {await jump(n);await draw(n)}
   }
   check(await button('AI Tracking').count()===0, 'retired tracking button is absent')
   // Export stays locked until the same annotation passes review.
@@ -178,7 +179,8 @@ try {
     if(lostSnapshot){lostSnapshot=false;await route.abort('failed')}else await route.fulfill({response})
   })
   await button('导出训练数据集').click()
-  await page.getByRole('alert').filter({hasText:/导出|fetch|请求|连接|Failed/i}).waitFor()
+  // Wait for the export dialog's own error: in CPU mode the page already shows a tracking alert that mentions export.
+  await page.getByRole('dialog',{name:'导出需要处理'}).getByRole('alert').waitFor()
   await page.reload();await page.getByTestId('annotation-hit').waitFor()
   await button('恢复数据集导出').click()
   await page.getByRole('dialog',{name:'导出训练数据集'}).waitFor()
