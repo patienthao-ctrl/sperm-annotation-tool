@@ -172,8 +172,8 @@ ZIP 包含 15 个必需 CSV/JSONL、2 个可选历史表（存在时）和 manif
 
 `POST /api/track/head-box/{media_id}`（需登录）：`{frameIndex,x,y}` 为原始帧号和原图像素点击坐标；返回 `{frameIndex,width,height,bbox:[x1,y1,x2,y2],confidence}`。只提供候选，不写工作区或建立对象 ID。422 表示坐标/候选无效或歧义，404 表示素材/帧不存在，503 表示模型不可用或忙。日志 `annotation.head_click` 记录素材、帧、框、耗时与失败原因。
 
-服务需安装 `backend/requirements-head-detector.txt` 并配置 `HEAD_DETECTOR_MODEL` 指向可信自训练 YOLO 头部权重（默认 backend/track_modul/head-detector.pt），`HEAD_DETECTOR_DEVICE` 默认 cpu，可显式设 cuda:0。惰性加载、单请求推理，不自动下载模型。权重不纳入 Git；当前 SAM3 Release 不包含此检测权重，不能将已有离线包当作已具备该功能的模型包。
+检测器与固定权重随仓库及后端镜像提供；`HEAD_DETECTOR_MODEL` 可指定自定义权重。`HEAD_DETECTOR_DEVICE` 默认 `cuda:0`；GPU 不可用时请求失败，不静默切换 CPU。惰性加载、单请求推理，不自动下载模型。
 
-`POST /api/track` 可选 `edgeDiscovery:boolean`（兼容接口默认 false，新前端固定 true），包含在启动幂等正文中。开启需安装 `backend/requirements-head-detector.txt` 并配置与点选头部共用的 `HEAD_DETECTOR_MODEL` / `HEAD_DETECTOR_DEVICE`。任务推理阶段发现边缘新对象后仍以既有 Tracking objects 返回，不改变frame/objectId坐标契约；检测器不可用时任务failed，不静默降级为识别成功。现有SAM3 Release模型包不包含头部检测权重，离线部署须另行准备。
+`POST /api/track` 可选 `edgeDiscovery:boolean`（兼容接口默认 false，新前端固定 true），包含在启动幂等正文中。开启使用与点选头部共用的检测器和设备配置。任务推理阶段发现边缘新对象后仍以既有 Tracking objects 返回，不改变frame/objectId坐标契约；检测器不可用时任务failed，不静默降级为识别成功。头部检测权重随应用镜像提供，与单独保留的 SAM3 模型不同。
 
 首尾结果读取采用 head-centre-v1 统一端点投影，返回 terminalIdentity.matches 合并已验证对应和必要的未匹配尾ID消歧（内部仍分开保存）。后者只定义端点身份，不证明跨视频时序匹配。JSONL 与导出来源应用同一规则；原结果文件不改写。旧快照不变，新预览的 sourceRevision 包含投影策略。
