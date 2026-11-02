@@ -17,6 +17,12 @@ const checks = [], errors = [], requests = []
 const check = (value, message) => { assert(value, message); checks.push(message); console.log('PASS', checks.length, message) }
 page.on('pageerror', e => errors.push(String(e)))
 page.on('response', r => { if (r.status() >= 400) requests.push({ method:r.request().method(), path:new URL(r.url()).pathname, status:r.status() }) })
+// Export/review timeline and console errors, kept in the results file to diagnose CI-only stalls.
+const trace = [], started = Date.now(), traced = r => /\/api\/(datasets|annotation-review)\//.test(r.url())
+page.on('request', r => { if (traced(r)) trace.push({ ms:Date.now()-started, event:'request', method:r.method(), path:new URL(r.url()).pathname }) })
+page.on('requestfinished', async r => { if (traced(r)) trace.push({ ms:Date.now()-started, event:'finished', path:new URL(r.url()).pathname, status:(await r.response())?.status() }) })
+page.on('requestfailed', r => { if (traced(r)) trace.push({ ms:Date.now()-started, event:'failed', path:new URL(r.url()).pathname, error:r.failure()?.errorText }) })
+page.on('console', m => { if (m.type()==='error') trace.push({ ms:Date.now()-started, event:'console', text:m.text().slice(0,500) }) })
 page.on('dialog', d => d.accept())
 const button = name => page.getByRole('button', { name, exact:true })
 let token, mid
@@ -206,7 +212,7 @@ try {
   await import('./endpoint-tracking-browser.mjs')
 } finally {
   fs.mkdirSync('output/playwright',{recursive:true})
-  fs.writeFileSync('output/playwright/critical-workflows-results.json',JSON.stringify({modelMode,checks,errors,requests},null,2))
+  fs.writeFileSync('output/playwright/critical-workflows-results.json',JSON.stringify({modelMode,checks,errors,requests,trace},null,2))
   await page.screenshot({path:'output/playwright/critical-workflows-last.png'}).catch(()=>{})
   await browser.close()
 }
