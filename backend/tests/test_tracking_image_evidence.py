@@ -22,6 +22,24 @@ def video(path, *, width=96, height=64, count=10, base=20):
     return path
 
 
+def decoded_frame(image, count=20, base=20):
+    """Which synthetic frame was read. MJPG is lossy and colours drift by OpenCV
+    build (CI's image read [30,65,143] for frame 1), so identify the nearest
+    frame instead of a fixed tolerance; neighbours differ by 12 in red."""
+    mean=np.array(image['mean'])
+    distances=[np.abs(mean-[base+fi*12,60+fi*5,150-fi*4]).max() for fi in range(count)]
+    best=int(np.argmin(distances))
+    assert distances[best]<6, mean # a decoded frame of this video, not blank/garbage
+    return best
+
+
+def test_frame_identity_tolerates_lossy_colour_drift():
+    assert decoded_frame({'mean':[30,65,143]})==1
+    assert decoded_frame({'mean':[44,70,142]})==2
+    with pytest.raises(AssertionError):
+        decoded_frame({'mean':[0,0,0]})
+
+
 class ProbeStub:
     def __init__(self, **kwargs):
         self.configuration=kwargs
@@ -64,7 +82,7 @@ def test_grouped_only_explicit_past_human_references_are_primed(service,tmp_path
         assert [(f,set(boxes)) for f,_,boxes in item.probe.primed]==[(0,{1,2}),(3,{3})]
         for fi,image,_ in item.probe.primed:
             assert image['shape']==(64,96,3)
-            assert image['mean']==pytest.approx([20+fi*12,60+fi*5,150-fi*4],abs=2)
+            assert decoded_frame(image)==fi
         assert any('tracking.image_reference' in r.message and 'frame=3' in r.message for r in caplog.records)
 
 
@@ -86,7 +104,7 @@ def test_sequential_skips_and_rewind_preserve_native_identity(service,tmp_path,m
         for fi in (2,3,6,1,2,9):
             item.observe(fi,{1:[8,8,28,28]},None)
             frame,image,_,_=item.probe.observed[-1]
-            assert frame==fi and image['mean']==pytest.approx([20+fi*12,60+fi*5,150-fi*4],abs=2)
+            assert frame==fi and decoded_frame(image)==fi
     assert opened==[0,2,1]
 
 
@@ -99,9 +117,9 @@ def test_failed_seek_uses_exact_sequential_fallback_not_zero(service,tmp_path,mo
         def __getattr__(self,name):return getattr(self.cap,name)
     monkeypatch.setattr(cv2,'VideoCapture',NoSeek)
     with native(service,path,{1:baseline(4)},seed=7) as item:
-        assert item.probe.primed[0][1]['mean']==pytest.approx([68,80,134],abs=2)
+        assert decoded_frame(item.probe.primed[0][1])==4
         item.observe(7,{1:[8,8,28,28]},None)
-        assert item.probe.observed[-1][1]['mean']==pytest.approx([104,95,122],abs=2)
+        assert decoded_frame(item.probe.observed[-1][1])==7
     assert all(reader.released for reader in readers)
 
 
@@ -178,7 +196,7 @@ def test_transient_read_failure_recovers_with_fresh_exact_reader(service,tmp_pat
         assert all(reader.released for reader in failed)
         monkeypatch.setattr(service,'open_capture_at',actual)
         assert item.observe(2,{1:[8,8,28,28]},None)[1]['status']=='stub-native-read'
-        assert item.probe.observed[-1][1]['mean']==pytest.approx([44,70,142],abs=2)
+        assert decoded_frame(item.probe.observed[-1][1])==2
         assert len(item.probe.primed)==1 # a recovery never learns an AI frame.
 
 
@@ -189,7 +207,7 @@ def test_far_forward_jump_reopens_instead_of_decoding_every_intermediate_frame(s
     with native(service,path) as item:
         item.observe(0,{1:[8,8,28,28]},None)
         item.observe(12,{1:[8,8,28,28]},None)
-        assert item.probe.observed[-1][1]['mean']==pytest.approx([164,120,102],abs=2)
+        assert decoded_frame(item.probe.observed[-1][1])==12
     assert opened==[0,12]
 
 
