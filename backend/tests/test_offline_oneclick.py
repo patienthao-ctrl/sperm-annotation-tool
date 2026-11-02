@@ -119,7 +119,8 @@ def run_download(command, github, tmp_path, *extra):
     fake, _ = github
     out = tmp_path / "out"
     args = ["--repository", "o/r", "--api-base", fake.base, "--output", str(out), *extra]
-    return subprocess.run(command(args), capture_output=True, text=True, timeout=120), out
+    # Windows PowerShell writes Chinese in the console code page; the checked names are ASCII.
+    return subprocess.run(command(args), capture_output=True, encoding="utf-8", errors="replace", timeout=120), out
 
 
 @pytest.mark.parametrize("command", downloaders())
