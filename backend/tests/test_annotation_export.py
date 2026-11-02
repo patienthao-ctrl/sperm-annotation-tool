@@ -191,3 +191,35 @@ def test_latest_snapshot_per_video_reports_changed_workspaces(source, monkeypatc
     (source/'workspace_state.json').write_text(json.dumps(state))
     stale = direct.latest(1)[0]
     assert not stale['valid'] and '变化' in stale['reason']
+
+
+def test_export_marks_boxes_the_reviewer_changed(source, monkeypatch, tmp_path):
+    import zipfile
+    from app import main, api_common as routes, confirmation_workflow as confirmation, annotation_review as review
+    from .test_training_export import video_file
+    from .test_annotation_review import edit_manual
+    video=video_file(source,n=3)
+    with db.connect() as c:
+        confirmation.migrate(c)
+        export.migrate(c)
+    monkeypatch.setattr(routes,'completion_context',lambda mid:(source,video,INFO))
+    monkeypatch.setattr(main,'media_dir',lambda mid:source)
+    monkeypatch.setattr(export,'DATASET_EXPORT_DIR',tmp_path/'packages')
+    monkeypatch.setattr(export,'enqueue',lambda eid:None)
+    state=review.start('complete-media',source,INFO,1)
+    edit_manual(source,30)  # The reviewer moves the box during review.
+    workspace=json.loads((source/'workspace_state.json').read_text());workspace['updatedBy']=1
+    (source/'workspace_state.json').write_text(json.dumps(workspace))
+    for item in state['items']:
+        review.check('complete-media',state['reviewId'],item['id'],'empty' if item['kind']=='unknown' else 'ok',2)
+    passed=review.pass_review('complete-media',source,INFO,state['reviewId'],2)
+    moved={(f['frameIndex'],oid) for f in passed['changes']['frames'] for oid in f['moved']}
+    assert moved
+    result=direct.freeze(source,video,'complete-media',1,'edited',body(source),INFO)
+    job=export.create(1,'edited-export',dict(finalVersionIds=[result['finalVersionId']],format='yolo',splitRatio=.8))
+    export.run(job['exportId'])
+    with zipfile.ZipFile(export.download(job['exportId'],1)) as z:
+        manifest=json.loads(z.read('manifest.json'))
+    objects=[(s['frameIndex'],o['objectId'],o['reviewEdited']) for s in manifest['samples'] for o in s['objects']]
+    assert objects and all(edited==((fi,oid) in moved) for fi,oid,edited in objects)
+    assert any(edited for _,_,edited in objects)

@@ -247,8 +247,12 @@ try {
   await moveFirstBox(14, 6, false)  // On the first checklist frame (a coverage frame with two heads).
   await poll(async () => (await json('/track/workspace/'+VIDEO.mid)).revision > before, 'correction saved')
   await page.getByTestId('review-current').getByRole('button', { name: '已修正' }).click()
-  await poll(async () => (await reviewState(VIDEO.mid)).review.items.some(i => i.check?.result === 'fixed'), 'fixed check recorded')
+  // Wait for this item's own record: an earlier adoption already left a 'fixed' check.
+  await poll(async () => (await reviewState(VIDEO.mid)).review.items.find(i => i.id === coverage.id)?.check?.result === 'fixed', 'fixed check recorded')
   check(true, 'reviewer corrects a box in place and marks the item fixed')
+  const followup = (await reviewState(VIDEO.mid)).review.items.find(i => i.kind === 'followup' && i.followupOf === coverage.id)
+  check(!!followup && !followup.check && followup.startFrame <= coverage.frame && coverage.frame <= followup.endFrame,
+    'a correction adds one unchecked re-check of the frames around it')
   check(await page.getByTestId('review-pass').isDisabled(), 'pass stays disabled while items remain')
   const toFinish=await reviewState(VIDEO.mid)
   for (const item of toFinish.review.items.filter(i=>!i.check)) {

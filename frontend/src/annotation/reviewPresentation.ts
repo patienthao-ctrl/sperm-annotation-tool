@@ -3,7 +3,7 @@ import type { AnnotationObject } from '../types/annotation'
 import type { Box } from './geometry'
 
 export const reviewLabels: Record<DoubtCategory, string> = {
-  missing: '可能漏标', association: '可能重复或跟错', position: '框偏离头部', static: '静止目标', check: '自动检查失败',
+  missing: '可能漏标', association: '可能重复或跟错', exit: '出画尾帧', position: '框偏离头部', size: '框大小异常', static: '静止目标', check: '自动检查失败',
 }
 export function reviewCategory(item: ReviewItem): DoubtCategory {
   if (item.category && item.category in reviewLabels) return item.category
@@ -27,8 +27,10 @@ export function reviewTargetZoom(zoom: number, stageHeight: number, boxHeight: n
   if (userZoomed || !Number.isFinite(pixels) || pixels <= 0 || pixels >= 40) return zoom
   return Math.max(zoom, Math.min(10, zoom * 80 / pixels))
 }
+// Follow-up re-checks highlight the corrected objects like an object doubt.
+const objectItem = (item: ReviewItem) => item.kind === 'doubt' || item.kind === 'followup'
 export function reviewTarget(item: ReviewItem, frame: number, objects: AnnotationObject[], width: number, height: number): Box | null {
-  if (item.kind !== 'doubt' || frame < item.startFrame || frame > item.endFrame) return null
+  if (!objectItem(item) || frame < item.startFrame || frame > item.endFrame) return null
   const presentation = reviewPresentation(item, frame, objects, width, height)
   if (!['missing', 'static'].includes(reviewCategory(item))) return objects.find(o => o.objectId === presentation.objectIds[0])?.bbox ?? null
   const observation = item.observations?.find(o => o.frameIndex === frame)
@@ -38,7 +40,7 @@ export function reviewTarget(item: ReviewItem, frame: number, objects: Annotatio
 }
 export function reviewPresentation(item: ReviewItem | null, frame: number, objects: AnnotationObject[], width: number, height: number, stageWidth = width) {
   const empty = { objectIds: [] as number[], circles: [] as { key: string; left: string; top: string; size: number; label: string }[] }
-  if (!item || item.kind !== 'doubt' || frame < item.startFrame || frame > item.endFrame) return empty
+  if (!item || !objectItem(item) || frame < item.startFrame || frame > item.endFrame) return empty
   const observation = item.observations?.find(o => o.frameIndex === frame)
   // With per-frame observations, absence means no finding here, not the span-wide union.
   const ids = observation?.objectIds ?? (item.observations ? [] : item.objectIds ?? (item.objectId != null ? [item.objectId] : []))

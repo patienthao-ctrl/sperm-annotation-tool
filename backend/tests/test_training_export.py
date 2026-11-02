@@ -651,3 +651,48 @@ def test_merge_review_decisions_follow_selected_video_without_duplicates(tmp_pat
     (mixed/'review/decisions.jsonl').write_text(old_b+'\n')
     with pytest.raises(SystemExit,match='行数与清单不一致'):
         merge.main([str(mixed),'--output',str(tmp_path/'incomplete-decisions')])
+
+
+def train_eval_script():
+    import importlib.util
+    path = Path(__file__).resolve().parents[2] / "scripts" / "detector_train_eval.py"
+    spec = importlib.util.spec_from_file_location("detector_train_eval", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_train_eval_pins_benchmark_videos_to_test_and_records_the_comparison(frozen, tmp_path, monkeypatch):
+    script = train_eval_script()
+    second = confirmed_video("second")
+    first_zip = export.download(ready(frozen)["exportId"], 3)
+    second_zip = export.download(ready(frozen, ids=[second])["exportId"], 3)
+    with zipfile.ZipFile(second_zip) as z:
+        benchmark_sha = json.loads(z.read("manifest.json"))["sources"][0]["sourceSha256"]
+    bench = tmp_path / "bench.txt"
+    bench.write_text(f"# fixed test videos\n{benchmark_sha}\n")
+    baseline = tmp_path / "baseline.pt"; baseline.write_bytes(b"baseline")
+    out = tmp_path / "dry"
+    record = script.main([str(first_zip), str(second_zip), "--benchmark", str(bench), "--output", str(out), "--baseline", str(baseline), "--dry-run"])
+    assert record["splits"]["test"]["videos"] == 1 and record["splits"]["test"]["frames"] == 2
+    assert record["splits"]["train"]["videos"] + record["splits"]["val"]["videos"] == 1
+    merged = json.loads((out / "dataset" / "manifest.json").read_text())
+    assert {s["sourceSha256"] for s in merged["sources"] if s["split"] == "test"} == {benchmark_sha}
+    assert "verdict" not in record and json.loads((out / "model-record.json").read_text())["dryRun"] is True
+
+    # Training and evaluation are stubbed: this checks orchestration, not a real model.
+    def fake_train(init, data, output, epochs, imgsz, device):
+        best = output / "train" / "weights" / "best.pt"
+        best.parent.mkdir(parents=True); best.write_bytes(b"candidate")
+        return best
+    scores = {"eval-baseline": dict(mAP50=.5, mAP50_95=.30, precision=.6, recall=.70),
+              "eval-candidate": dict(mAP50=.6, mAP50_95=.36, precision=.7, recall=.72)}
+    monkeypatch.setattr(script, "train", fake_train)
+    monkeypatch.setattr(script, "evaluate", lambda weights, data, output, name, imgsz, device: scores[name])
+    record = script.main([str(first_zip), str(second_zip), "--benchmark", str(bench), "--output", str(tmp_path / "run"), "--baseline", str(baseline)])
+    assert record["verdict"] == "better" and record["candidate"]["sha256"] == script.sha256(tmp_path / "run" / "train" / "weights" / "best.pt")
+    assert record["baseline"]["sha256"] == script.sha256(baseline)
+    assert script.verdict(scores["eval-baseline"], dict(scores["eval-candidate"], recall=.6)) == "not_better"
+    with pytest.raises(SystemExit):
+        bad = tmp_path / "bad.txt"; bad.write_text("not-a-sha\n")
+        script.read_benchmark(bad)

@@ -2,15 +2,15 @@ import { withRequestTimeout } from '../utils/browserCompat'
 import { tokenStore } from './http'
 
 export type ReviewStatus = 'none' | 'open' | 'passed' | 'stale'
-export type ItemKind = 'doubt' | 'count' | 'coverage' | 'unknown' | 'changed' | 'sample'
+export type ItemKind = 'doubt' | 'count' | 'coverage' | 'unknown' | 'changed' | 'sample' | 'followup'
 export type CheckResult = 'ok' | 'fixed' | 'empty' | 'not_target'
-export type DoubtCategory = 'missing' | 'association' | 'position' | 'static' | 'check'
-export type ReviewSource = 'reverse' | 'disagreement' | 'detector' | 'track_ended'
+export type DoubtCategory = 'missing' | 'association' | 'exit' | 'position' | 'size' | 'static' | 'check'
+export type ReviewSource = 'reverse' | 'disagreement' | 'detector' | 'track_ended' | 'size_jump' | 'oversized' | 'edge_exit'
 export interface ReviewItem {
   id: string; kind: ItemKind; startFrame: number; endFrame: number; frame: number; message: string
   objectId?: number | null; objectIds?: number[]; labels?: string[]; candidates?: number[][]; bbox?: number[] | null; escalation?: boolean
   category?: DoubtCategory; source?: ReviewSource; tailObjectId?: number; adoptObjectId?: number; detectorAgrees?: boolean
-  lastFrame?: number; lastBox?: number[]
+  lastFrame?: number; lastBox?: number[]; ratio?: number; followupOf?: string
   anchor?: number[]; region?: string; index?: number; countInFrame?: number
   observations?: { frameIndex: number; objectIds: number[]; candidates: number[][] }[]
   check: { result: CheckResult; actorId: number; checkedAt: string } | null
