@@ -1,13 +1,12 @@
-// 画布交互与对象编辑：工具切换、缩放、点选头部、框的绘制/拖拽/微调、对象增删改、采用审查轨迹。
+// 画布交互与对象编辑：工具切换、缩放、点选头部、框的绘制/拖拽/微调、对象增删改。
 import { ref, watch } from 'vue'
 import { hitHandle, moveBox, resizeBox, type Box } from '../../annotation/geometry'
 import type { AnnotationObject, AnnotationTool } from '../../types/annotation'
 import { trackApi } from '../../api/trackApi'
 import { useAuth } from '../auth'
-import { activeTool, annotationHitRef, annotationsByMedia, currentFrame, currentMediaId, currentObjects, currentTime, deletedFrameObjects, deletedTrackingIds, dragPreview, editingBlocked, getNextObjectId, isAiBusy, isObjectDeleted, isVideo, lastPausedContext, mediaAssets, objectNameInput, pausedAnomalies, runtime, selectedMedia, selectedObject, selectedObjectId, showToast, statusMessage, zoom } from './state'
+import { activeTool, annotationHitRef, annotationsByMedia, currentFrame, currentMediaId, currentObjects, currentTime, deletedFrameObjects, deletedTrackingIds, dragPreview, editingBlocked, getNextObjectId, isAiBusy, isVideo, lastPausedContext, mediaAssets, objectNameInput, pausedAnomalies, runtime, selectedMedia, selectedObject, selectedObjectId, showToast, statusMessage, zoom } from './state'
 import { snapshotUndo } from './history'
-import { frameToTime } from './frames'
-import { persistWorkspaceState, scheduleWorkspaceStateSave } from './save'
+import { scheduleWorkspaceStateSave } from './save'
 
 export const isInteracting = () => !!tempBbox.value || !!draggingObjectId || !!runtime.bboxStart
 // 4K heads are 20–30 px in a ~0.27× fitted view, so allow up to 10× the fit.
@@ -62,46 +61,6 @@ export const addObject = (point: { x: number; y: number }, bbox?: { x: number; y
   annotationsByMedia.value = { ...annotationsByMedia.value, [mediaId]: [...existing, object] }
   selectedObjectId.value = object.id
   statusMessage.value = `已添加：${name}${media.type === 'video' ? `（第 ${currentFrame.value + 1} 帧）` : ''}`
-}
-
-export const adoptReviewTrack = async (boxes: {frameIndex:number;bbox:{x:number;y:number;width:number;height:number}}[],objectId:number,adoptionKey?:string) => {
-  if(editingBlocked.value)throw new Error('当前画面正在处理其他操作，暂不能采用轨迹')
-  const mediaId=currentMediaId.value,media=mediaAssets.value.find(item=>item.id===mediaId)
-  if(!media||media.type!=='video'||!Number.isInteger(objectId)||objectId<=0||!boxes.length)throw new Error('采用轨迹的参数无效')
-  const frames=new Set<number>()
-  for(const item of boxes){
-    const b=item.bbox
-    if(!Number.isInteger(item.frameIndex)||item.frameIndex<0||item.frameIndex>(media.frameCount??Number.MAX_SAFE_INTEGER)-1
-      ||frames.has(item.frameIndex)||![b?.x,b?.y,b?.width,b?.height].every(Number.isFinite)||b.width<=0||b.height<=0
-      ||b.x<0||b.y<0||b.x+b.width>100.000001||b.y+b.height>100.000001)
-      throw new Error('SAM3 轨迹中存在无效帧或框，未补任何标注')
-    frames.add(item.frameIndex)
-  }
-  const existing=annotationsByMedia.value[mediaId]??[]
-  const adopted=adoptionKey ? existing.filter(obj=>obj.reviewAdoptionKey===adoptionKey) : []
-  if(adopted.length){
-    const exact=adopted.length===boxes.length && boxes.every(item=>adopted.some(obj=>obj.frameIndex===item.frameIndex && obj.bbox && ['x','y','width','height'].every(k=>Math.abs(obj.bbox![k as keyof typeof obj.bbox]-item.bbox[k as keyof typeof item.bbox])<1e-6)))
-    if(!exact)throw new Error('这条已采用轨迹后来有改动，请核对现有框后点“已有框”')
-    await persistWorkspaceState(mediaId,true)
-    return adopted[0].objectId
-  }
-  if(existing.some(obj=>obj.objectId===objectId) || [...frames].some(fi=>isObjectDeleted(mediaId,objectId,fi))) objectId=getNextObjectId(mediaId)
-  const name=numberedObjectName(objectNameInput.value.trim()||'rare sperm',objectId)
-  const stamp=Date.now()
-  const added:AnnotationObject[]=boxes.map((item,index)=>({
-    id:`manual-adopt-${stamp}-${index}`,
-    objectId,name,source:'manual',origin:'review_adopted',reviewAdoptionKey:adoptionKey,creationId:adoptionKey,bbox:{...item.bbox},
-    frameIndex:item.frameIndex,timestampMs:Math.round(frameToTime(item.frameIndex)*1000),
-  }))
-  annotationsByMedia.value={...annotationsByMedia.value,[mediaId]:[...existing,...added]}
-  selectedObjectId.value=added[added.length-1].id
-  statusMessage.value=`已采用 SAM3 轨迹：对象 #${objectId}，补齐 ${added.length} 帧`
-  try{await persistWorkspaceState(mediaId,true)}
-  catch(error){
-    console.error('[annotation.review_track_adopt_save_failed]',{mediaId,objectId,frames:[...frames],error})
-    throw new Error(`已在本地添加，等待保存；请重试采用以恢复保存，尚未记录审查：${error instanceof Error?error.message:'保存失败'}`)
-  }
-  return objectId
 }
 
 const toolLabel = (tool: AnnotationTool) =>

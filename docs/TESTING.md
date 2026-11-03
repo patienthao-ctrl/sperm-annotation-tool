@@ -88,7 +88,7 @@ npm run build --prefix frontend
 | 帧解码、追踪内存、大量修改项性能 | `test_video_frames.py`（逐帧身份/随机访问/失败 seek/缓存限量与原子失败/真实 processor 输入一致/掩码几何一致/首次模型 dtype）、`test_confirmation_performance.py`（5,000 项/紧凑回执/升级前重放/精确进度） | `performance-browser.mjs`（27；外部真实 4K 副本、50,000 AI 对象、初次读取失败/坏 JPEG 原位重试、C 同帧图像复用/增量回复/并发版本跳变） |
 | Chrome 93 / HTTP、素材删除 | `test:compatibility`、`test_media_deletion.py` | `browser-compat-media.mjs`；[Chrome 93 专项回归](details/testing-browser-suites.md#chrome-93--http-专项回归) |
 | 重复视频覆盖、旧历史不锁定 | `test_workflow_transitions.py`、`test_media_reimport.py` | `workflow-transitions-browser.mjs`（重复导入/覆盖/响应丢失重放/旧审查历史不再阻止覆盖） |
-| 审查清单/纠错/通过/失效 | `test_annotation_review.py`、`test_annotation_export.py`（重审窗口去重、静止/运动成对、编号预留、一对一关联、跨轮次及归档判断真实 ZIP） | `training-export-browser.mjs`、`critical-workflows-browser.mjs` |
+| 逐帧审查/纠错/通过/失效 | `test_annotation_review.py`、`test_annotation_export.py`（首轮全部帧、重审只列改动帧、无目标确认沿用、旧清单改建、真实 ZIP） | `training-export-browser.mjs`、`critical-workflows-browser.mjs` |
 | 训练导出/门禁/版本 | `test_training_export.py`、`test_quality_audit.py`、`test_export_audit_script.py` | `training-export-browser.mjs`（审查门槛、按视频划分、附原视频、多视频合并、响应丢失重放、改动后失效、统计导出） |
 | 标注/审查工作台一致性 | 上述对应页面回归、构建 | `workbench-consistency-browser.mjs`：两种模式两尺寸浅深主题、同一画布与工具、审查隐藏追踪、清单定位与帧条、专注、760/390 窄屏与使用说明隔离 |
 | 数据库查询/升级、Docker 发布 | `test_annotation_result_dedupe.py`、`test_deployment_preflight.py`、`test_docker_deployment_contract.py`、`test_model_distribution.py` | [容器验收](details/testing-delivery.md)；不是只运行前端构建 |

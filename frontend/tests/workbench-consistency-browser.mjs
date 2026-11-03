@@ -365,19 +365,19 @@ try {
   await assertGuideIsolation('review', reviewBefore, () => page.evaluate(() => ({ frame: window.ws.currentFrame.value, count: window.ws.currentObjects.value.length })), ['b', 'Delete', 'ArrowRight'])
   await page.getByTestId('review-start').click(); await page.getByTestId('review-progress').waitFor()
   const startedReview=await api('/annotation-review/media/ux-video')
-  const first = page.locator('[data-review-item]').first()
-  await first.click()
-  const item = startedReview.review.items[0]
-  await page.waitForFunction(frame => window.ws.currentFrame.value === frame && !window.ws.exactFrameLoading.value, item.frame)
-  check(await first.evaluate(element => element.classList.contains('current')), 'locating a checklist item jumps to its frame and marks it current')
+  const progress=async()=>Number((await page.getByTestId('review-progress').innerText()).split('/')[0])
+  check(startedReview.review.total===startedReview.review.frames.reduce((n,[a,b])=>n+b-a+1,0) && startedReview.review.frames[0][0]===0, 'the first round lists every frame')
+  await page.waitForFunction(() => window.ws.currentFrame.value === 0 && !window.ws.exactFrameLoading.value)
+  check(await page.getByTestId('review-current').getAttribute('data-frame')==='0', 'starting a review goes to the first unchecked frame')
   check(await page.locator('.frame-strip i.review-todo').count() > 0, 'the frame strip marks frames still to review')
 
-  // A different account checking one item must be visible, non-blocking, and
+  // A different account checking one frame must be visible, non-blocking, and
   // disappear when the activity is older than ten minutes (server evidence).
-  const foreignItem=startedReview.review.items.find(i=>!i.check)
-  const foreign=await page.request.fetch(origin+'/api/annotation-review/media/ux-video/items/'+encodeURIComponent(foreignItem.id),{
-    method:'PUT',data:{reviewId:startedReview.review.reviewId,result:foreignItem.kind==='unknown'?'empty':'ok'},
+  const foreignFrame=startedReview.review.frames.at(-1)[1]
+  const foreignCheck=result=>page.request.fetch(origin+'/api/annotation-review/media/ux-video/frames/'+foreignFrame,{
+    method:'PUT',data:{reviewId:startedReview.review.reviewId,result},
     headers:{Authorization:`Bearer ${confirmation.authorToken}`,'Content-Type':'application/json'}})
+  let foreign=await foreignCheck('ok'); if(!foreign.ok())foreign=await foreignCheck('empty')
   check(foreign.ok(),'a second reviewer can record a check without taking over the workspace')
   await page.reload(); await page.evaluate(async () => {
     const url=performance.getEntriesByType('resource').find(resource=>resource.name.includes('/src/stores/workspace.ts')).name
@@ -387,65 +387,24 @@ try {
   await page.getByTestId('review-concurrent').waitFor()
   check((await page.getByTestId('review-concurrent').innerText()).includes('用户 #1 也在审查'), 'recent activity by another reviewer shows a non-blocking yellow warning')
 
-  const reviewItems=(await api('/annotation-review/media/ux-video')).review.items
-  const reverseItem=reviewItems.find(i=>i.source==='reverse')
-  assert(reverseItem)
-  const missingGroup=page.locator('[data-review-group="missing"]')
-  if (await missingGroup.getAttribute('open')===null) await missingGroup.locator('summary').click()
-  await page.locator(`[data-review-item="${reverseItem.id}"]`).click(); await ready()
-  await page.waitForFunction(()=>{const c=document.querySelector('[data-testid=review-zoom-preview] canvas');if(!c)return false;const p=c.getContext('2d').getImageData(c.width/2,c.height/2,1,1).data;return p[3]>0})
-  check((await page.getByTestId('review-zoom-preview').innerText()).includes(`第 ${reverseItem.frame+1} 帧`), 'the review card previews the exact source frame around the candidate')
-  const zoomBefore=await page.evaluate(()=>window.ws.zoom.value)
-  const scrollBefore=await page.locator('.canvas-scroll').evaluate(e=>({left:e.scrollLeft,top:e.scrollTop}))
-  await page.keyboard.press('v'); await page.waitForFunction(()=>window.ws.activeTool.value==='select')
-  await page.locator('.review-candidate-circle').click()
-  await poll(async()=>await page.evaluate(()=>window.ws.zoom.value)>zoomBefore,'clicking the candidate zooms in')
-  check(await page.getByTestId('review-restore-view').isVisible(), 'zooming a candidate exposes the return-to-original-view control')
-  check(await page.locator('.review-candidate-circle').evaluate(e=>{const r=e.getBoundingClientRect(),v=document.querySelector('.canvas-scroll').getBoundingClientRect();return r.x+r.width/2>=v.left&&r.x+r.width/2<=v.right&&r.y+r.height/2>=v.top&&r.y+r.height/2<=v.bottom}), 'the zoomed candidate stays inside the visible canvas')
-  await page.keyboard.press('Escape')
-  await poll(async()=>await page.evaluate(()=>window.ws.zoom.value)===zoomBefore,'Escape restores the pre-zoom scale')
-  assert.deepEqual(await page.locator('.canvas-scroll').evaluate(e=>({left:e.scrollLeft,top:e.scrollTop})),scrollBefore)
-  check(true, 'returning restores both the original scale and scroll position')
-  await page.locator('.review-candidate-circle').click()
-  await poll(async()=>await page.evaluate(()=>window.ws.zoom.value)>zoomBefore,'candidate zoomed for tool isolation')
-  await page.keyboard.press('b')
-  await page.waitForFunction(()=>window.ws.activeTool.value==='bbox')
-  const zoomWithBoxTool=await page.evaluate(()=>window.ws.zoom.value)
-  await page.locator('.review-candidate-circle').dispatchEvent('click')
-  await page.waitForTimeout(200)
-  check(await page.evaluate(()=>window.ws.zoom.value)===zoomWithBoxTool, 'the candidate circle is inert while the box tool is selected')
-  await page.keyboard.press('Escape'); await ready(); await page.keyboard.press('v')
-  await page.waitForFunction(()=>window.ws.activeTool.value==='select')
-
-  // Keyboard review result, next item, and zoom: inputs must isolate all of them.
-  const coverageItem=reviewItems.find(i=>i.kind==='coverage')
-  await page.locator(`[data-review-item="${coverageItem.id}"]`).dispatchEvent('click'); await ready()
-  await page.waitForFunction(id=>document.querySelector('[data-testid=review-current]')?.getAttribute('data-item')===id,coverageItem.id)
-  const checkedBefore=Number((await page.getByTestId('review-progress').innerText()).split('/')[0])
+  // Keyboard confirm and next frame: inputs must isolate both.
+  await page.keyboard.press('n'); await ready()
+  const frameBefore=await page.evaluate(()=>window.ws.currentFrame.value)
+  check(await page.getByTestId('review-frame-state').innerText()==='未检查', 'N moves to an unchecked frame')
+  const checkedBefore=await progress()
   await page.evaluate(()=>document.activeElement instanceof HTMLElement && document.activeElement.blur())
   await page.keyboard.press('1')
-  await poll(async()=>Number((await page.getByTestId('review-progress').innerText()).split('/')[0])>checkedBefore,'keyboard 1 records the primary result')
-  check(await page.locator(`[data-review-item="${coverageItem.id}"]`).evaluate(e=>e.classList.contains('done')), 'keyboard 1 marks the current primary result and advances')
-  const checkedAfter=Number((await page.getByTestId('review-progress').innerText()).split('/')[0])
+  await poll(async()=>await progress()>checkedBefore,'keyboard 1 confirms the current frame')
+  await page.waitForFunction(f=>window.ws.currentFrame.value!==f,frameBefore); await ready()
+  check(await page.getByTestId('review-frame-state').innerText()==='未检查', 'confirming a frame advances to the next unchecked one')
+  check(await page.locator('.frame-strip i.review-done').count() > 0, 'the frame strip marks confirmed frames')
+  const checkedAfter=await progress()
   const jump=page.getByRole('spinbutton',{name:'跳转帧号'})
   await jump.focus(); await page.keyboard.press('1'); await page.waitForTimeout(200)
-  check(Number((await page.getByTestId('review-progress').innerText()).split('/')[0])===checkedAfter, 'review number shortcuts do not fire while an input is focused')
-  const coverageGroup=page.locator('[data-review-group="coverage"]')
-  if (await coverageGroup.getAttribute('open')===null) await coverageGroup.locator('summary').click()
-  await page.locator(`[data-review-item="${coverageItem.id}"]`).dispatchEvent('click'); await ready()
-  await page.locator(`[data-review-item="${coverageItem.id}"] .review-override`).click(); await ready()
-  check((await page.getByTestId('review-checked').innerText()).includes('已判为：无误，可改判'), 'a checked row exposes an override entry and explains that it can be changed')
-  const currentId=await page.getByTestId('review-current').getAttribute('data-item')
-  await page.keyboard.press('n'); await page.waitForTimeout(300)
-  check(await page.getByTestId('review-current').getAttribute('data-item')!==currentId, 'N moves to the next unchecked review item')
-  // This shared fixture guarantees a reverse candidate, not a detector path.
-  // Z applies to either source; keep the assertion on an actual visible item.
-  const zItem=reverseItem
-  if (await missingGroup.getAttribute('open')===null) await missingGroup.locator('summary').click()
-  await page.locator(`[data-review-item="${zItem.id}"]`).click(); await ready()
-  const zBefore=await page.evaluate(()=>window.ws.zoom.value)
-  await page.keyboard.press('z'); await poll(async()=>await page.evaluate(()=>window.ws.zoom.value)>zBefore,'Z zooms the current review target')
-  await page.keyboard.press('z'); await poll(async()=>await page.evaluate(()=>window.ws.zoom.value)===zBefore,'Z toggles back to the original view')
+  check(await progress()===checkedAfter, 'review shortcuts do not fire while an input is focused')
+  await page.evaluate(()=>document.activeElement instanceof HTMLElement && document.activeElement.blur())
+  await page.evaluate(f=>window.ws.frameInput.value=f,frameBefore); await page.evaluate(async()=>window.ws.seekToInputFrame()); await ready()
+  check(await page.getByTestId('review-frame-state').innerText()==='已确认' && await page.getByTestId('review-checked').isVisible(), 'a confirmed frame shows its result and can be confirmed again after edits')
   await page.setViewportSize({ width: 1180, height: 760 })
   await button('专注').click()
   check(await page.getByTestId('review-current').isVisible() && (await page.locator('[data-workbench-region=canvas]').boundingBox()).width > 800, 'review focus retains core review actions beside a useful image')

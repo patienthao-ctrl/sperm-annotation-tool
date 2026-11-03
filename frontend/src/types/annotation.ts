@@ -47,7 +47,7 @@ export interface AnnotationObject {
   name: string
   source: ObjectSource
   /** Review-only provenance; never changes geometry or the stable objectId. */
-  origin?: 'review_adopted' | 'linked_resize' | 'linked_fill'
+  origin?: 'review_adopted'
   reviewAdoptionKey?: string
   creationId?: string
   collaborationOriginalObjectId?: number

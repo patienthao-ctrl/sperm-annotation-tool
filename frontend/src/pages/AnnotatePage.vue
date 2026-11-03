@@ -3,7 +3,6 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { canvasZoomKey } from '../workbench/viewTransform'
 import AnnotationDatasetExport from '../components/AnnotationDatasetExport.vue'
 import AnnotationReviewPanel from '../components/AnnotationReviewPanel.vue'
-import LinkedEditCard from '../components/LinkedEditCard.vue'
 import ReviewZoomPreview from '../components/ReviewZoomPreview.vue'
 import AnnotationMinimap from '../components/AnnotationMinimap.vue'
 import WorkbenchShell from '../components/WorkbenchShell.vue'
@@ -20,17 +19,15 @@ import { useWorkspace } from '../stores/workspace'
 import { addLeaveGuard, useRouter } from '../router'
 import { useAnnotationReview, reviewStatusLabel } from '../stores/annotationReview'
 import type { MergeChoice, MergeEntry } from '../annotation/workspaceWrites'
-import type { ReviewItem } from '../api/annotationReviewApi'
-import { reviewPresentation, reviewTarget, reviewTargetZoom } from '../annotation/reviewPresentation'
 import '../annotation/annotation.css'
 import '../annotation/annotation-shell.css'
 const {
-  collaborationConflict, collaborationBusy, resolveCollaboration, syncWorkspace, downloadWorkspaceBackup, currentRemoteTracking, lastEditors, discardLocalDraft, storageWarning, headBoxBusy, headBoxError, cancelHeadBox, createHeadBox, mediaAssets, selectedMediaId, submissionBusy, mediaImportBusy, importError, duplicateImport, reimportSaving, cancelDuplicateImport, confirmDuplicateImport, restoreImportIntent, activeTool, selectedObjectId, currentFrame, currentTime, frameInput, isPlaying,
+  collaborationConflict, collaborationBusy, resolveCollaboration, syncWorkspace, downloadWorkspaceBackup, currentRemoteTracking, lastEditors, discardLocalDraft, storageWarning, headBoxBusy, headBoxError, cancelHeadBox, mediaAssets, selectedMediaId, submissionBusy, mediaImportBusy, importError, duplicateImport, reimportSaving, cancelDuplicateImport, confirmDuplicateImport, restoreImportIntent, activeTool, selectedObjectId, currentFrame, currentTime, frameInput, isPlaying,
   isAiBusy, statusMessage, toastMessage, imageRef, videoRef, exactFrameImageRef, exactFrameUrl, exactFrameLoading, videoPlaybackFallback, annotationHitRef, fileInputRef, videoInputRef, packageInputRef, packageImportReport, importPackage,
   annotationsByMedia, selectedMedia, isVideo, maxFrameIndex, currentMediaId, currentObjects, selectedObject, displayObjects, editingBlocked, workspaceRestoring,
   anomalyFrames, pausedAnomalies, trackingPausedFrame, formatTime, selectTool, onStageClick, tempBbox, onBboxDown, onBboxMove, onBboxUp,
   selectObject, removeObject, undo, redo, canUndo, canRedo, copyPreviousFrame, brightness, contrast, mediaFilterStyle, resetMediaFilter, annotatedFrameCount,
-  clearSelection, openFilePicker, handleFiles, adoptReviewTrack, onImageLoaded, onVideoLoaded, onVideoTimeUpdate, onVideoError, seekToInputFrame, togglePlayback, onVideoEnded,
+  clearSelection, openFilePicker, handleFiles, onImageLoaded, onVideoLoaded, onVideoTimeUpdate, onVideoError, seekToInputFrame, togglePlayback, onVideoEnded,
   runEndpointTrack, seekVideo, frameToTime, resetAnnotationViewForMedia, seekByFrame, zoom, zoomIn, zoomOut, zoomReset,
   deleteMedia, deletingMediaId, mediaDeleteError, nudgeSelected, cancelAnnotationGesture, frameError, retryExactFrame, saveState, saveError, persistWorkspaceState, playbackRate, pausePlayback,
   getObjectDeletionSummary, removeObjectAcrossVideo, undoVideoObjectDeletion, canUndoVideoDeletion, lastVideoObjectDeletion,
@@ -48,7 +45,6 @@ const router = useRouter()
 const review = useAnnotationReview()
 const reviewPanel = ref<InstanceType<typeof AnnotationReviewPanel> | null>(null)
 const reviewMediaId = computed(() => selectedMedia.value?.type === 'video' ? selectedMedia.value?.serverMediaId ?? null : null)
-const reviewFocus = ref<ReviewItem | null>(null)
 const mergeChoices=ref<Record<string,MergeChoice>>({})
 watch(collaborationConflict,()=>{mergeChoices.value={} })
 const mergeReady=computed(()=>!!collaborationConflict.value && collaborationConflict.value.entries.every(e=>!!mergeChoices.value[e.key]))
@@ -77,175 +73,21 @@ async function locateConflict(entry:MergeEntry){
 }
 let collaborationTimer: ReturnType<typeof setInterval>|null=null
 // Refresh the review checklist only when the sync actually brought in someone else's change.
-onMounted(()=>{collaborationTimer=setInterval(async()=>{if(pointerActive||pan||reviewActionBusy.value||review.busy.value)return;const id=reviewMediaId.value;const changed=await syncWorkspace();if(changed===true&&reviewing.value&&id&&id===reviewMediaId.value&&!reviewActionBusy.value&&!review.busy.value)void review.load(id)},5000)})
+onMounted(()=>{collaborationTimer=setInterval(async()=>{if(pointerActive||pan||review.busy.value)return;const id=reviewMediaId.value;const changed=await syncWorkspace();if(changed===true&&reviewing.value&&id&&id===reviewMediaId.value&&!review.busy.value)void review.load(id)},5000)})
 onUnmounted(()=>{if(collaborationTimer)clearInterval(collaborationTimer)})
-const reviewActionError = ref('')
-const reviewActionBusy = ref(false)
-let reviewContextSerial = 0
-const reviewAuth = useAuth()
-watch([reviewMediaId, () => review.state.value?.review?.reviewId, () => reviewAuth.user.value?.id], () => {
-  reviewContextSerial++; reviewActionError.value=''
-}, {flush:'sync'})
-onUnmounted(() => { reviewContextSerial++ })
-function reviewActionContext() {
-  const mediaId=reviewMediaId.value,localId=currentMediaId.value,reviewId=review.state.value?.review?.reviewId
-  const serial=reviewContextSerial
-  if(!mediaId||!reviewId||review.state.value?.mediaId!==mediaId)return null
-  return {mediaId,localId,reviewId,current:()=>serial===reviewContextSerial && reviewing.value && mediaId===reviewMediaId.value && localId===currentMediaId.value && reviewId===review.state.value?.review?.reviewId}
-}
-async function waitReviewFrame(frame: number, current: () => boolean) {
-  const deadline=Date.now()+15000
-  while(current() && Date.now()<deadline){
-    if(frameError.value)throw new Error(`第 ${frame+1} 帧读取失败，请重新定位后重试`)
-    if(currentFrame.value===frame && !exactFrameLoading.value && !editingBlocked.value)return true
-    await new Promise(resolve=>setTimeout(resolve,40))
-  }
-  if(current())throw new Error('画面尚未加载或暂不能编辑，请稍后重试；未记录检查结果')
-  return false
-}
-const savedReviewView = ref<{zoom:number;left:number;top:number}|null>(null)
-const userZoomedInReview = ref(false)
-let reviewLocateSerial = 0
-function cancelReviewLocate() { reviewLocateSerial++ }
-const reviewZoomKey = () => review.state.value?.review?.reviewId ? `review-user-zoom:${reviewMediaId.value}:${review.state.value.review.reviewId}` : null
-watch([() => reviewMediaId.value, () => review.state.value?.review?.reviewId, () => reviewing.value], () => {
-  cancelReviewLocate()
-  savedReviewView.value = null
-  try { userZoomedInReview.value = !!reviewing.value && !!reviewZoomKey() && sessionStorage.getItem(reviewZoomKey()!) === '1' }
-  catch { userZoomedInReview.value = false }
-}, {flush:'sync',immediate:true})
-watch(userZoomedInReview, value => {
-  if (value && reviewing.value && reviewZoomKey()) try { sessionStorage.setItem(reviewZoomKey()!,'1') } catch {}
-}, {flush:'sync'})
 const reviewFrames = computed(() => {
   const todo = new Set<number>(), done = new Set<number>()
-  for (const item of review.items.value) for (let f = item.startFrame; f <= item.endFrame; f++) (item.check ? done : todo).add(f)
+  for (const frame of review.targetFrames.value) (review.checkedFrames.value.has(frame) ? done : todo).add(frame)
   return { todo, done }
 })
 const flushWorkspace = () => persistWorkspaceState(currentMediaId.value, true)
-async function restoreReviewView() {
-  const saved=savedReviewView.value,scroller=scrollContainerRef.value
-  if(!saved)return
-  savedReviewView.value=null
-  zoom.value=saved.zoom
-  await nextTick()
-  scroller?.scrollTo(saved.left,saved.top)
-}
-async function zoomToReviewTarget(_mark?:unknown) {
-  const item=reviewFocus.value,media=selectedMedia.value,stage=stageRef.value,scroller=scrollContainerRef.value
-  if(!reviewing.value||activeTool.value!=='select'||!item||!media||!stage||!scroller)return
-  const box=reviewTarget(item,currentFrame.value,currentObjects.value,media.width??0,media.height??0)
-  if(!box)return
-  const pixels=stageSize.value.h*box.height/100
-  if(!Number.isFinite(pixels)||pixels<=0)return
-  if(!savedReviewView.value)savedReviewView.value={zoom:zoom.value,left:scroller.scrollLeft,top:scroller.scrollTop}
-  const target=Math.max(zoom.value,Math.min(10,zoom.value*120/pixels))
-  zoom.value=target
-  await nextTick()
-  const el=stageRef.value,scroll=scrollContainerRef.value
-  if(!el||!scroll)return
-  const r=el.getBoundingClientRect(),vp=scroll.getBoundingClientRect()
-  const centerX=r.left+box.x*r.width/100+box.width*r.width/200
-  const centerY=r.top+box.y*r.height/100+box.height*r.height/200
-  scroll.scrollTo(
-    Math.max(0,Math.min(scroll.scrollWidth-scroll.clientWidth,scroll.scrollLeft+centerX-vp.left-vp.width/2)),
-    Math.max(0,Math.min(scroll.scrollHeight-scroll.clientHeight,scroll.scrollTop+centerY-vp.top-vp.height/2)),
-  )
-}
-async function locateReviewItem(item: ReviewItem) {
+// A frame can be confirmed only once it is actually on screen and editable.
+const reviewFrameReady = computed(() => !exactFrameLoading.value && !frameError.value && !workspaceRestoring.value && !isAiBusy.value)
+function seekReviewFrame(frame: number) {
   if (!reviewing.value || isAiBusy.value || pointerActive || pan) return
-  savedReviewView.value=null
-  reviewActionError.value=''
-  const serial = ++reviewLocateSerial, mediaId = currentMediaId.value
-  reviewFocus.value = item
-  await seekFrame(item.frame)
-  await nextTick()
-  const valid = () => serial === reviewLocateSerial && reviewing.value && mediaId === currentMediaId.value
-    && currentFrame.value === item.frame && !frameError.value && !exactFrameLoading.value && !workspaceRestoring.value && !pointerActive && !pan
-  if (!valid()) {
-    if (serial === reviewLocateSerial && frameError.value) console.warn('[annotation_review.locate_unavailable]', {mediaId,itemId:item.id,frame:item.frame})
-    return
-  }
-  const media = selectedMedia.value, width = media?.width ?? 0, height = media?.height ?? 0
-  const presentation = reviewPresentation(item,currentFrame.value,currentObjects.value,width,height)
-  const object = currentObjects.value.find(o => o.objectId === presentation.objectIds[0])
-  if (object) { selectTool('select'); selectObject(object.id) } else clearSelection()
-  const box = reviewTarget(item,currentFrame.value,currentObjects.value,width,height)
-  if (!box) return // Whole-frame checks keep the existing view.
-  zoom.value = reviewTargetZoom(zoom.value,stageSize.value.h,box.height,userZoomedInReview.value)
-  await nextTick()
-  if (!valid() || (object && selectedObjectId.value !== object.id)) return
-  const stage = stageRef.value, scroller = scrollContainerRef.value
-  if (!stage || !scroller) return
-  const r = stage.getBoundingClientRect(), vp = scroller.getBoundingClientRect()
-  const position = revealBoxScroll({x:r.left+box.x*r.width/100,y:r.top+box.y*r.height/100,width:box.width*r.width/100,height:box.height*r.height/100},
-    {x:vp.left,y:vp.top,width:scroller.clientWidth,height:scroller.clientHeight},
-    {left:scroller.scrollLeft,top:scroller.scrollTop,maxLeft:scroller.scrollWidth-scroller.clientWidth,maxTop:scroller.scrollHeight-scroller.clientHeight},28)
-  scroller.scrollTo(position.left,position.top)
-  console.info('[annotation_review.located]', {mediaId,itemId:item.id,frame:item.frame,index:item.index,zoom:zoom.value})
+  void seekFrame(frame)
 }
-async function addHeadAtReviewTarget(item: ReviewItem) {
-  if(reviewActionBusy.value||review.busy.value)return
-  const context=reviewActionContext();if(!context)return
-  reviewActionBusy.value=true;reviewActionError.value=''
-  try {
-    const media=selectedMedia.value,width=media?.width??0,height=media?.height??0
-    const box=item.observations?.find(o=>o.frameIndex===item.frame)?.candidates[0]??item.anchor??item.candidates?.[0]
-    if(width<=0||height<=0||!box?.length)throw new Error('这一项没有可定位的候选框，请手动画框后点“已有框”')
-    if(currentFrame.value!==item.frame)await seekFrame(item.frame)
-    await nextTick()
-    if(!await waitReviewFrame(item.frame,context.current))return
-    headBoxError.value=''
-    const key=`${context.reviewId}:${item.id}:head`
-    const result=await createHeadBox({x:100*(box[0]+box[2])/2/width,y:100*(box[1]+box[3])/2/height},item.check?undefined:key)
-    if(!context.current())return
-    if(result.status==='existing')throw new Error('这里已经有框，未新增标注，也未记录检查结果')
-    if(result.status==='blocked')throw new Error('当前画面暂不能编辑，未执行补框；请稍后重试')
-    if(result.status!=='created')throw new Error(`${headBoxError.value||'补框已取消，未记录检查结果'}。请手动画框后点“已有框”`)
-    await persistWorkspaceState(context.localId,true)
-    if(!context.current())return
-    if(!await review.check(context.mediaId,context.reviewId,item,'fixed')) {
-      if(context.current())reviewActionError.value='框已保存，检查结果未记录；可重试本操作以补记'
-      return
-    }
-    if(context.current()&&review.nextItem.value)void locateReviewItem(review.nextItem.value)
-  } catch(error) {
-    if(context.current())reviewActionError.value=(error as Error)?.message||'补框未完成，请重试'
-    console.warn('[annotation_review.add_head_failed]',{mediaId:context.mediaId,reviewId:context.reviewId,itemId:item.id,error})
-  } finally {reviewActionBusy.value=false}
-}
-async function adoptReviewTrackItem(item: ReviewItem) {
-  if(reviewActionBusy.value||review.busy.value)return
-  const context=reviewActionContext();if(!context)return
-  reviewActionBusy.value=true;reviewActionError.value=''
-  try {
-    const media=selectedMedia.value,width=media?.width??0,height=media?.height??0
-    if(!item.adoptObjectId||!item.observations?.length||width<=0||height<=0)throw new Error('这条轨迹没有可采用的框，请改用手动补框')
-    const boxes=item.observations.map(o=>{
-      const box=o.candidates[0]
-      return {frameIndex:o.frameIndex,bbox:{x:100*box[0]/width,y:100*box[1]/height,width:100*(box[2]-box[0])/width,height:100*(box[3]-box[1])/height}}
-    })
-    await adoptReviewTrack(boxes,item.adoptObjectId,`${context.reviewId}:${item.id}:track`)
-    if(!context.current())return
-    if(!await review.check(context.mediaId,context.reviewId,item,'fixed')) {
-      if(context.current())reviewActionError.value='轨迹已保存，检查结果未记录；可重试采用以补记，不会重复加框'
-      return
-    }
-    if(context.current()&&review.nextItem.value)void locateReviewItem(review.nextItem.value)
-  } catch(error) {
-    if(context.current())reviewActionError.value=`采用轨迹未完成：${(error as Error)?.message||'请重试'}。尚未记录审查结果`
-    console.warn('[annotation_review.adopt_failed]',{mediaId:context.mediaId,reviewId:context.reviewId,itemId:item.id,error})
-  } finally {reviewActionBusy.value=false}
-}
-const reviewMarks = computed(() => reviewPresentation(reviewing.value ? reviewFocus.value : null, currentFrame.value, currentObjects.value, selectedMedia.value?.width ?? 0, selectedMedia.value?.height ?? 0,stageSize.value.w))
-const reviewLastBox = computed(() => {
-  const item=reviewFocus.value,media=selectedMedia.value
-  if(!reviewing.value||!item||item.source!=='track_ended'||currentFrame.value!==item.frame||!item.lastBox||!media?.width||!media.height)return null
-  const [x1,y1,x2,y2]=item.lastBox
-  return {left:`${100*x1/media.width}%`,top:`${100*y1/media.height}%`,width:`${100*(x2-x1)/media.width}%`,height:`${100*(y2-y1)/media.height}%`}
-})
-watch(review.items, items => { if (reviewFocus.value) reviewFocus.value = items.find(i => i.id === reviewFocus.value?.id) ?? null })
-watch(reviewMediaId, id => { reviewFocus.value = null; void review.load(id) }, { immediate: true })
+watch(reviewMediaId, id => { void review.load(id) }, { immediate: true })
 // The minimap covers part of the image, so it is shown only on request.
 const minimapOn = ref((() => { try { return localStorage.getItem('annotation-minimap') === '1' } catch { return false } })())
 watch(minimapOn, value => { try { localStorage.setItem('annotation-minimap', value ? '1' : '0') } catch {} })
@@ -254,7 +96,7 @@ let reviewRefresh: ReturnType<typeof setTimeout> | null = null
 watch(saveState, value => {
   if (value !== 'saved' || !reviewMediaId.value) return
   if (reviewRefresh) clearTimeout(reviewRefresh)
-  reviewRefresh = setTimeout(() => { if(!reviewActionBusy.value && !review.busy.value)void review.load(reviewMediaId.value) }, 1500)
+  reviewRefresh = setTimeout(() => { if(!review.busy.value)void review.load(reviewMediaId.value) }, 1500)
 })
 const importDialog=ref<HTMLElement|null>(null)
 watch(duplicateImport,async value=>{if(value){await nextTick();importDialog.value?.querySelector<HTMLElement>('button:not(:disabled)')?.focus()}})
@@ -611,7 +453,6 @@ function restorePage() {
   if (header) header.inert = priorHeaderInert
 }
 async function toggleFocus() {
-  cancelReviewLocate()
   cancelPointer(); spaceHeld.value = false
   const scroller = scrollContainerRef.value
   const pausedView = showPauseFeedback.value ? snapshotPauseView() : null
@@ -651,11 +492,9 @@ function fit() {
   const w = Math.max(1, Math.min(size.value.w-40, (size.value.h-40)*ratio))
   base.value = {w,h:w/ratio}
 }
-function fitView() { if(pointerActive||pan)return;if(reviewing.value)userZoomedInReview.value=true;cancelReviewLocate();cancelPendingPauseView(); cancelAnnotationGesture(); zoomReset(); fit(); scrollContainerRef.value?.scrollTo(0,0) }
+function fitView() { if(pointerActive||pan)return;cancelPendingPauseView(); cancelAnnotationGesture(); zoomReset(); fit(); scrollContainerRef.value?.scrollTo(0,0) }
 async function zoomAt(steps:number, point?:{x:number;y:number}) {
   if(pointerActive||pan)return
-  if(reviewing.value)userZoomedInReview.value=true
-  cancelReviewLocate()
   cancelPendingPauseView()
   const el = stageRef.value, scroller = scrollContainerRef.value
   if (!el || !scroller) return
@@ -715,22 +554,17 @@ async function retrySave(){
 }
 function enhancement(preset:string){if(preset==='原图'){resetMediaFilter();inverted.value=false}else if(preset==='暗场'){brightness.value=150;contrast.value=125}else{brightness.value=100;contrast.value=160}}
 function keys(e:KeyboardEvent){
-  if(document.querySelector('[data-user-guide][open], [data-object-delete-dialog][open], [data-reimport-dialog], [data-object-filmstrip]'))return
+  if(document.querySelector('[data-user-guide][open], [data-object-delete-dialog][open], [data-reimport-dialog]'))return
 
   if(e.isComposing||e.keyCode===229||document.querySelector('[data-completion-dialog]'))return
   if(help.value){if(e.key==='Escape'){help.value=false;e.preventDefault()}if(e.key==='Tab'){const nodes=Array.from(helpDialog.value?.querySelectorAll<HTMLElement>('button,input,[tabindex="0"]')||[]);if(nodes.length){e.preventDefault();const i=nodes.indexOf(document.activeElement as HTMLElement);nodes[(i+(e.shiftKey?-1:1)+nodes.length)%nodes.length]?.focus()}}return}
   if((e.target as HTMLElement)?.closest('input,textarea,select,[contenteditable="true"]'))return
   if(reviewing.value&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat){
     const reviewKey=e.key.toLowerCase()
-    if(['1','2','3'].includes(reviewKey)){
-      e.preventDefault()
-      ;(reviewKey==='1'?reviewPanel.value?.primary():reviewKey==='2'?reviewPanel.value?.secondary():reviewPanel.value?.tertiary())
-      return
-    }
+    if(reviewKey==='1'){e.preventDefault();reviewPanel.value?.confirm();return}
     if(reviewKey==='n'){e.preventDefault();reviewPanel.value?.next();return}
-    if(reviewKey==='z'){e.preventDefault();void (savedReviewView.value?restoreReviewView():zoomToReviewTarget());return}
   }
-  if(e.key==='Escape'){e.preventDefault();if(pointerActive||pan){cancelPointer();return}if(savedReviewView.value){void restoreReviewView();return}if(focused.value){void toggleFocus();return}cancelPointer();hiddenBoxes.value=false;clearSelection();return}
+  if(e.key==='Escape'){e.preventDefault();if(pointerActive||pan){cancelPointer();return}if(focused.value){void toggleFocus();return}cancelPointer();hiddenBoxes.value=false;clearSelection();return}
   if(e.key.toLowerCase()==='f'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat){e.preventDefault();void toggleFocus();return}
   if(mediaBusy.value||workspaceRestoring.value)return
   if(e.key===' '){if((e.target as HTMLElement)?.closest('button,summary'))return;e.preventDefault();spaceHeld.value=true;return}
@@ -782,12 +616,11 @@ onMounted(()=>{
   observer=new ResizeObserver(()=>{const scroller=scrollContainerRef.value;if(scroller)size.value={w:scroller.clientWidth,h:scroller.clientHeight};if(zoom.value===1 && !pauseResizeLocked)fit()})
   if(scrollContainerRef.value)observer.observe(scrollContainerRef.value)
   window.addEventListener('keydown',keys);window.addEventListener('keyup',keyup);window.addEventListener('blur',blur);window.addEventListener('beforeunload',beforeUnload)
-  window.addEventListener('pointerdown',cancelReviewLocate,true);window.addEventListener('keydown',cancelReviewLocate,true);window.addEventListener('wheel',cancelReviewLocate,true)
   removeGuard=addLeaveGuard(async()=>{if(mediaBusy.value)return false;cancelHeadBox();cancelPointer();pausePlayback();try{await persistWorkspaceState(currentMediaId.value,true);return true}catch{return false}})
   if(selectedMedia.value)void resetAnnotationViewForMedia(selectedMediaId.value)
   void review.loadSummary()
 })
-onUnmounted(()=>{cancelReviewLocate();window.removeEventListener('pointerdown',cancelReviewLocate,true);window.removeEventListener('keydown',cancelReviewLocate,true);window.removeEventListener('wheel',cancelReviewLocate,true);if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();cancelTrackingRestartRequest();closeRestartDialog();if(deleteDialog.value?.open){deleteDialog.value.close();document.body.style.overflow=deletionPriorOverflow}if(focused.value)restorePage();observer?.disconnect();cancelPointer();pausePlayback();removeGuard?.();window.removeEventListener('keydown',keys);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',blur);window.removeEventListener('beforeunload',beforeUnload)})
+onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();cancelTrackingRestartRequest();closeRestartDialog();if(deleteDialog.value?.open){deleteDialog.value.close();document.body.style.overflow=deletionPriorOverflow}if(focused.value)restorePage();observer?.disconnect();cancelPointer();pausePlayback();removeGuard?.();window.removeEventListener('keydown',keys);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',blur);window.removeEventListener('beforeunload',beforeUnload)})
 </script>
 <template>
   <section class="annotation-page" :class="{'tracking-paused':hasPausedTracking,'review-mode':reviewing}" data-testid="annotation-page">
@@ -848,9 +681,7 @@ onUnmounted(()=>{cancelReviewLocate();window.removeEventListener('pointerdown',c
               </template><img v-else :key="selectedMedia.id" ref="imageRef" :src="selectedMedia.url" :alt="selectedMedia.name" class="stage-media" :style="{filter}" @load="onImageLoaded" /></template>
               <div v-else class="canvas-empty"><AppIcon name="upload" :size="36" /><h3>把注意力留给画面</h3><p>导入一段视频，开始精细标注。</p><button class="btn-primary" @click="openFilePicker('video')">导入视频</button></div>
               <div ref="annotationHitRef" data-testid="annotation-hit" class="annotation-hit" :class="{panning:spaceHeld||pan,selecting:activeTool==='select',locked:editingBlocked}" @click="stageClick" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="cancelPointer" @lostpointercapture="cancelPointer" @pointerleave="mousePixel=null" />
-              <div v-if="reviewLastBox" v-show="!hiddenBoxes && !frameError && !exactFrameLoading" class="review-last-box" :style="reviewLastBox" aria-hidden="true" />
-              <div v-for="mark in reviewMarks.circles" v-show="!hiddenBoxes && !frameError && !exactFrameLoading" :key="mark.key" class="review-candidate-circle" :class="{clickable:activeTool==='select'}" :style="{left:mark.left,top:mark.top,width:`${mark.size}px`,height:`${mark.size}px`}" :data-review-index="mark.label" role="button" :tabindex="activeTool==='select'?0:-1" :aria-label="`放大查看候选 ${mark.label}`" :aria-hidden="activeTool!=='select'" @pointerdown.stop @click.stop="zoomToReviewTarget(mark)" @keydown.enter.prevent.stop="zoomToReviewTarget(mark)"><span>{{ mark.label }}</span></div>
-              <AnnotationOverlay :objects="displayObjects" :selected="selectedObjectId" :width="stageSize.w" :height="stageSize.h" :draft="tempBbox" :labels="labels" :hidden="hiddenBoxes || (!!frameError && !exactFrameUrl)" :review-ids="reviewMarks.objectIds" :review-active="!!(reviewMarks.objectIds.length || reviewMarks.circles.length)" />
+              <AnnotationOverlay :objects="displayObjects" :selected="selectedObjectId" :width="stageSize.w" :height="stageSize.h" :draft="tempBbox" :labels="labels" :hidden="hiddenBoxes || (!!frameError && !exactFrameUrl)" />
             </div>
           </div>
           <div class="shell-tools" aria-label="标注工具">
@@ -866,7 +697,6 @@ onUnmounted(()=>{cancelReviewLocate();window.removeEventListener('pointerdown',c
             <button class="shell-tool" :class="{active:labels}" :aria-pressed="labels" title="显示对象编号" aria-label="显示对象编号" @click="labels=!labels"><AppIcon name="hash" :size="16" /></button>
             <button class="shell-tool" :class="{active:enhancing}" :aria-expanded="enhancing" title="画面增强" aria-label="画面增强" @click="enhancing=!enhancing"><AppIcon name="sun" :size="17" /></button>
             <button class="shell-tool" :class="{active:minimapOn}" :aria-pressed="minimapOn" title="放大后显示小地图（会遮住画面右上角）" aria-label="小地图" @click="minimapOn=!minimapOn"><span>小地图</span></button>
-            <button v-if="savedReviewView" class="shell-tool review-restore-view" data-testid="review-restore-view" title="返回原视图 (Esc)" aria-label="返回原视图" @click="restoreReviewView"><span>返回原视图</span></button>
             <button ref="focusButton" class="shell-tool" :class="{active:focused}" :aria-pressed="focused" :title="focused?'退出专注 (F / Esc)':'专注模式 (F)'" :aria-label="focused?'退出专注':'专注'" @click="toggleFocus"><AppIcon name="fit" :size="16" /></button>
           </div>
           <div v-if="headBoxBusy || headBoxError" class="head-proposal-status" :role="headBoxError?'alert':'status'">
@@ -916,7 +746,7 @@ onUnmounted(()=>{cancelReviewLocate();window.removeEventListener('pointerdown',c
         <button class="btn-primary" :disabled="!mergeReady||collaborationBusy" @click="resolveCollaboration(mergeChoices)">{{ collaborationBusy?'正在保存…':'应用选择并继续' }}</button>
         <div class="collaboration-more"><button class="quiet-button" @click="downloadWorkspaceBackup">导出本地备份</button><button class="quiet-button" @click="discardLocalDraft">全部用服务器版本</button></div>
       </section>
-      <AnnotationReviewPanel v-if="reviewing" ref="reviewPanel" :media-id="reviewMediaId" :current-frame="currentFrame" :blocked="editingBlocked" :tracking-pending="hasPausedTracking" :flush="flushWorkspace" :preview-source="minimapSource" :preview-filter="filter" :preview-media-width="selectedMedia?.width||0" :preview-media-height="selectedMedia?.height||0" :action-error="reviewActionError" :action-busy="reviewActionBusy" @locate="locateReviewItem" @adopt="adoptReviewTrackItem" @add-head="addHeadAtReviewTarget" />
+      <AnnotationReviewPanel v-if="reviewing" ref="reviewPanel" :media-id="reviewMediaId" :current-frame="currentFrame" :frame-count="maxFrameIndex+1" :object-count="currentObjects.length" :frame-ready="reviewFrameReady" :blocked="editingBlocked" :tracking-pending="hasPausedTracking" :flush="flushWorkspace" @seek="seekReviewFrame" />
       <section v-show="showPauseFeedback" class="pause-inspector-panel" aria-label="暂停核对">
         <div ref="pauseControlHost" class="pause-control-host" />
         <div v-show="pauseDetailsOpen" ref="inspectorDetailsHost" class="pause-inspector-details" />
@@ -937,8 +767,6 @@ onUnmounted(()=>{cancelReviewLocate();window.removeEventListener('pointerdown',c
         <details v-if="trackingCalibrationSummary.length" class="tracking-calibration"><summary>已保存的正常确认（{{ trackingCalibrationSummary.length }} 个对象）</summary><div v-for="item in trackingCalibrationSummary" :key="item.objectId" :data-calibration-object-id="item.objectId"><span>对象 {{ item.objectId }}<template v-if="item.sampleCount"> · {{ item.sampleCount }} 次正常运动确认</template><template v-if="item.geometryFrame!=null"> · 第 {{ item.geometryFrame+1 }} 帧尺寸已确认</template><template v-if="item.overlapCount"> · {{ item.overlapCount }} 个重叠组合已确认（{{ item.overlapPartnerIds.map(id=>'对象 '+id).join('、') }}）</template></span><button class="quiet-button" :disabled="feedbackBlocked||trackingFeedbackPending" @click="resetTrackingCalibration(item.objectId)">恢复默认判断</button></div></details>
         <div v-if="trackingFeedbackError && trackingFeedbackPendingAction?.decision==='reset'" class="tracking-feedback-error" role="alert">{{ trackingFeedbackError }}<button class="quiet-button" :disabled="trackingFeedbackBusy" @click="retryTrackingAnomalyFeedback">重试恢复默认判断</button></div>
       </section>
-      <!-- Pause review has its own panel and evidence scroll area; range edits wait until it is resolved. ; it sits after AI tracking so annotators keep that card in place. -->
-      <LinkedEditCard v-if="isVideo && !collaborationConflict && !showPauseFeedback" :compact="reviewing" />
       <section class="shell-card annot-objects" aria-label="当前帧对象">
         <div class="shell-card-head"><strong>本帧</strong><span class="annot-count" data-testid="frame-object-count">{{ currentObjects.length }} 个框</span><span class="annot-split"><i class="manual" />人工 {{ frameManualCount }}<i class="ai" />AI {{ frameAiCount }}</span></div>
         <div class="object-selection" data-testid="selected-object-actions">
