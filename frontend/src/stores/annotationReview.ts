@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { useAuth } from './auth'
-import { annotationReviewApi as api, type CheckResult, type Failure, type ReviewItem, type ReviewState, type ReviewStatus } from '../api/annotationReviewApi'
+import { annotationReviewApi as api, type CheckResult, type Failure, type ReviewState, type ReviewStatus } from '../api/annotationReviewApi'
 
 // One review state for the selected server video, shared by the review panel, the
 // frame strip, the header status and the export gate.
@@ -11,8 +11,19 @@ const error = ref('')
 let loadSeq = 0
 
 const status = computed<ReviewStatus | null>(() => state.value?.status ?? null)
-const items = computed<ReviewItem[]>(() => state.value?.status === 'open' ? state.value.review?.items ?? [] : [])
-const nextItem = computed(() => items.value.find(item => !item.check) ?? null)
+const openRound = computed(() => state.value?.status === 'open' ? state.value.review : null)
+// Frames this round asks a person to check, and the result recorded for each checked one.
+const targetFrames = computed<number[]>(() => (openRound.value?.frames ?? []).flatMap(([start, end]) => Array.from({ length: end - start + 1 }, (_, i) => start + i)))
+const checkedFrames = computed(() => {
+  const out = new Map<number, CheckResult>()
+  for (const [start, end, result] of openRound.value?.checkedFrames ?? []) for (let f = start; f <= end; f++) out.set(f, result)
+  return out
+})
+/** First unchecked frame after ``from`` (wrapping), or null when all are checked. */
+function nextUnchecked(from: number) {
+  const todo = targetFrames.value.filter(f => !checkedFrames.value.has(f))
+  return todo.find(f => f > from) ?? todo[0] ?? null
+}
 
 function describe(e: unknown) {
   const f = e as Failure
@@ -59,10 +70,10 @@ async function loadSummary() {
 
 export function useAnnotationReview() {
   return {
-    state, summary, busy, error, status, items, nextItem,
+    state, summary, busy, error, status, targetFrames, checkedFrames, nextUnchecked,
     load, loadSummary,
     start: (mediaId: string) => run(mediaId, null, () => api.start(mediaId)),
-    check: (mediaId: string, reviewId: string, item: ReviewItem, result: CheckResult) => run(mediaId, reviewId, () => api.check(mediaId, reviewId, item.id, result)),
+    check: (mediaId: string, reviewId: string, frame: number, result: CheckResult) => run(mediaId, reviewId, () => api.check(mediaId, reviewId, frame, result)),
     pass: (mediaId: string, reviewId: string) => run(mediaId, reviewId, () => api.pass(mediaId, reviewId)),
   }
 }

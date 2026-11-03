@@ -6,7 +6,7 @@
 > - 写入依赖版本、幂等回执与原子发布；删除是持久过滤规则，不物理擦除追踪原始数据。
 > - 测试与夹具必须使用独立的 `APP_DATA_DIR` / `APP_DB_FILE` / `APP_STORAGE_DIR`。
 
-`annotation_reviews` 兼容追加可空的 `evidence_policy`、`checklist_history_json`。未结束旧轮次升级审查筛选/分组策略时，在同一SQLite事务内归档旧items/检查快照并替换疑点清单；原 `annotation_review_checks` 记录不删除。已通过历史轮次不重建，原Tracking诊断和几何文件不改写。新增列对旧数据兼容，不改变离线存储 contract；策略版本（当前 actionable-review-v6）包含筛选版本和独立候选对应容差指纹，避免每次读取反复重建。
+`annotation_reviews` 兼容追加可空的 `evidence_policy`、`checklist_history_json`、`empty_frames_json`。当前清单策略为 `frame-review-v1`（逐帧清单）；未结束的旧策略轮次在同一SQLite事务内归档旧items/检查快照到 `checklist_history_json` 并改建为帧清单；原 `annotation_review_checks` 记录不删除。已通过历史轮次不重建，原Tracking诊断和几何文件不改写。新增列对旧数据兼容，不改变离线存储 contract。
 
 ## 概览
 
@@ -32,7 +32,7 @@ Docker 显式设定 `APP_DATA_DIR=/data/database`，业务日志位于宿主机 
 修改 DB 路径不自动修改日志路径；修改变量不自动搬迁已有数据。不要将测试目录与业务目录混用。
 
 
-审查采用框在工作区 `manualAnnotations` 保留 `origin=review_adopted` 和 `reviewAdoptionKey`（审查轮次、项编号、动作类型），用于保存/检查失败后的原操作恢复。它不参与训练框几何，不代替工作区 revision 或写入幂等键；补框也用该标识避免检查重试重复创建。训练包 `review/decisions.jsonl` 汇总已通过各轮及归档清单的候选判断，同帧重合位置以最新结果为准，较新的 `ok` 不再输出旧 `fixed/not_target`。
+旧审查采用框在工作区 `manualAnnotations` 保留 `origin=review_adopted` 和 `reviewAdoptionKey`，只是历史来源，不参与训练框几何；当前审查不再产生。
 浏览器本机恢复：IndexedDB `annotation-workspace-recovery/records` 缓存独立基准、待保存草稿与原键原正文请求，键包含页面标识、账号和视频；观看状态使用带 generation 的本机 sessionStorage 键。人工框的可选 creationId 用于辨别独立新建身份与恢复后的编号对应，不替代 objectId。无数据库迁移或后端文件格式变化，离线 contract 不变。兼容读取旧 sessionStorage 请求；缓存不可用时提示用户并继续服务器保存，待确认请求保留在页面内存中按原键回放。JSON 仅按需导出，不再是重新读取的固定副作用。
 
 ## 文件与工作区
@@ -119,7 +119,7 @@ seed 的临时写入或替换失败保留旧文件，临时文件清理后可重
 | 游标 | `review_bookmarks`、`confirmation_bookmarks`，按用户与任务隔离、版本独立 |
 | 幂等 | `review_write_receipts` 与业务变化同一事务；`training_exports` 有操作者+请求键唯一约束 |
 | 导出 | `training_exports` 存任务设置、进度、manifest、错误、完成状态 |
-| 审查 | `annotation_reviews` 每视频每轮一行：轮次、状态 open/passed、开始人/时间、开始时逐帧内容（`start_frames_json`）、清单（`items_json`，含修正后追加的 `followup` 复查项）、是否加严（旧轮次字段，新轮次恒为 0）；通过时记录通过人/时间、内容摘要 `passed_revision`、通过时逐帧内容、列表用的工作区/追踪文件标记 `passed_stamp`、修改记录 `changes_json`。`annotation_review_checks` 每项一行：结果 ok/fixed/empty/not_target、检查人、时间。只追加轮次，不改写旧轮。`annotation_review_exclusions` 记录“不是精子”的排除位置：`id/media_id/review_id/item_id/source/frames_json/actor_id/created_at/revoked_at/revoked_by`；`frames_json` 为原图像素 `[{frameIndex,bbox:[x1,y1,x2,y2]}]`，只追加和撤销，不物理删除。静止排除写 `source=static`，其他来源只在 ±5 帧范围生效；旧静止记录从对应清单及归档恢复类型 |
+| 审查 | `annotation_reviews` 每视频每轮一行：轮次、状态 open/passed、开始人/时间、开始时逐帧内容（`start_frames_json`）、清单（`items_json`：当前为要检查的帧区间 `[{kind:'frames',startFrame,endFrame}]`，旧轮次为疑点/抽检等项）、是否加严（旧轮次字段，新轮次恒为 0）；通过时记录通过人/时间、内容摘要 `passed_revision`、通过时逐帧内容、列表用的工作区/追踪文件标记 `passed_stamp`、修改记录 `changes_json`、确认无目标的帧 `empty_frames_json`（旧轮次为空，从其未知帧项推出）。`annotation_review_checks` 每帧一行（`item_id=frame-<帧号>`，旧轮次为项编号）：结果 ok/empty（旧轮次还有 fixed/not_target）、检查人、时间。只追加轮次，不改写旧轮。`annotation_review_exclusions` 是旧“不是精子”排除位置的只读历史，当前不再写入或使用：`id/media_id/review_id/item_id/source/frames_json/actor_id/created_at/revoked_at/revoked_by`；`frames_json` 为原图像素 `[{frameIndex,bbox:[x1,y1,x2,y2]}]`，只追加和撤销，不物理删除。静止排除写 `source=static`，其他来源只在 ±5 帧范围生效；旧静止记录从对应清单及归档恢复类型 |
 | 审计身份/证据 | `audit_source_identity` 保存部署身份；`training_export_audits` 按 export_id 唯一保存规范 JSON、采集时间和 SHA；触发器禁止更新/删除 |
 
 A/B/F 不随浏览、缩放、草稿、重新确认或退回重审而改写。F 的对象集合和类别继承 A，只选择几何来源。当前帧重审使用上述事件表；旧问题标记表不作为这一流程的状态来源。
@@ -158,7 +158,7 @@ A/B/F 不随浏览、缩放、草稿、重新确认或退回重审而改写。F 
 
 首帧回归纠错保留原锚点哈希与 endpointOriginalObjectId，同一哈希下明确映射更新仍从原编号应用，不能把旧 canonical ID 当原编号。`reviewEvidence.boundaryExit` 记录已退出的AI身份及归档诊断；历史读取投影只改变返回结果，不覆写源JSONL或删除墓碑。原始人工框及审查历史保留，无数据库/离线存储契约变更。训练来源摘要包含当前投影策略，避免继续把旧错配版本当作当前来源。
 
-训练导出目录可包含 `review/decisions.jsonl`：这是直接标注快照视频最近一次通过审查中，审查员对 `missing/static` 候选的 `fixed` / `not_target` 判断，每个 observation 一行，带 `sourceSha256/frameIndex/bbox/category/source/result/reviewId/itemId`。它用于检测模型的困难样本追溯，不是 YOLO 标签；没有判断时不生成文件，manifest 的 `reviewDecisions.count` 为 0。合并脚本按视频及实际保留的最新导出版本筛选判断后追加，保留原JSONL字段和行格式；不会将多视频包的整份判断重复追加，也不混入被新版替代的视频旧判断。声明有判断但文件缺失、行数不符或来源不属于包内视频时明确拒绝合并。
+新训练导出不再包含 `review/decisions.jsonl`。以前导出的包可能带有它（旧审查对漏标候选的判断）；合并脚本仍按视频及实际保留的最新导出版本筛选后追加，声明有判断但文件缺失、行数不符或来源不属于包内视频时明确拒绝合并。
 
 `concentrated_reviews` 保存 session/source_hash/不可变 evidence_json 和当前 final_version_id；`concentrated_reopens` 保存重开帧、原最终版本、操作者与时间。Tracking 行 `reviewEvidence` 包含 findings、检查状态、反向核验状态、expectedObjectIds；同一原子发布保护。送审固定证据不再依赖可变工作区。
 

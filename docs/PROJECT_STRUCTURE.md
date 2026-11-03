@@ -26,10 +26,10 @@ Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前�
 | 标注工作区 store | `stores/workspace.ts` 只组装 `useWorkspace()` 的对外接口；实现按职责在 `stores/workspace/`：`state.ts`（共享状态与派生值，含跨模块计数器 `runtime`）、`history.ts`（撤销/重做）、`editing.ts`（画布手势、点选头部、对象增删改、采用审查轨迹）、`frames.ts`（精确帧读取/缓存、定位与播放）、`save.ts`（本机草稿、构建工作区、写入队列与重试）、`collaboration.ts`（观看状态、三方合并应用、冲突解决、stamp 轮询）、`trackingActions.ts`（较早帧重追、整视频删除、异常确认反馈）、`media.ts`（素材列表/导入/删除）、`restore.ts`（切换素材/账号时恢复）、`trackingResult.ts`（追踪结果加载与暂停说明）、`tracking.ts`（启动/轮询/续追 SAM3）、`results.ts`（JSON 导出与效果预览）；合并/重放协议在 `annotation/workspaceWrites.ts` |
 | 人工标注 UI / 状态 | `pages/AnnotatePage.vue`、`stores/workspace/editing.ts`、`annotation/annotation.css` / `annotation-shell.css`；缩放小地图 `components/AnnotationMinimap.vue` |
 | 框绘制/坐标/缓存 | `components/AnnotationOverlay.vue`、`annotation/geometry.ts`、`annotation/frameCache.ts` |
-| 审查 | `pages/AnnotatePage.vue`（`mode="review"`）、`components/AnnotationReviewPanel.vue`、前后帧联动 `components/LinkedEditCard.vue` / `ObjectFilmstrip.vue` / `annotation/linkedEdits.ts` / `stores/workspace/linkedEdits.ts`、`stores/annotationReview.ts`、`api/annotationReviewApi.ts`；后端 `annotation_review.py`（清单、加严抽检、通过与修改记录、导出门槛）与 `annotation_review_routes.py`；共享请求与日志 `api_common.py` |
+| 审查 | `pages/AnnotatePage.vue`（`mode="review"`）、`components/AnnotationReviewPanel.vue`（逐帧确认）、`stores/annotationReview.ts`、`api/annotationReviewApi.ts`；后端 `annotation_review.py`（帧清单、按帧确认、通过与修改记录、导出门槛）与 `annotation_review_routes.py`；共享请求与日志 `api_common.py` |
 | 重复视频与覆盖重新标注 | `stores/workspace/media.ts`、`backend/app/media_reimport.py`、`main.py`；文件恢复日志与轮次保护见 STORAGE_LAYOUT |
 | 导入标注包 | `backend/app/package_import.py`（训练 ZIP → 新素材 + 人工工作区）、`main.py` 的 `/api/track/import-package`；前端 `stores/workspace/media.ts` 的 `importPackage` 与素材库“标注包”按钮 |
-| 追踪疑点证据 | `backend/app/review_evidence.py` / `endpoint_tracking.py` 写入Tracking行；当前 `annotation_review.frame_findings/reverse_items/detector_items` 提取并分组，旧 `concentrated_review` 仅保留历史数据层 |
+| 追踪证据 | `backend/app/review_evidence.py`（身份风险/对象缺失）/ `endpoint_tracking.py` 写入Tracking行，供追踪自身使用，审查不读取；旧 `concentrated_review` 仅保留历史数据层 |
 | 人工首尾与独立反追 | `backend/app/endpoint_tracking.py`：端点校验、反向有界窗口、多帧身份匹配与只读证据；`main.py` 编排、`annotation_completion.py` 有效尾框合并 |
 | 三路综合标注 | `backend/app/joint_tracking.py`：已有身份内关联、连续路径选择、统一几何与不确定片段；`head_click.detect_regions` 批量ROI推理；新首尾请求 combineResults=true |
 | 历史 A/B/C/F 数据（只读） | `review_workflow.py`、`review_repository.py`、`confirmation_workflow.py`、`concentrated_review.py`、`review_schema.py` 仅保留表结构迁移与数据层，供统计/审计导出读取；页面与路由已删除，说明见 `docs/archive/旧审查与对比确认流程_2026-11-01前.md` |
@@ -66,7 +66,7 @@ Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前�
 | `backend/app/main.py` | 1500 | 路由集中处；按路径搜索，如 `grep -n '"/api/track/' ` |
 | `backend/app/services/anomaly_detector.py` | 1500 | 仅旧暂停兼容路径的异常判定；按原因码搜索 |
 | `backend/app/tracker.py` | 1200 | SAM3 追踪编排；按 `def ` 列出函数后再读 |
-| `backend/app/annotation_review.py` | 900 | 审查清单与通过规则；按清单项类型（`unknown`、`doubt`、`sample` 等）搜索 |
+| `backend/app/annotation_review.py` | 380 | 帧清单、按帧确认与通过规则；按 `upgrade`、`check`、`pass_review` 搜索 |
 | `backend/app/annotation_state.py`、`services/tracking_evidence.py`、`training_export.py` | 800–900 | 按 `def ` 列出函数后再读 |
 | `backend/app/review_repository.py`、`review_workflow.py`、`confirmation_workflow.py` | 800–1200 | 历史 A/B/C/F 只读数据层；当前功能一般不需要读 |
 

@@ -485,7 +485,6 @@ def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha)
         for split in SPLITS
     }
     done = ann_id = 0
-    review_decisions = []
     for vi, v in enumerate(versions):
         m = v["media"]
         video = find_video(media_dir(m["media_id"]))
@@ -499,9 +498,8 @@ def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha)
             )
         edited = None
         if "directFrames" in v:
-            from .annotation_review import review_decisions as export_review_decisions, review_edited
+            from .annotation_review import review_edited
             with closing(connect()) as c:
-                review_decisions.extend(export_review_decisions(c, m["media_id"], m["sha256"]))
                 edited = review_edited(c, m["media_id"])
         manifest["sources"].append(
             {
@@ -680,11 +678,6 @@ def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha)
             (annotations / f"instances_{split}.json").write_text(
                 packed(data), encoding="utf-8"
             )
-    if review_decisions:
-        review_file = work / "review/decisions.jsonl"
-        review_file.parent.mkdir(parents=True, exist_ok=True)
-        review_file.write_text("".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in review_decisions), encoding="utf-8")
-    manifest["reviewDecisions"] = {"file": "review/decisions.jsonl", "count": len(review_decisions)}
     (work / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -705,7 +698,6 @@ YOLO 标签为 class_id cx cy w h，坐标按实际图像尺寸归一化，类�
 勾选导出原视频时，videos/ 保存与审查时 SHA-256 一致的原文件，sources[].videoFile 指向对应文件。
 manifest.json 记录逐图片 sampleId、原始帧、视频、最终版本及 auditReference；文件名包含数据集身份。
 provenance/ 保留完整 A/B/最终框。完整人员与操作历史固定在服务端，通过运维审计导出命令获取。
-review/decisions.jsonl 记录审查员对漏标候选的判断（是精子 / 不是精子），可作为检测模型的困难样本，不是 YOLO 标签。
 manifest.json 的 samples[].objects[].reviewEdited 为 true 表示该框由审查员新增或修改过（追踪原结果有误），可用于加权训练或误差分析。
 """,
         encoding="utf-8",

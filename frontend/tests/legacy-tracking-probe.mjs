@@ -9,8 +9,12 @@ export async function passReview(page,token,mid){
   // API shortcut for suites that need a reviewed video; the review UI itself is
   // exercised in training-export and critical-workflows.
   const headers={Authorization:'Bearer '+token}
-  const call=async(path,method='GET',data)=>{const r=await page.request.fetch(new URL('/api/annotation-review/media/'+mid+path,page.url()).href,{method,data,headers});if(!r.ok())throw Error(await r.text());return r.json()}
-  let state=await call('/start','POST')
-  for(const item of state.review.items)state=await call('/items/'+item.id,'PUT',{reviewId:state.review.reviewId,result:item.kind==='unknown'?'empty':'ok'})
-  return call('/pass','POST',{reviewId:state.review.reviewId})
+  const fetch=(path,method='GET',data)=>page.request.fetch(new URL('/api/annotation-review/media/'+mid+path,page.url()).href,{method,data,headers})
+  const call=async(...args)=>{const r=await fetch(...args);if(!r.ok())throw Error(await r.text());return r.json()}
+  const state=await call('/start','POST'),reviewId=state.review.reviewId
+  // Every frame is confirmed; a frame without any annotation is confirmed empty instead.
+  for(const [start,end] of state.review.frames)for(let f=start;f<=end;f++){
+    if(!(await fetch('/frames/'+f,'PUT',{reviewId,result:'ok'})).ok())await call('/frames/'+f,'PUT',{reviewId,result:'empty'})
+  }
+  return call('/pass','POST',{reviewId})
 }

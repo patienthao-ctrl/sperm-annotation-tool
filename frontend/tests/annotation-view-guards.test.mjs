@@ -18,9 +18,9 @@ function runtime(){
   const effects=[],ref=value=>({value}),zoom=ref(1)
   const stage={getBoundingClientRect:()=>({left:10,top:20,width:800*zoom.value,height:450*zoom.value})}
   const scroller={getBoundingClientRect:()=>({left:0,top:0,width:600,height:300}),scrollBy:(x,y)=>effects.push(['scroll',x,y]),scrollTo:(x,y)=>effects.push(['fit-scroll',x,y])}
-  const refs={zoom,stageRef:ref(stage),scrollContainerRef:ref(scroller),pauseStageMargins:ref(null),help:ref(false),focused:ref(false),hiddenBoxes:ref(false),spaceHeld:ref(false),mediaBusy:ref(false),workspaceRestoring:ref(false),jumpFrameInput:ref(null),reviewing:ref(false),userZoomedInReview:ref(false)}
+  const refs={zoom,stageRef:ref(stage),scrollContainerRef:ref(scroller),pauseStageMargins:ref(null),help:ref(false),focused:ref(false),hiddenBoxes:ref(false),spaceHeld:ref(false),mediaBusy:ref(false),workspaceRestoring:ref(false),jumpFrameInput:ref(null),reviewing:ref(false)}
   const code=`const {${Object.keys(refs).join(',')}}=refs;let pointerActive=false,pan=null;
-    const cancelReviewLocate=()=>effects.push('cancel-review-locate'),cancelPendingPauseView=()=>effects.push('cancel-view'),cancelAnnotationGesture=()=>effects.push('cancel-edit'),zoomReset=()=>{zoom.value=1;effects.push('reset')},fit=()=>effects.push('fit'),zoomIn=n=>{zoom.value+=n;effects.push('zoom-in')},zoomOut=n=>{zoom.value-=n;effects.push('zoom-out')},nextTick=async()=>{},toggleFocus=()=>effects.push('focus'),canvasZoomKey=()=>null;
+    const cancelPendingPauseView=()=>effects.push('cancel-view'),cancelAnnotationGesture=()=>effects.push('cancel-edit'),zoomReset=()=>{zoom.value=1;effects.push('reset')},fit=()=>effects.push('fit'),zoomIn=n=>{zoom.value+=n;effects.push('zoom-in')},zoomOut=n=>{zoom.value-=n;effects.push('zoom-out')},nextTick=async()=>{},toggleFocus=()=>effects.push('focus'),canvasZoomKey=()=>null;
     ${functions}\n({zoomAt,fitView,keys,setPointer:x=>pointerActive=x,setPan:x=>pan=x})`
   const api=vm.runInNewContext(ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,{refs,effects,document:{querySelector:()=>null}})
   const event=(key,options={})=>({key,keyCode:0,isComposing:false,repeat:false,ctrlKey:false,metaKey:false,altKey:false,shiftKey:false,target:{closest:()=>null},preventDefault(){effects.push('prevent')},...options})
@@ -53,15 +53,6 @@ test('after gesture release zoom and fit keep their existing normal behavior',as
   assert(f.effects.includes('fit'))
 })
 
-test('explicit review zoom and fit reserve scale control for the user',async()=>{
-  const f=runtime();f.refs.reviewing.value=true
-  await f.zoomAt(1)
-  assert.equal(f.refs.userZoomedInReview.value,true)
-  f.refs.userZoomedInReview.value=false
-  f.fitView()
-  assert.equal(f.refs.userZoomedInReview.value,true)
-})
-
 test('legacy IME key code 229 cannot enter focus or invoke canvas actions',()=>{
   const f=runtime()
   f.keys(f.event('f',{keyCode:229}));f.keys(f.event('h',{keyCode:229}));f.keys(f.event(' ',{keyCode:229}))
@@ -83,14 +74,27 @@ function reviewStoreRuntime() {
 test('review check binds the captured round and ignores a response after switching video',async()=>{
   const {store,calls,resolve,round}=reviewStoreRuntime()
   await store.load('A')
-  const writing=store.check('A','round-A',{id:'doubt-3'},'fixed')
+  const writing=store.check('A','round-A',3,'ok')
   await store.load('B');resolve(round('A'));await writing
   assert.equal(calls[0][1],'round-A')
   assert.equal(store.state.value.mediaId,'B')
 })
 test('stale review action never sends a check to a newly selected video',async()=>{
   const {store,calls}=reviewStoreRuntime();await store.load('B')
-  assert.equal(await store.check('A','round-A',{id:'doubt-3'},'fixed'),false)
+  assert.equal(await store.check('A','round-A',3,'ok'),false)
+  assert.equal(calls.length,0)
+})
+
+test('next unchecked frame follows the round frames and wraps around',async()=>{
+  const {store,calls}=reviewStoreRuntime()
+  store.state.value={mediaId:'A',status:'open',review:{reviewId:'round-A',frames:[[2,4],[8,9]],checkedFrames:[[2,3,'ok'],[8,8,'empty']]}}
+  assert.deepEqual(store.targetFrames.value,[2,3,4,8,9])
+  assert.equal(store.checkedFrames.value.get(8),'empty')
+  assert.equal(store.nextUnchecked(-1),4)
+  assert.equal(store.nextUnchecked(4),9)
+  assert.equal(store.nextUnchecked(9),4)
+  store.state.value={...store.state.value,review:{...store.state.value.review,checkedFrames:[[2,4,'ok'],[8,9,'ok']]}}
+  assert.equal(store.nextUnchecked(0),null)
   assert.equal(calls.length,0)
 })
 
@@ -102,34 +106,6 @@ function workspaceHandler(name,context){
   assert(body,`production ${name} must exist`)
   return vm.runInNewContext(ts.transpileModule(`(${body})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context)
 }
-function adoptionRuntime(existing=[]){
-  const ref=value=>({value}),annotations=ref({A:existing}),selected=ref(null),saves=[]
-  let failure=false
-  const context={console,editingBlocked:ref(false),currentMediaId:ref('A'),mediaAssets:ref([{id:'A',type:'video',frameCount:20}]),annotationsByMedia:annotations,selectedObjectId:selected,objectNameInput:ref('sperm'),statusMessage:ref(''),
-    numberedObjectName:(name,id)=>`${name} ${id}`,frameToTime:fi=>fi/10,isObjectDeleted:()=>false,
-    getNextObjectId:()=>Math.max(0,...annotations.value.A.map(o=>o.objectId))+1,
-    persistWorkspaceState:async(mid)=>{saves.push(mid);if(failure)throw new Error('response lost')}}
-  return {adopt:workspaceHandler('adoptReviewTrack',context),annotations,saves,setFailure:x=>failure=x}
-}
-const adoptBoxes=[{frameIndex:3,bbox:{x:10,y:10,width:2,height:2}},{frameIndex:4,bbox:{x:11,y:10,width:2,height:2}}]
-test('adoption rebases a stale id owned by an object outside the target frames',async()=>{
-  const r=adoptionRuntime([{id:'other',objectId:5,frameIndex:0,bbox:{x:50,y:50,width:3,height:3}}])
-  assert.equal(await r.adopt(adoptBoxes,5,'round:item'),6)
-  assert.equal(r.annotations.value.A[0].objectId,5)
-  assert.equal(r.annotations.value.A.filter(o=>o.objectId===6).length,2)
-})
-test('save failure retains retryable local boxes and exact replay saves without duplicating',async()=>{
-  const r=adoptionRuntime();r.setFailure(true)
-  await assert.rejects(r.adopt(adoptBoxes,5,'round:item'),/已在本地添加，等待保存/)
-  assert.equal(r.annotations.value.A.length,2)
-  r.setFailure(false)
-  await r.adopt(adoptBoxes,5,'round:item')
-  await r.adopt(adoptBoxes,5,'round:item')
-  assert.equal(r.annotations.value.A.length,2)
-  assert.equal(r.saves.length,3)
-  r.annotations.value.A[0].bbox.x=30
-  await assert.rejects(r.adopt(adoptBoxes,5,'round:item'),/后来有改动/)
-})
 test('head creation reports a locked frame distinctly and clears a previous model error',async()=>{
   const context={editingBlocked:{value:true},headBoxBusy:{value:false},headBoxError:{value:'old model error'}}
   const result=await workspaceHandler('createHeadBox',context)({x:10,y:10})

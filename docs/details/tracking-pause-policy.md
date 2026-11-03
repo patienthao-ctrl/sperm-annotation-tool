@@ -1,6 +1,6 @@
 # 旧暂停兼容路径：暂停核对、异常判定与证据
 
-新追踪请求固定 `reviewMode=true`（`frontend/src/stores/workspace/tracking.ts`），几何/重叠风险不再中断模型，疑点进入审查清单。下列规则只适用于升级前已暂停的视频和服务端兼容路径；代码仍在运行，修改 `anomaly_detector.py`、`tracking_evidence.py`、`tracking_pause_policy.py` 或暂停核对界面时才需要读。返回 [ANNOTATION.md](../ANNOTATION.md)。
+新追踪请求固定 `reviewMode=true`（`frontend/src/stores/workspace/tracking.ts`），几何/重叠风险不再中断模型，由审查逐帧检查。下列规则只适用于升级前已暂停的视频和服务端兼容路径；代码仍在运行，修改 `anomaly_detector.py`、`tracking_evidence.py`、`tracking_pause_policy.py` 或暂停核对界面时才需要读。返回 [ANNOTATION.md](../ANNOTATION.md)。
 
 ## 暂停核对界面
 
