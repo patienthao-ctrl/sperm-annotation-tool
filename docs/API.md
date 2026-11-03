@@ -12,10 +12,10 @@
 
 | 方法与路径 | 作用 |
 | --- | --- |
-| `GET /api/annotation-review/media/{id}` | `status: none/open/passed/stale`、`currentRevision`（逐帧内容摘要）、`unknownFrames`、当前或最近一轮 `review{reviewId,round,state,lastActorId,lastActivityAt,items[{id,kind,startFrame,endFrame,frame,message,objectId?,objectIds?,category?,source?,anchor?,region?,index?,countInFrame?,observations?,adoptObjectId?,detectorAgrees?,lastFrame?,lastBox?,ratio?,followupOf?,bbox?,check}],checked,total,escalated,passedBy,passedAt,changes}`、`lastPassed`。`lastActorId` 取最近检查人，无检查时为开始人；`lastActivityAt` 同理。从未保存工作区时返回 `none` 与 `notReady` 说明，不报错。Tracking 运行中也可读取 |
+| `GET /api/annotation-review/media/{id}` | `status: none/open/passed/stale`、`currentRevision`（逐帧内容摘要）、`unknownFrames`、当前或最近一轮 `review{reviewId,round,state,lastActorId,lastActivityAt,frames:[[start,end]],checkedFrames:[[start,end,'ok'|'empty']],checked,total,passedBy,passedAt,changes}`、`lastPassed`。`frames` 是本轮要检查的帧（首轮全部帧，重新审查只含改动帧，闭区间、原始帧号从 0 开始）；旧版清单的已通过轮次返回空 `frames`。`lastActorId` 取最近确认人，无确认时为开始人；`lastActivityAt` 同理。从未保存工作区时返回 `none` 与 `notReady` 说明，不报错。Tracking 运行中也可读取 |
 | `POST /api/annotation-review/media/{id}/start` | 已有进行中的轮次则原样返回；已通过且内容未变返回 409 `REVIEW_ALREADY_PASSED`；Tracking 运行中 409 `SOURCE_BUSY` |
-| `PUT /api/annotation-review/media/{id}/items/{itemId}` | `{reviewId, result:'ok'|'fixed'|'empty'|'not_target'}`，`empty` 仅用于 `unknown` 项，`not_target` 仅用于 `missing/static` 项；可改判。`not_target` 在同一事务写 `annotation_review_exclusions`，改为其他结果时同事务撤销。`missing/static` 项提交 `ok` 时，若其观测帧内容与本轮开始时不同，服务端记为 `fixed`。非当前轮 409 `REVIEW_NOT_CURRENT`，已结束 409 `REVIEW_CLOSED`。任一项（`unknown`、`missing/static` 除外）首次记为 `fixed` 时追加一项 `kind:'followup'`（`followupOf` 为原项 ID，前后各 5 帧，`objectIds` 为该项帧内本轮被改动的对象）；不再随机加抽，`escalated` 只对旧轮次可能为 true |
-| `POST /api/annotation-review/media/{id}/pass` | `{reviewId}`；有未检查项 409 `REVIEW_INCOMPLETE`，仍有未确认的未知帧 409 `UNKNOWN_FRAMES`；成功固定 `passed_revision` 和修改记录 |
+| `PUT /api/annotation-review/media/{id}/frames/{frameIndex}` | `{reviewId, result:'ok'|'empty'}`，确认一帧，可重复确认（以最后一次为准）。服务端按当前工作区校验：有框的帧只能 `ok`；未知帧（无任何标注行）只能 `empty`，提交 `ok` 返回 422；已知空帧提交 `empty` 记为 `ok`。帧不在本轮或超出视频 404 `ITEM_NOT_FOUND`，非当前轮 409 `REVIEW_NOT_CURRENT`，已结束 409 `REVIEW_CLOSED`。旧 `/items/{itemId}` 已删除 |
+| `POST /api/annotation-review/media/{id}/pass` | `{reviewId}`；有未确认帧 409 `REVIEW_INCOMPLETE`，仍有未确认无目标的未知帧 409 `UNKNOWN_FRAMES`；成功固定 `passed_revision`、确认无目标的帧和修改记录 |
 | `GET /api/annotation-review/summary` | `{items:{mediaId: status}}`，列表用，不读追踪文件 |
 | `POST /api/annotation-review/media/{id}/reset-annotations` | 原 `/api/review/media/{id}/reset-annotations` 迁移至此，正文与幂等语义不变；不再因历史送审拒绝 |
 | `GET /api/datasets/annotations/{id}/preview` | 导出弹窗预览（取代 `completion-preview`）：`sourceRevision`、有框/空/未知帧，审查确认无目标的帧计为空 |
@@ -23,14 +23,14 @@
 
 本页是 API 地图与不变量，不复制全部类型定义。精确请求验证以已注册路由的 Pydantic 模型为准；开发时可读本地 FastAPI `/openapi.json`。旧原型中的示例接口不是活动接口。
 
-审查采用轨迹的 `adoptObjectId` 是生成清单时的建议编号：不同反向身份预留不同编号，前端采用前仍须检查全视频占用和删除墓碑；不得把生成后新增的其他对象并入。工作区人工框附 `reviewAdoptionKey` 用于同一采用/补框操作重试，保存仍走原版本校验、幂等写入与事务；记录检查请求显式绑定开始时的 mediaId/reviewId，切换视频或轮次后不发送旧操作的检查。
+记录帧确认的请求显式绑定开始时的 mediaId/reviewId 与帧号，切换视频或轮次后不发送旧操作的确认。旧审查采用的工作区人工框仍保留 `origin=review_adopted` / `reviewAdoptionKey`，只作历史来源，不再产生。
 
 客户端多人协作仍使用现有工作区 GET/PUT 写入，不增加绕过版本检查的入口。`GET /api/track/workspace/{mediaId}/stamp` 是只读轮询：`{revision,generationId,updatedBy,updatedByName,trackingStamp:[mtimeNs,size]|null,tracking:{userId,userName,status}|null}`；不持全局来源锁、不执行恢复日志，按文件 mtime/大小缓存已解析版本，文件正在替换时返回 503。权威内容仍以完整 GET 为准。新版普通保存仅提交人工框、人工基准、删除规则和 generation；观看状态在本机独立保存。工作区版本 409 的自动合并只基于独立读取基准及最新 GET；每次重算正文后使用新幂等键。反馈/回退等专用接口仍原键恢复，不自动重写。详见 WORKFLOW 的多人协作保存。
 
 ## 追踪与审查证据协议
 
-- 审查状态与开始审查可复用进程内解析缓存：键为 `(mediaId, 工作区revision/追踪文件标记, EVIDENCE_POLICY)`，最多 8 个，按最近使用淘汰；通过审查与导出门槛不读缓存，始终重新加载当前内容。
-- `annotation_review.frame_findings` 保留可操作的反向独有轨迹（`endpoint_identity_uncertain` 且 objectId 为空、有 tailObjectId 和有效 bbox）与正反向分歧（`endpoint_disagreement` 的有效 reverseBox），但仅当当前内容没有框覆盖；`joint_uncertain/subject_identity/backward_disagreement/带 objectId 的身份不明`及人工框所在帧的对象疑点仍不生成项，原始 JSONL 与几何保持不变。`doubt` 项类别为 `missing/association/position/static/check`；新增 `source: reverse/disagreement/detector/track_ended`、`objectIds`、单一短 `labels/message`、`observations[{frameIndex,objectIds,candidates}]`；对象类每项最多3个对象；missing/static 项每帧只有一个候选，新增 `anchor:像素xyxy`、`region:九宫格方位`、`index:从1开始的序号`、`countInFrame:同起始帧项数`。反向轨迹连续整段为一项（允许缺 2 帧、至少 2 个观测），不受 5 帧上限；检测器路径要求至少 2 个采样点。`adoptObjectId` 是采用反向轨迹建议的规范对象编号；`detectorAgrees` 表示检测候选与反向轨迹一致。`track_ended` 带 `lastFrame/lastBox`。客户端必须按当前帧的 observation 显示，定位元数据不参与标注内容摘要。`candidates` 兼容字段仅含定位帧候选。候选对应规则独立于首尾追踪容差；同时覆盖多个现有框时列 association，人工框对象疑点仍豁免。进行中旧清单在 GET/start/pass 时按 evidence_policy（当前 actionable-review-v6，含漏标阈值 MISSING_POLICY 指纹）升级，非疑点ID保留，新增/语义变化项不自动勾选；历史轮次及原检查记录保留，失败返回错误。
+- 审查状态、开始审查与帧确认可复用进程内解析缓存：键为 `(mediaId, 工作区revision/追踪文件标记)`，最多 8 个，按最近使用淘汰；通过审查与导出门槛不读缓存，始终重新加载当前内容。
+- 审查不读取追踪结果里的 `reviewEvidence`（逐帧人工检查，见 WORKFLOW 审查小节）；下列证据只服务追踪自身（端点对应、出画保护、综合标注）与排错。
 
 - `POST /api/track` 新增 `combineResults:boolean`（默认 false 兼容旧请求）。新页面的首尾追踪固定 true，并携带人工 terminalAnnotations、reviewMode=true、startFrame=0。缺少端点时422；该字段进入幂等正文，不在重试时补写或切换。
 - true 时正向、人工尾帧反向及头部检测器共同生成实际输出；任务成功需同时有 `endpointVerification` 与 `jointTracking.state=checked`。jointTracking 只含状态、policy/version、checkedFrames、changedObjects、recoveredObjects、reviewCount等摘要，不增加画面上的采用理由。前端收到旧后端的仅核验结果必须报错，不能冒充综合完成。
@@ -44,7 +44,7 @@
 - 全量结果 envelope 可带 `terminalIdentity={frameIndex,anchorHash,matches}`。前端严格校验其帧号/哈希/一对一正整数映射后，只对对应尾帧人工框统一身份，保留 endpointOriginalObjectId / endpointAnchorHash；同一哈希按原始尾编号应用当前对应，结果相同不重复转换，明确错配纠正后可更新 canonical ID。该人工工作区修改沿用原保存队列/版本校验，不改原始几何。冻结审查证据保留原始 terminalAnnotations，不依赖后续可变工作区。
 - 综合输出可附 `reviewEvidence.boundaryExit={policy:'boundary-exit-v1',exitedObjectIds,findings}`：已确认边界退出的AI身份停止出框，原相关诊断归档于 findings，不继续作为当前活动风险；不写工作区删除或正常确认。历史读取、JSONL下载、训练来源共用该只读投影，缺少有效原图尺寸不推测边界。身份重关联策略记录为 associationPolicy=first-anchor-v2，无新增客户端写入权限或数据库迁移。
 
-- `POST /api/track` 新增 `reviewMode`（默认 false 兼容旧客户端，新页面发送 true）。true 时质量疑点不暂停，按原单段上限自动续跑；状态新增 `checking`。模型/持久化错误仍 failed。
+- `POST /api/track` 新增 `reviewMode`（默认 false 兼容旧客户端，新页面发送 true）。true 时质量风险不暂停，按原单段上限自动续跑；状态新增 `checking`。模型/持久化错误仍 failed。
 
 ## 通用协议
 
@@ -134,7 +134,7 @@
 | 方法与路径 | 作用 |
 | --- | --- |
 | `POST /api/datasets/exports/preview` | `finalVersionIds`，可选划分字段同下；只读校验/统计，另返回 `splitMode`、`splitFrames{train,val,test}`、`videos[{finalVersionId,frameCount,objectCount,split}]` |
-| `POST /api/datasets/exports` | `finalVersionIds`、`format:'yolo'|'coco'|'both'`、`splitRatio`（训练比例，默认 0.8）、`splitMode:'frame'|'video'`（省略时为旧的按帧划分）、`testRatio`（仅 video，默认 0，`splitRatio+testRatio<1`）、`videoSplits{finalVersionId:'train'|'val'|'test'}`（仅 video，须为所选视频）、`includeSourceVideos`（默认 false）。直接标注快照的视频另在 ZIP 写 `review/decisions.jsonl`；`manifest.reviewDecisions={file,count}` 在无判断时 count=0 且不生成文件 |
+| `POST /api/datasets/exports` | `finalVersionIds`、`format:'yolo'|'coco'|'both'`、`splitRatio`（训练比例，默认 0.8）、`splitMode:'frame'|'video'`（省略时为旧的按帧划分）、`testRatio`（仅 video，默认 0，`splitRatio+testRatio<1`）、`videoSplits{finalVersionId:'train'|'val'|'test'}`（仅 video，须为所选视频）、`includeSourceVideos`（默认 false） |
 | `GET /api/datasets/annotations/snapshots` | 本人每个视频最新的标注导出快照：`finalVersionId,mediaId,name,frameCount,createdAt,valid,reason`；标注变化或视频不可用时 `valid:false` |
 | `GET /api/datasets/exports/{id}` | 本人任务阶段、帧数、错误和下载资格 |
 | `GET /api/datasets/exports/{id}/download` | 校验当前资格后返回真实 ZIP |
@@ -172,7 +172,6 @@ ZIP 包含 15 个必需 CSV/JSONL、2 个可选历史表（存在时）和 manif
 
 `POST /api/track/head-box/{media_id}`（需登录）：`{frameIndex,x,y}` 为原始帧号和原图像素点击坐标；返回 `{frameIndex,width,height,bbox:[x1,y1,x2,y2],confidence}`。只提供候选，不写工作区或建立对象 ID。422 表示坐标/候选无效或歧义，404 表示素材/帧不存在，503 表示模型不可用或忙。日志 `annotation.head_click` 记录素材、帧、框、耗时与失败原因。
 
-`POST /api/track/object-crops/{media_id}`（需登录）：`{items:[{frameIndex,bbox:[x1,y1,x2,y2]}], size}`，1–60 帧、`size` 48–160，框为原图像素（取客户端当前工作区）。返回一张 JPEG：第 i 张缩略图在第 `i % X-Crop-Columns` 列、第 `floor(i / X-Crop-Columns)` 行，每张为框中心周围 2.5 倍边长的原始帧裁剪并画出框；读不到的帧序号列在 `X-Crop-Missing`，该格留空，不用其他帧代替。只读，不写工作区。422 参数无效，404 素材不存在。日志 `annotation.object_crops`。
 
 服务需安装 `backend/requirements-head-detector.txt` 并配置 `HEAD_DETECTOR_MODEL` 指向可信自训练 YOLO 头部权重（默认 backend/track_modul/head-detector.pt），`HEAD_DETECTOR_DEVICE` 默认 cpu，可显式设 cuda:0。惰性加载、单请求推理，不自动下载模型。权重不纳入 Git；当前 SAM3 Release 不包含此检测权重，不能将已有离线包当作已具备该功能的模型包。
 

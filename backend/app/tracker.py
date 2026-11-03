@@ -1061,10 +1061,6 @@ def track_video(
         publication_start = earliest
         for row in new_rows:
             row['objects'].extend(backfill.get(int(row['source_frame_index']), []))
-    if review_mode:
-        from .review_evidence import backward_checks
-        if progress: progress(stage='checking', message='正在核验疑点片段')
-        if not endpoint_mode: backward_checks(video_file, engine, new_rows)
     merged_rows = _merge_rows(Path(output_json), new_rows, keep_before_source_frame=publication_start, pause=result_anomaly_paused)
 
     result = {

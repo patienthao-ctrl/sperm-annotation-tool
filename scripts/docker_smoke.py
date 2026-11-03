@@ -80,8 +80,11 @@ review = '/api/annotation-review/media/'+media
 current = request(review+'/start','POST')
 rid = current['review']['reviewId']
 assert current['status'] == 'open' and current['review']['total'] > 0
-for item in current['review']['items']:
-    request(review+'/items/'+item['id'],'PUT',{'reviewId':rid,'result':'empty' if item['kind'] == 'unknown' else 'ok'})
+for start, end in current['review']['frames']:
+    for frame in range(start, end + 1):
+        # Frames with boxes are confirmed; frames without any annotation are confirmed empty.
+        result = 'ok' if any(o['frameIndex'] == frame for o in objects) else 'empty'
+        request(review+'/frames/'+str(frame),'PUT',{'reviewId':rid,'result':result})
 assert request(review+'/pass','POST',{'reviewId':rid})['status'] == 'passed'
 preview = request('/api/datasets/annotations/'+media+'/preview')
 final = request('/api/datasets/annotations/'+media+'/snapshot','POST',{'expectedSourceRevision':preview['sourceRevision'],'confirmComplete':True,'explicitEmptyFrameRanges':[]})['finalVersionId']

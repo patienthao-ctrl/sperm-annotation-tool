@@ -1,4 +1,4 @@
-"""Annotation review checklist, pass and media reset routes."""
+"""Annotation review frame checklist, pass and media reset routes."""
 
 from typing import Literal
 
@@ -18,7 +18,7 @@ class RoundRef(Model):
 
 
 class Check(RoundRef):
-    result: Literal["ok", "fixed", "empty", "not_target"]
+    result: Literal["ok", "empty"]
 
 
 class ResetAnnotations(Model):
@@ -47,14 +47,14 @@ def start(media_id: str, user: User):
         return review.status(media_id, directory, info)
 
 
-@router.put("/media/{media_id}/items/{item_id}")
-def check(media_id: str, item_id: str, body: Check, user: User):
-    current = None
-    if body.result in ("ok", "fixed"):
-        with source_read():
-            directory, _, info = media_context(media_id, allow_tracking=True)
-            current = review.load_cached(media_id, directory, info)[0]
-    review.check(media_id, body.reviewId, item_id, body.result, user["uid"], current)
+@router.put("/media/{media_id}/frames/{frame_index}")
+def check(media_id: str, frame_index: int, body: Check, user: User):
+    with source_read():
+        directory, _, info = media_context(media_id, allow_tracking=True)
+        current = review.load_cached(media_id, directory, info)
+    if not 0 <= frame_index < len(current):
+        raise ReviewError("ITEM_NOT_FOUND", "帧号超出视频范围", 404)
+    review.check(media_id, body.reviewId, frame_index, body.result, user["uid"], current)
     with source_read():
         directory, _, info = media_context(media_id, allow_tracking=True)
         return review.status(media_id, directory, info)

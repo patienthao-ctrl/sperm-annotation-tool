@@ -1,4 +1,3 @@
-import { reviewLocationChecks } from './review-location-checks.mjs'
 import { useLegacyBrowserAPIs } from './legacy-browser-profile.mjs'
 import { statisticsExportChecks } from './statistics-export-checks.mjs'
 import { passReview, legacyTrackingProbe } from './legacy-tracking-probe.mjs'
@@ -61,52 +60,6 @@ async function downloadFrom(name, file) {
 }
 const taskId = () => page.locator('.training-export-id').innerText().then(s => s.split('：')[1])
 const VIDEO = { mid: 'ux-video', name: 'ux-video.avi' }, PORTRAIT = { mid: 'ux-portrait', name: 'ux-portrait.avi' }
-async function reviewAddHeadChecks(state) {
-  const item=state.items.find(i=>i.category==='missing' && i.source==='detector')
-  assert(item,'the training fixture must have a detector path for current-frame head creation')
-  const row=()=>page.locator(`[data-review-item="${item.id}"]`)
-  const group=page.locator('[data-review-group="missing"]')
-  if(await group.getAttribute('open')===null)await group.locator('summary').click()
-  await row().click();await ready()
-  const box=item.observations.find(o=>o.frameIndex===item.frame).candidates[0]
-  const before=await json('/track/workspace/'+VIDEO.mid)
-  let fail=false,requests=0
-  const pattern=`**/api/track/head-box/${VIDEO.mid}`
-  const model=async route=>{
-    requests++
-    const input=route.request().postDataJSON()
-    assert.equal(input.frameIndex,item.frame)
-    assert.equal(input.x,(box[0]+box[2])/2);assert.equal(input.y,(box[1]+box[3])/2)
-    await route.fulfill({status:fail?503:200,contentType:'application/json',body:JSON.stringify(fail?{detail:'test model unavailable'}:{frameIndex:item.frame,width:800,height:450,bbox:box,confidence:.99})})
-  }
-  await page.route(pattern,model)
-  try {
-    await page.getByTestId('review-add-head').click()
-    await poll(async()=> (await reviewState(VIDEO.mid)).review.items.find(i=>i.id===item.id)?.check?.result==='fixed','head creation is checked only after saving')
-    const saved=await json('/track/workspace/'+VIDEO.mid)
-    const added=saved.manualAnnotations.filter(o=>!before.manualAnnotations.some(old=>old.id===o.id))
-    check(added.length===1 && added[0].frameIndex===item.frame && added[0].source==='manual','is-sperm action creates exactly one manual box on the candidate frame')
-    assert.deepEqual(added[0].bbox,{x:100*box[0]/800,y:100*box[1]/450,width:100*(box[2]-box[0])/800,height:100*(box[3]-box[1])/450})
-    await row().click();await ready()
-    const checked=(await reviewState(VIDEO.mid)).review.items.find(i=>i.id===item.id).check
-    await page.getByTestId('review-add-head').click()
-    await poll(async()=> (await page.getByTestId('review-action-error').innerText()).includes('这里已经有框'),'existing head is reported')
-    assert.deepEqual((await reviewState(VIDEO.mid)).review.items.find(i=>i.id===item.id).check,checked)
-    check((await json('/track/workspace/'+VIDEO.mid)).manualAnnotations.length===saved.manualAnnotations.length,'existing-box result neither duplicates a box nor records another review decision')
-    fail=true
-    await page.getByTestId('review-add-head').click()
-    await poll(async()=> (await page.getByTestId('review-action-error').innerText()).includes('请手动画框后点'),'model error remains actionable')
-    assert.deepEqual((await reviewState(VIDEO.mid)).review.items.find(i=>i.id===item.id).check,checked)
-    check((await json('/track/workspace/'+VIDEO.mid)).manualAnnotations.length===saved.manualAnnotations.length,'model failure does not change boxes or the saved check')
-    await page.screenshot({path:'output/playwright/review-add-head-error.png'})
-    // Restore fixture content through the normal undo and save path.
-    await page.locator('.shell-rail').click({position:{x:22,y:300}})
-    await page.keyboard.press('Control+z')
-    await poll(async()=> (await json('/track/workspace/'+VIDEO.mid)).manualAnnotations.length===before.manualAnnotations.length,'normal undo removes the created head')
-    await json(`/annotation-review/media/${VIDEO.mid}/items/${encodeURIComponent(item.id)}`,'PUT',{reviewId:state.reviewId,result:'not_target'})
-    check(requests===3,'success, existing-box and model-error paths all used the real head-click request contract')
-  } finally {await page.unroute(pattern,model)}
-}
 try {
   fs.mkdirSync('output/playwright', { recursive: true })
   await page.addInitScript(({ token }) => {
@@ -134,131 +87,55 @@ try {
   await page.getByTestId('review-start').click()
   await page.getByTestId('review-progress').waitFor()
   const started = await reviewState(VIDEO.mid)
-  const kinds = new Set(started.review.items.map(i => i.kind))
-  check(started.status === 'open' && kinds.has('coverage') && kinds.has('sample'), 'starting review builds coverage and random-sample items')
-  await poll(async () => await page.evaluate(() => window.ws.currentFrame.value) === started.review.items[0].frame, 'start jumps to first item')
-  check(true, 'start review moves to the first checklist frame')
-  await page.screenshot({ path: 'output/playwright/annotation-review-open.png' })
-
-  // Upgrade an old object-by-object checklist through the real API and reload.
-  execFileSync(process.env.TEST_PYTHON || 'work/review-venv/bin/python', ['-m','tests.endpoint_tolerance_browser_fixture',VIDEO.mid], {env:{...process.env,PYTHONPATH:'backend'}})
-  await page.reload(); await attach(); await ready()
-  const tolerant=await reviewState(VIDEO.mid)
-  const hard=tolerant.review.items.find(i=>i.category==='position')
-  check(hard?.frame===1 && !tolerant.review.items.some(i=>i.id==='legacy-endpoint-small'), 'upgraded checklist removes identity signals and manual-frame object doubts, retains AI position risk')
-  check(!tolerant.review.items.some(i=>i.kind==='doubt' && i.startFrame===0), 'actual workspace manual override is exempt on its own frame')
-  check(tolerant.review.items.filter(i=>i.kind==='doubt').every(i=>i.objectIds.length<=3 && i.message.length<=12), 'each actionable item has a short label and at most three objects')
-  const categories=tolerant.review.items.filter(i=>i.kind==='doubt').map(i=>i.category)
-  check(categories.join(',')==='missing,missing,missing,missing,missing,missing,missing,association,position', 'review orders reverse and detector missing locations before association and position risks')
-  await page.locator(`[data-review-item="${hard.id}"]`).click(); await ready()
-  check(await page.getByTestId('review-current').getAttribute('data-item')===hard.id && await page.evaluate(()=>window.ws.currentFrame.value)===1, 'AI position risk locates the correct frame')
+  check(started.status === 'open' && started.review.total === 60 && JSON.stringify(started.review.frames) === '[[0,59]]', 'starting review lists every frame of the video')
+  await poll(async () => await page.evaluate(() => window.ws.currentFrame.value) === 0, 'start jumps to the first frame')
+  check(true, 'start review moves to the first unchecked frame')
   const geometry=await page.evaluate(()=>window.ws.currentObjects.value.map(o=>({id:o.id,bbox:o.bbox})))
-  check(await page.locator('.annotation-box').count()===geometry.length && await page.locator('.review-highlight').count()===0, 'review draws exactly one actual box per annotation, no second review rectangle')
-  check(await page.locator('.review-relevant').count()===1 && await page.locator('.review-muted').count()===1 && await page.locator('.review-candidate-circle').count()===0, 'position risk emphasizes existing box and fades others without candidate rectangles')
-  check(!(await page.getByTestId('review-panel').innerText()).includes('独立追踪位置不一致'), 'raw long diagnostic prose is absent from the panel')
-  await page.screenshot({path:'output/playwright/review-position-emphasis.png'})
-  await reviewLocationChecks(page,{state:tolerant.review,ready,check,poll,reviewState,mediaId:VIDEO.mid})
-  await reviewAddHeadChecks(tolerant.review)
-  await page.locator(`[data-review-item="${hard.id}"]`).click(); await ready()
-  const view=await page.evaluate(()=>({zoom:window.ws.zoom.value,selected:window.ws.selectedObjectId.value}))
+  check(await page.locator('.annotation-box').count()===geometry.length && await page.locator('.review-candidate-circle, .review-muted, .review-relevant').count()===0, 'review draws only the actual boxes, with no automatic doubt marks')
+  check(await page.locator('[data-review-group], [data-review-item]').count()===0, 'the panel has no automatic doubt checklist')
+  await page.screenshot({ path: 'output/playwright/annotation-review-open.png' })
+  const progress = async () => Number((await page.getByTestId('review-progress').innerText()).split('/')[0])
+
+  // Correct a box directly on the shared canvas, then confirm the frame.
+  const before = (await json('/track/workspace/'+VIDEO.mid)).revision
+  await moveFirstBox(14, 6, false)  // Frame 1 has two tracked heads.
+  await poll(async () => (await json('/track/workspace/'+VIDEO.mid)).revision > before, 'correction saved')
+  // A failed check is never shown as done and does not move on.
+  const checkPattern=`**/api/annotation-review/media/${VIDEO.mid}/frames/0`
+  const failedCheck=route=>route.fulfill({status:503,contentType:'application/json',body:'{"message":"test review check failure"}'})
+  await page.route(checkPattern,failedCheck)
+  await page.getByTestId('review-confirm').click()
+  await page.getByRole('alert').filter({hasText:'test review check failure'}).waitFor()
+  check(await progress()===0 && await page.evaluate(()=>window.ws.currentFrame.value)===0 && (await reviewState(VIDEO.mid)).review.checked===0, 'a failed frame check records nothing and stays on the frame')
+  await page.unroute(checkPattern,failedCheck)
+  await page.getByTestId('review-confirm').click()
+  await poll(async () => await progress() === 1 && await page.evaluate(() => window.ws.currentFrame.value) === 1, 'confirm records the frame and moves to the next')
+  check(JSON.stringify((await reviewState(VIDEO.mid)).review.checkedFrames)==='[[0,0,"ok"]]', 'reviewer corrects a box in place and confirms the frame')
+  for (let i = 0; i < 3; i++) {
+    const checked = await progress(); await ready()
+    await page.evaluate(()=>document.activeElement instanceof HTMLElement && document.activeElement.blur())
+    await page.keyboard.press('1'); await poll(async () => await progress() > checked, 'keyboard 1 confirms a frame')
+  }
+  check(await page.evaluate(() => window.ws.currentFrame.value) === 4, 'keyboard confirmation walks the frames in order')
+  check(await page.getByTestId('review-pass').isDisabled() && (await page.getByTestId('review-pass').innerText()).includes('还剩 56 帧'), 'pass stays disabled while frames remain')
   await button('专注').click()
-  check(await page.evaluate(()=>window.ws.selectedObjectId.value)===view.selected, 'entering focus keeps the selected object')
-  check(await page.getByTestId('review-relocate').isVisible(), 'focus keeps the review location action reachable')
-  await page.getByTestId('review-relocate').click(); await ready()
-  await page.screenshot({path:'output/playwright/review-emphasis-focus.png'})
+  check(await page.getByTestId('review-confirm').isVisible(), 'focus keeps the frame confirmation reachable')
   await page.getByRole('button',{name:/退出专注/}).click()
-  check(await page.evaluate(()=>window.ws.zoom.value)===view.zoom, 'leaving focus restores the original zoom')
   for (const [width,height,theme] of [[1180,760,'dark'],[760,760,'light'],[390,844,'dark']]) {
     await page.setViewportSize({width,height})
     if (await page.locator('html').getAttribute('data-theme')!==theme) await button(theme==='dark'?'切换深色主题':'切换浅色主题').click()
-    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1), `lightweight review has no overflow at ${width} ${theme}`)
-    await page.screenshot({path:`output/playwright/review-emphasis-${width}-${theme}.png`,fullPage:true})
+    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1) && await page.getByTestId('review-confirm').isVisible(), `frame review has no overflow and keeps its action at ${width} ${theme}`)
+    await page.screenshot({path:`output/playwright/review-frame-${width}-${theme}.png`,fullPage:true})
   }
-  assert.deepEqual(await page.evaluate(()=>window.ws.currentObjects.value.map(o=>({id:o.id,bbox:o.bbox}))),geometry)
-  check(true, 'locating review items, themes and focus do not move or add annotations')
   await page.setViewportSize({width:1440,height:900})
-  await page.reload(); await attach(); await ready()
-  check((await reviewState(VIDEO.mid)).review.total===tolerant.review.total, 'reloading the upgraded review does not duplicate items or restore old noise')
-  await page.waitForFunction(id=>window.ws?.selectedMedia.value?.serverMediaId===id,VIDEO.mid);await ready()
-  const persistedZoom=await page.evaluate(()=>window.ws.zoom.value)
-  const smallLocation=tolerant.review.items.find(i=>i.category==='missing' && i.frame===39)
-  await page.locator(`[data-review-item="${smallLocation.id}"]`).click(); await ready()
-  const afterLocateZoom=await page.evaluate(()=>window.ws.zoom.value)
-  check(afterLocateZoom===persistedZoom, `manual zoom choice for the current review round survives page reload (${persistedZoom} -> ${afterLocateZoom})`)
-  const reverse=tolerant.review.items.find(i=>i.source==='reverse')
-  assert(reverse)
-  await page.locator(`[data-review-item="${reverse.id}"]`).click(); await ready()
-  check((await page.getByTestId('review-location-text').innerText()).includes('右下'), 'reverse-only evidence is labeled with its original-image region')
-  await page.getByTestId('review-zoom-preview').waitFor()
-  await page.evaluate(async()=>{
-    const vueUrl=performance.getEntriesByType('resource').find(r=>r.name.includes('/node_modules/.vite/deps/vue.js?')).name
-    const {createApp}=await import(vueUrl),{default:Preview}=await import('/src/components/ReviewZoomPreview.vue')
-    const host=document.createElement('div');host.id='preview-loading-probe';host.style.cssText='position:fixed;left:-9999px';document.body.append(host)
-    const image=new Image();window.previewProbe={image,app:createApp(Preview,{source:image,box:[5,5,15,15],mediaWidth:20,mediaHeight:20})}
-    window.previewProbe.app.mount(host)
-  })
-  for(const color of ['red','blue']){
-    await page.evaluate(color=>{window.previewProbe.image.src='data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="${color}"/></svg>`)},color)
-    await page.waitForFunction(color=>{const host=document.querySelector('#preview-loading-probe'),canvas=host.querySelector('canvas'),p=canvas.getContext('2d').getImageData(80,80,1,1).data;return !host.querySelector('span')&&p[3]>0&&(color==='red'?p[0]>200:p[2]>200)},color)
-  }
-  check(true,'preview redraws after asynchronous image load and same-element source changes')
-  await page.evaluate(()=>{window.previewProbe.app.unmount();document.querySelector('#preview-loading-probe').remove()})
-  await page.waitForFunction(() => { const c=document.querySelector('[data-testid=review-zoom-preview] canvas'); if(!c)return false; const p=c.getContext('2d').getImageData(c.width/2,c.height/2,1,1).data; return p[3]>0 })
-  check(true, 'the current review card draws a non-transparent enlarged frame around the candidate')
-  const adoptedBefore=(await json('/track/workspace/'+VIDEO.mid)).manualAnnotations.length
-  let saveArrived,releaseSave
-  const saveStarted=new Promise(r=>{saveArrived=r}),saveGate=new Promise(r=>{releaseSave=r})
-  const savePattern=`**/api/track/workspace/${VIDEO.mid}`
-  const delayedSave=async route=>{if(route.request().method()!=='PUT')return route.continue();saveArrived();await saveGate;await route.continue()}
-  await page.route(savePattern,delayedSave)
-  await page.getByTestId('review-adopt-track').click();await saveStarted
-  check(await page.getByTestId('review-adopt-track').isDisabled(),'pending adoption disables duplicate clicks and keyboard actions')
-  await page.keyboard.press('1')
-  // Switch while the original media save is in flight; do not wait for its save.
-  await page.getByTestId('toggle-workbench-library').click()
-  await page.locator('.asset-card').filter({hasText:PORTRAIT.name}).click()
-  await page.waitForFunction(id=>window.ws.selectedMedia.value?.serverMediaId===id,PORTRAIT.mid)
-  releaseSave();await ready();await page.unroute(savePattern,delayedSave)
-  await poll(async()=>(await json('/track/workspace/'+VIDEO.mid)).manualAnnotations.length===adoptedBefore+reverse.observations.length,'original video adoption saved after video switch')
-  check(!(await reviewState(VIDEO.mid)).review.items.find(i=>i.id===reverse.id)?.check,'switching video leaves the old pending review item unchecked')
-  check((await reviewState(PORTRAIT.mid)).status==='none','late adoption cannot start or check another video review')
-  await openVideo(VIDEO.name,VIDEO.mid)
-  await page.locator(`[data-review-item="${reverse.id}"]`).click();await ready()
-  const checkPattern=`**/api/annotation-review/media/${VIDEO.mid}/items/${reverse.id}`
-  const failedCheck=route=>route.fulfill({status:503,contentType:'application/json',body:'{"detail":"test review check failure after saved adoption"}'})
-  await page.route(checkPattern,failedCheck)
-  await page.getByTestId('review-adopt-track').click()
-  await poll(async()=>await page.getByTestId('review-action-error').isVisible(),'saved adoption reports pending review check')
-  check(!(await reviewState(VIDEO.mid)).review.items.find(i=>i.id===reverse.id)?.check,'failed check never becomes false completion')
-  await page.screenshot({path:'output/playwright/review-adoption-check-retry.png'})
-  await page.unroute(checkPattern,failedCheck)
-  await page.getByTestId('review-adopt-track').click()
-  await poll(async () => (await json('/track/workspace/'+VIDEO.mid)).manualAnnotations.filter(o=>o.objectId===reverse.adoptObjectId).length===reverse.observations.length, 'replayed adoption saved every frame exactly once')
-  await poll(async () => (await reviewState(VIDEO.mid)).review.items.find(i=>i.id===reverse.id)?.check?.result==='fixed', 'saved adoption can retry only its failed review check')
-  const afterAdopt=await json('/track/workspace/'+VIDEO.mid)
-  check(afterAdopt.manualAnnotations.length===adoptedBefore+reverse.observations.length
-    && afterAdopt.manualAnnotations.some(o=>o.origin==='review_adopted'),
-    'adopting a reverse track adds the stable object id and provenance to every observed frame')
-  const coverage=tolerant.review.items.find(i=>i.kind==='coverage')
-  await page.locator(`[data-review-item="${coverage.id}"]`).click(); await ready()
-
-  // Correct a box directly on the shared canvas, then record the correction.
-  const before = (await json('/track/workspace/'+VIDEO.mid)).revision
-  await moveFirstBox(14, 6, false)  // On the first checklist frame (a coverage frame with two heads).
-  await poll(async () => (await json('/track/workspace/'+VIDEO.mid)).revision > before, 'correction saved')
-  await page.getByTestId('review-current').getByRole('button', { name: '已修正' }).click()
-  // Wait for this item's own record: an earlier adoption already left a 'fixed' check.
-  await poll(async () => (await reviewState(VIDEO.mid)).review.items.find(i => i.id === coverage.id)?.check?.result === 'fixed', 'fixed check recorded')
-  check(true, 'reviewer corrects a box in place and marks the item fixed')
-  const followup = (await reviewState(VIDEO.mid)).review.items.find(i => i.kind === 'followup' && i.followupOf === coverage.id)
-  check(!!followup && !followup.check && followup.startFrame <= coverage.frame && coverage.frame <= followup.endFrame,
-    'a correction adds one unchecked re-check of the frames around it')
-  check(await page.getByTestId('review-pass').isDisabled(), 'pass stays disabled while items remain')
+  // The remaining frames through the same API; frames without any annotation are confirmed empty.
   const toFinish=await reviewState(VIDEO.mid)
-  for (const item of toFinish.review.items.filter(i=>!i.check)) {
-    const result=item.kind==='unknown'?'empty':['missing','static'].includes(item.category)?'not_target':'ok'
-    await json(`/annotation-review/media/${VIDEO.mid}/items/${encodeURIComponent(item.id)}`,'PUT',{reviewId:toFinish.review.reviewId,result})
+  for (const [start,end] of toFinish.review.frames) for (let f=start; f<=end; f++) {
+    if (toFinish.review.checkedFrames.some(([a,b])=>a<=f && f<=b)) continue
+    const ok=await api(`/annotation-review/media/${VIDEO.mid}/frames/${f}`,'PUT',{reviewId:toFinish.review.reviewId,result:'ok'})
+    if (!ok.ok()) await json(`/annotation-review/media/${VIDEO.mid}/frames/${f}`,'PUT',{reviewId:toFinish.review.reviewId,result:'empty'})
   }
+  check((await reviewState(VIDEO.mid)).review.checked===60, 'every frame of the video is confirmed before passing')
   await page.reload(); await attach(); await ready()
   await poll(() => page.getByTestId('review-pass').isEnabled(), 'pass enabled')
   await page.getByTestId('review-pass').click()
@@ -290,7 +167,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
  assert hashlib.sha256(z.read(s['videoFile'])).hexdigest()==s['sourceSha256']
  print(json.dumps({'frames':len(m['samples']),'objects':m['counts']['objectCount']}))
 `, 'output/playwright/training-yolo.zip')
-  check(single.frames === 60 && single.objects === 118 + reverse.observations.length, 'single-video ZIP keeps the whole video in one split, includes adopted review boxes, and includes the original video')
+  check(single.frames === 60 && single.objects === 118, 'single-video ZIP keeps the whole video in one split and includes the original video')
 
   // A second reviewed video exported earlier can be merged into one package.
   await passReview(page, fixture.token, PORTRAIT.mid)
@@ -340,8 +217,9 @@ with zipfile.ZipFile(sys.argv[1]) as z:
   await page.getByTestId('go-review').click(); await page.waitForURL('**/review'); await attach(); await ready()
   await page.getByTestId('review-start').click(); await page.getByTestId('review-progress').waitFor()
   const again = await reviewState(VIDEO.mid)
-  check(again.review.round === 2 && again.review.items.some(i => i.kind === 'changed') && !again.review.items.some(i => i.kind === 'coverage'), 're-review lists the changed frames instead of the whole checklist')
-  check(!again.review.items.some(i=>i.source==='reverse' && i.startFrame===20), 'a reverse location already adopted does not reappear when a new checklist is generated')
+  check(again.review.round === 2 && JSON.stringify(again.review.frames) === '[[20,20]]', 're-review lists only the changed frame')
+  await poll(async () => await page.evaluate(() => window.ws.currentFrame.value) === 20, 're-review starts on the changed frame')
+  check(true, 're-review goes straight to the changed frame')
 
   // Another site imports the merged package: the portrait video is new there, the other already exists.
   check((await api('/track/media/'+PORTRAIT.mid, 'DELETE')).ok(), 'portrait removed so the package brings it back as a new video')

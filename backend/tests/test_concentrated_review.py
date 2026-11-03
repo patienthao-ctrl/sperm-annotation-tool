@@ -47,12 +47,3 @@ def test_group_contiguous_same_object_reason_only():
     groups = group_findings(rows)
     assert [(g['startFrame'],g['endFrame']) for g in groups] == [(1,3),(8,8)]
     assert groups[0]['samples'][0]['bbox'] == [1,2,3,4]
-
-
-def test_detector_absence_is_uncertainty_and_overlap_not_identity_error():
-    from app.review_evidence import compare_heads
-    boxes = {1:[10,10,20,20], 2:[13,10,23,20]}
-    findings = compare_heads(boxes, [[10,10,20,20,.9], [13,10,23,20,.9]])
-    assert not any(f['kind']=='duplicate_identity' for f in findings)
-    missing = compare_heads(boxes, [])
-    assert {f['kind'] for f in missing} == {'detector_unavailable_for_object'}

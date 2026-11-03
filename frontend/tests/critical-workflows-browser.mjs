@@ -157,16 +157,20 @@ try {
   await page.unroute('**/api/annotation-review/media/*/start')
   await page.getByTestId('review-start').click();await page.getByTestId('review-progress').waitFor()
   check((await reviewState()).status==='open','review starts through the real page')
-  for(let i=0;i<60;i++){
-    if(!await page.locator('[data-review-item]:not(.done)').count())break
-    const done=await page.locator('[data-review-item].done').count()
-    const action=page.getByTestId('review-current').getByRole('button',{name:/^(无误|确认无目标)$/}).first()
-    await poll(()=>action.isEnabled(),'review action ready');await action.click()
-    await poll(async()=>(await page.locator('[data-review-item].done').count())>done,'review item recorded')
+  // Every frame is looked at and confirmed; confirming moves to the next unchecked frame.
+  const progress=async()=>(await page.getByTestId('review-progress').innerText()).match(/(\d+) \/ (\d+)/).slice(1).map(Number)
+  const [,totalFrames]=await progress()
+  check(totalFrames===(await reviewState()).review.total && totalFrames>0,'the first round lists every frame of the video')
+  for(let i=0;i<totalFrames;i++){
+    const [checked]=await progress();if(checked>=totalFrames)break
+    const confirm=page.getByTestId('review-confirm')
+    await poll(()=>confirm.isEnabled(),'frame confirm ready')
+    if(i===0){await page.keyboard.press('1')}else await confirm.click()
+    await poll(async()=>(await progress())[0]>checked,'frame check recorded')
   }
   await poll(()=>page.getByTestId('review-pass').isEnabled(),'review pass enabled')
   await page.getByTestId('review-pass').click();await page.getByTestId('review-changes').waitFor()
-  check((await reviewState()).status==='passed','every checklist item handled, then an explicit pass')
+  check((await reviewState()).status==='passed','every frame confirmed, then an explicit pass')
   check(await page.getByRole('button',{name:'对比确认',exact:true}).count()===0,'workflow has only annotation and review navigation')
   for(const [width,height] of [[1366,768],[1180,760],[760,760],[390,760]]) {
     await page.setViewportSize({width,height})

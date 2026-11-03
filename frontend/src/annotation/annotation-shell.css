@@ -62,13 +62,6 @@
 .asset-review{display:inline-block;margin-left:6px;font-weight:500;color:var(--muted)}
 .error-banner.package-import-report{color:var(--text);background:var(--surface-subtle);border-color:var(--line)}
 .asset-review.passed{color:var(--success)}.asset-review.stale{color:var(--warning)}.asset-review.open,.asset-review.asset-tracking{color:var(--accent)}
-.review-candidate-circle{position:absolute;min-width:28px;min-height:28px;transform:translate(-50%,-50%);border:2px solid #ffb547;border-radius:50%;box-shadow:0 0 0 1px #19242dbb;pointer-events:none;z-index:31;box-sizing:border-box;animation:review-pulse .8s ease-out 2}
-.review-candidate-circle.clickable{pointer-events:auto;cursor:zoom-in;z-index:32}
-.review-last-box{position:absolute;border:2px dashed #9aa7b2;pointer-events:none;z-index:30;box-sizing:border-box}
-.review-restore-view{white-space:nowrap}
-.review-candidate-circle span{position:absolute;right:-8px;top:-10px;min-width:18px;height:18px;padding:0 3px;border-radius:9px;background:#ffb547;color:#182634;box-shadow:0 0 0 1px #19242dbb;font:700 11px/18px system-ui;text-align:center}
-@keyframes review-pulse{0%{box-shadow:0 0 0 0 #ffb547aa}100%{box-shadow:0 0 0 14px #ffb54700}}
-@media(prefers-reduced-motion:reduce){.review-candidate-circle{animation:none}}
 /* Zoom sits in the bottom bar, outside the image. */
 .shell-zoom.in-bottom{position:static;flex:none;background:var(--surface-subtle);border:1px solid var(--line);color:var(--text);box-shadow:none}
 .shell-zoom.in-bottom button:hover:not(:disabled){background:var(--surface-hover)}

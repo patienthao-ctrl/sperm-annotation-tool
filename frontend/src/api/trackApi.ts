@@ -368,26 +368,6 @@ export const trackApi = {
     return result
   },
 
-  /** 同一对象逐帧裁剪缩略图拼成一张图；第 i 张在第 i % columns 列、第 floor(i / columns) 行。 */
-  async objectCrops(mediaId: string, items: { frameIndex: number; bbox: number[] }[], size: number, signal?: AbortSignal) {
-    return withRequestTimeout(60000, async (timeoutSignal) => {
-      const res = await fetch(`/api/track/object-crops/${encodeURIComponent(mediaId)}`, {
-        method: 'POST', signal: timeoutSignal,
-        headers: { 'Content-Type': 'application/json', ...(tokenStore.get() ? { Authorization: `Bearer ${tokenStore.get()}` } : {}) },
-        body: JSON.stringify({ items, size }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        if (res.status === 401) notifyAuthExpired()
-        throw new Error((data as any)?.message || (data as any)?.detail || `读取缩略图失败 (${res.status})`)
-      }
-      const columns = Number(res.headers.get('X-Crop-Columns'))
-      if (!Number.isInteger(columns) || columns <= 0) throw new Error('缩略图布局信息缺失，请重试')
-      const missing = new Set((res.headers.get('X-Crop-Missing') || '').split(',').filter(Boolean).map(Number))
-      return { blob: await res.blob(), columns, missing }
-    }, signal)
-  },
-
   async getFrameBlob(mediaId: string, frameIndex: number): Promise<Blob> {
     return withRequestTimeout(20000, async (signal) => {
       const res = await fetch(`/api/track/frame/${encodeURIComponent(mediaId)}/${encodeURIComponent(frameIndex)}`, {
