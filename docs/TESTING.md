@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 开发中每次修改 | “按修改选择测试”表中的专项 pytest / 前端单元测试；涉及页面时 `run_browser_regression.py --only <相关套件>` | 只是定位和快速反馈 |
 | 提交前（每批改动一次） | `backend/tests` 全部 pytest、`test:workbench` / `test:compatibility` / `test:annotation`、`npm run build`、`python3 scripts/check_repository.py`；改动涉及工作区加载、认证、保存/重试协议、公共 API、缓存或依赖/构建时，再跑一次不带筛选参数的完整七组浏览器回归 | 分批或筛选运行的结果 |
-| 推送 / CI | CI 重跑完整门禁 | 本地通过记录 |
+| 推送 / CI | CI 重跑后端 pytest、前端单元测试、构建、仓库检查与 Docker 部署冒烟；不跑浏览器回归 | 本地通过记录；发布前的本机完整浏览器回归 |
 
 纯样式、文案或使用说明的小改动，提交前运行相关专项、构建，并对受影响页面做 `--only workbench-consistency`；不要求完整七组。汇报时分别列出实际通过、失败、未执行和模拟的范围。
 
@@ -26,7 +26,7 @@ npx --prefix frontend playwright install chromium
 python3 scripts/run_browser_regression.py --python work/review-venv/bin/python --channel chromium
 ```
 
-也可用本机 Chrome：`--channel chrome`。CI 使用已构建的 Python 3.12 后端镜像：`python3 scripts/run_browser_regression.py --backend-image annotation-ci-backend:cpu --channel chromium`。镜像模式仍使用独立 `work/e2e-confirm-ux-regression-*` 数据和单后端进程。`--critical-only` 或可重复的 `--only <套件名>` 仅用于定位问题，不能同时使用，也不能用于完整验收。例如 `--only workbench-consistency --only independent-integrity` 只运行这两组；最终验收须去掉筛选参数重新运行全部七组。
+也可用本机 Chrome：`--channel chrome`。也可用已构建的 Python 3.12 后端镜像运行：`python3 scripts/run_browser_regression.py --backend-image annotation-ci-backend:cpu --channel chromium`。镜像模式仍使用独立 `work/e2e-confirm-ux-regression-*` 数据和单后端进程。`--critical-only` 或可重复的 `--only <套件名>` 仅用于定位问题，不能同时使用，也不能用于完整验收。例如 `--only workbench-consistency --only independent-integrity` 只运行这两组；最终验收须去掉筛选参数重新运行全部七组。
 
 `run.json` 的 `requiredSuites` 始终列出七组固定范围，`selectedSuites` 记录本次实际选择，`scope` 区分完整与诊断运行。子集可记录本次 `status: passed`，但 `fullRegressionPassed` 仍为 `false`；只有未使用筛选参数的完整运行全部通过时才为 `true`。不能拼接分批通过记录代替同一批源码的一次完整回归。运行器在占用共享夹具锁前校验参数，初始化失败也清理自己取得的锁；其他进程持有的锁不得删除。
 
@@ -51,7 +51,7 @@ python3 scripts/run_browser_regression.py --python work/review-venv/bin/python -
 - 新增读取失败保护时，必须同时证明健康空态不会被锁；新增重试时，既测试持续故障，也测试恢复后再次完成实际操作。
 - 回归缺陷先补行为测试，并记录修复前的预期失败；不能用搜索某段源码存在代替行为验证。性能夹具预置结果可以用于测量，但不能替代全新上传的验收。
 - 断言检查实际画框/保存/刷新后的数据和用户下一步能否完成，不能止于“接口返回 200”“页面显示空列表”“错误条消失”。不能为了通过而删除保护断言；业务契约改变时同时解释并更新正常/失败两侧用例。
-- CI 的浏览器步骤与后端/单元测试同为发布条件，不使用 `continue-on-error`。发布/交付说明分别列出实际通过、失败、未执行及模拟范围。分支保护是否将工作流设为必需检查属于仓库设置，不能仅凭本地 YAML 声称已经启用。
+- CI 不运行浏览器回归：其计时等待在 GitHub 托管机器上偶发超时（每次卡在不同位置，本机稳定通过）。打版本标签发布前，维护者须在本机跑一次不带筛选参数的完整七组浏览器回归并记录结果；CI 中其余步骤是发布条件，不使用 `continue-on-error`。发布/交付说明分别列出实际通过、失败、未执行及模拟范围。分支保护是否将工作流设为必需检查属于仓库设置，不能仅凭本地 YAML 声称已经启用。
 - 子套件打印 PASS 但运行器整体退出非零时，只能记录该子套件通过及进程/清理故障，不能判定完整验收通过；修正执行环境后重跑取得实际退出码。`--critical-only` 也不能代替七组固定回归。
 
 ## 先隔离数据
