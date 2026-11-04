@@ -76,7 +76,7 @@ def run_regression(args, selected):
     runtime_base = runtime_root/relative
     env = dict(os.environ, APP_DATA_DIR=str(runtime_base/'data'), APP_DB_FILE=str(runtime_base/'data/app.db'),
                APP_STORAGE_DIR=str(runtime_base/'storage'), PYTHONPATH=str(runtime_root/'backend'),
-               BROWSER_SIMULATED_MODEL='1', SAM3_ENABLED='true', SAM3_DEVICE='cpu',
+               BROWSER_SIMULATED_MODEL='1', SAM3_ENABLED='true', SAM3_DEVICE='cpu', HEAD_DETECTOR_DEVICE='cpu',
                API_PROXY_TARGET=f'http://127.0.0.1:{backend_port}', CHROME_CHANNEL=args.channel,
                CRITICAL_AI_MODE='simulated', CRITICAL_VIDEO=str(base/'critical-input.avi'),
                CONFIRMATION_ORIGIN=f'http://127.0.0.1:{frontend_port}', REVIEW_ORIGIN=f'http://127.0.0.1:{frontend_port}',
@@ -131,7 +131,7 @@ def run_regression(args, selected):
         save_report()
         backend_command = python+['backend/tests/browser_server.py','--port',str(backend_port)]
         if args.backend_image:
-            docker_env = {k:env[k] for k in ('APP_DATA_DIR','APP_DB_FILE','APP_STORAGE_DIR','PYTHONPATH','BROWSER_SIMULATED_MODEL','SAM3_ENABLED','SAM3_DEVICE')}
+            docker_env = {k:env[k] for k in ('APP_DATA_DIR','APP_DB_FILE','APP_STORAGE_DIR','PYTHONPATH','BROWSER_SIMULATED_MODEL','SAM3_ENABLED','SAM3_DEVICE','HEAD_DETECTOR_DEVICE')}
             docker_env['CRITICAL_VIDEO'] = str(runtime_base/'critical-input.avi')
             docker_env['INDEPENDENT_AUDIT_ROOT'] = str(runtime_base)
             # Fixtures share the host checkout: root-owned files cannot be

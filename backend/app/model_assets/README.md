@@ -2,7 +2,7 @@
 
 `head-detector.pt` is the YOLO26s checkpoint used by this annotation tool. It is a normal Git file (about 19.4 MiB), not a Git LFS pointer. Cloning or pulling this repository retrieves it without a separate model download.
 
-The default backend resolver uses this file. `HEAD_DETECTOR_MODEL` remains an explicit custom-model override. Install `backend/requirements.txt` normally; it includes the pinned Ultralytics runtime. No inference-time downloads are needed. `HEAD_DETECTOR_DEVICE` defaults to `cpu`; developers may explicitly select their available device.
+The default backend resolver uses this file. `HEAD_DETECTOR_MODEL` remains an explicit custom-model override. Install `backend/requirements.txt` normally; it includes the pinned Ultralytics runtime. No inference-time downloads are needed. `HEAD_DETECTOR_DEVICE` defaults to `cuda:0`; GPU inference fails visibly if CUDA is unavailable. An explicit device override is available for other deployments.
 
 The checksum, single class `sperm`, training provenance and runtime version are pinned in `head-detector.json`. This is the existing SVIA-only, COCO-pretrained YOLO26s model trained for 100 epochs at input size 1024. It has not been retrained on the hospital annotations. The checkpoint is byte-identical to the model previously used in development; inference behavior is unchanged. It contains model tensors and training metadata, without hospital images, videos or annotation files.
 

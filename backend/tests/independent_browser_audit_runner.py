@@ -62,7 +62,7 @@ def main():
         web = port()
     env = dict(os.environ, APP_DATA_DIR=str(base/"data"), APP_DB_FILE=str(base/"data/app.db"),
                APP_STORAGE_DIR=str(base/"storage"), PYTHONPATH=str(ROOT/"backend"),
-               SAM3_ENABLED="true", BROWSER_SIMULATED_MODEL="1", SAM3_DEVICE="cpu",
+               SAM3_ENABLED="true", BROWSER_SIMULATED_MODEL="1", SAM3_DEVICE="cpu", HEAD_DETECTOR_DEVICE="cpu",
                API_PROXY_TARGET=f"http://127.0.0.1:{api}", INDEPENDENT_AUDIT_ROOT=str(base),
                INDEPENDENT_AUDIT_ORIGIN=f"http://127.0.0.1:{web}")
     subprocess.run([sys.executable,'backend/tests/independent_browser_fixture.py'], env=env, check=True)
