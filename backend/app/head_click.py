@@ -86,7 +86,7 @@ def propose(image, x, y):
         left,top=max(0,int(x)-256),max(0,int(y)-256)
         right,bottom=min(w,left+512),min(h,top+512)
         result=_model.predict(image[top:bottom,left:right],imgsz=512,conf=.15,iou=.5,
-                              device=os.getenv('HEAD_DETECTOR_DEVICE','cpu'),verbose=False)[0]
+                              device=os.getenv('HEAD_DETECTOR_DEVICE','cuda:0'),verbose=False)[0]
         rows=[]
         for bbox,confidence in zip(result.boxes.xyxy.cpu().tolist(), result.boxes.conf.cpu().tolist()):
             rows.append([bbox[0]+left,bbox[1]+top,bbox[2]+left,bbox[3]+top,confidence])
@@ -127,7 +127,7 @@ def detect_edges(image):
         rows=[]
         for left,top in tiles:
             result=model.predict(image[top:top+512,left:left+512], imgsz=512, conf=.5, iou=.5,
-                                 device=os.getenv('HEAD_DETECTOR_DEVICE','cpu'), verbose=False)[0]
+                                 device=os.getenv('HEAD_DETECTOR_DEVICE','cuda:0'), verbose=False)[0]
             for bbox,score in zip(result.boxes.xyxy.cpu().tolist(),result.boxes.conf.cpu().tolist()):
                 rows.append([bbox[0]+left,bbox[1]+top,bbox[2]+left,bbox[3]+top,score])
         return rows
@@ -151,7 +151,7 @@ def detect_frame(image):
         for top in ys:
             for left in xs:
                 result=model.predict(image[top:top+512,left:left+512],imgsz=512,conf=.15,iou=.5,
-                    device=os.getenv('HEAD_DETECTOR_DEVICE','cpu'),verbose=False)[0]
+                    device=os.getenv('HEAD_DETECTOR_DEVICE','cuda:0'),verbose=False)[0]
                 for box,score in zip(result.boxes.xyxy.cpu().tolist(),result.boxes.conf.cpu().tolist()):
                     candidate=[box[0]+left,box[1]+top,box[2]+left,box[3]+top,float(score)]
                     rows.append(candidate)
@@ -184,7 +184,7 @@ def detect_regions(image, boxes):
         for offset in range(0,len(tiles),4):
             batch=tiles[offset:offset+4]
             results=model.predict([image[y:y+512,x:x+512] for x,y in batch],imgsz=512,conf=.15,iou=.5,
-                                  device=os.getenv('HEAD_DETECTOR_DEVICE','cpu'),verbose=False)
+                                  device=os.getenv('HEAD_DETECTOR_DEVICE','cuda:0'),verbose=False)
             if len(results)!=len(batch):raise ProposalError('头部检测返回不完整，综合标注未完成。',503)
             for (x,y),result in zip(batch,results):
                 boxes=result.boxes.xyxy.cpu().tolist();scores=result.boxes.conf.cpu().tolist()

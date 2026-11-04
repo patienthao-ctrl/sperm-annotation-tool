@@ -8,6 +8,7 @@ services:
     environment:
       SAM3_ENABLED: "true"
       SAM3_DEVICE: cuda
+      HEAD_DETECTOR_DEVICE: cuda:0
       SAM3_DTYPE: ${SAM3_DTYPE:-bfloat16}
     volumes:
       - type: bind
