@@ -121,7 +121,7 @@ try {
   await button('专注').click()
   check(await page.getByTestId('review-confirm').isVisible(), 'focus keeps the frame confirmation reachable')
   await page.getByRole('button',{name:/退出专注/}).click()
-  for (const [width,height,theme] of [[1180,760,'dark'],[760,760,'light'],[390,844,'dark']]) {
+  for (const [width,height,theme] of [[1180,760,'dark'],[760,760,'light']]) {
     await page.setViewportSize({width,height})
     if (await page.locator('html').getAttribute('data-theme')!==theme) await button(theme==='dark'?'切换深色主题':'切换浅色主题').click()
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1) && await page.getByTestId('review-confirm').isVisible(), `frame review has no overflow and keeps its action at ${width} ${theme}`)

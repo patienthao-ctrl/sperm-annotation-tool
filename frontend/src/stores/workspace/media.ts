@@ -59,7 +59,7 @@ export const deleteMedia = async (mediaId: string) => {
     } catch (error) { console.warn('[annotation.local_save_failed]', error) }
     console.info('[annotation.media_deleted]', { mediaId: media.serverMediaId || media.id, scope: media.serverMediaId ? 'server' : 'local' })
     statusMessage.value = `已删除素材：${media.name}`
-    showToast(statusMessage.value)
+    showToast(statusMessage.value,'success')
   } catch (error) {
     console.error('[annotation.media_delete_failed]', { mediaId: media.serverMediaId || media.id, scope: media.serverMediaId ? 'server' : 'local', error })
     mediaDeleteError.value = error instanceof Error ? error.message : '删除失败，请重试'
@@ -117,7 +117,7 @@ export const confirmDuplicateImport=async()=>{
     const resolve=finishDuplicate;finishDuplicate=null
     if(resolve)resolve(intent.media)
     else{await loadServerMedia();const media=mediaAssets.value.find(m=>m.serverMediaId===intent.mediaId);if(media){selectedMediaId.value=media.id;await nextTick();await resetAnnotationViewForMedia(media.id)}}
-    showToast('旧工作区标注已清空，可以从第 1 帧重新标注')
+    showToast('旧工作区标注已清空，可以从第 1 帧重新标注','success')
   }catch(e:any){
     intent.error=e.message||'覆盖结果尚未确认，请重试原请求';console.error('[annotation.reimport_failed]',e)
     if(e.status&&e.status<500){intent.pending=false;intent.canOverwrite=false;sessionStorage.removeItem(importJournalKey())}
@@ -179,7 +179,7 @@ export const handleFiles = async (files: FileList | null, type: 'image' | 'video
       lastAddedId=media.id
       if(type==='image')void api.uploadMedia({file})
     }
-    if(lastAddedId){selectedMediaId.value=lastAddedId;await nextTick();await resetAnnotationViewForMedia(lastAddedId);statusMessage.value=`已导入：${selectedMedia.value?.name}`;showToast(statusMessage.value)}
+    if(lastAddedId){selectedMediaId.value=lastAddedId;await nextTick();await resetAnnotationViewForMedia(lastAddedId);statusMessage.value=`已导入：${selectedMedia.value?.name}`;showToast(statusMessage.value,'success')}
   }catch(e:any){importError.value=e.message||'导入失败，请重试';statusMessage.value=importError.value;console.error('[annotation.import_failed]',e)}
   finally{mediaImportBusy.value=false;if(type==='image'&&fileInputRef.value)fileInputRef.value.value='';if(type==='video'&&videoInputRef.value)videoInputRef.value.value=''}
 }

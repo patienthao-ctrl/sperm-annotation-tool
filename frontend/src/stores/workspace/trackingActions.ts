@@ -152,7 +152,7 @@ export const retryObjectDeletion = async (): Promise<boolean> => {
     pendingDeletion.value = null; rememberControls(mid); historyRevision.value++
     console.info('[annotation.object_deletion_saved]', { mediaId: intent.serverMediaId, objectId: record.objectId, action: intent.action, key: intent.key })
     statusMessage.value = intent.action === 'undo' ? `已恢复 ${record.name} 在全视频中的标注` : `已删除 ${record.name} 在全视频中的标注，可撤销`
-    showToast(statusMessage.value)
+    showToast(statusMessage.value,'success')
     if (intent.action === 'undo' && mid === currentMediaId.value) await loadTrackingResult(mid, true)
     return true
   } catch (error) {
@@ -223,7 +223,7 @@ export const retryTrackingAnomalyFeedback = async (): Promise<boolean> => {
       resume = intent.body.decision !== 'reset' && !pausedAnomalies.value.some(item=>!item.resolved) && !response.lastPausedContext
     }
     pendingFeedback.value = null; rememberControls(intent.mediaId)
-    showToast(intent.body.decision === 'reset' ? `已恢复对象 #${intent.body.objectId} 的默认判断` : intent.body.scope === 'frame' ? '本帧全部对象的人工检查点已保存，继续追踪' : resume ? '人工确认已保存，继续追踪' : '已确认此对象，请继续检查其他暂停对象')
+    showToast(intent.body.decision === 'reset' ? `已恢复对象 #${intent.body.objectId} 的默认判断` : intent.body.scope === 'frame' ? '本帧全部对象的人工检查点已保存，继续追踪' : resume ? '人工确认已保存，继续追踪' : '已确认此对象，请继续检查其他暂停对象','success')
     console.info('[annotation.feedback_saved]', { mediaId: intent.serverMediaId, objectId: intent.body.objectId, decision: intent.body.decision, scope:intent.body.scope ?? 'object', remaining:response.pausedAnomalies.filter(item=>!(item as {resolved?:boolean}).resolved).length, calibrate: intent.body.calibrate, key: intent.key })
   } catch (error) {
     trackingFeedbackError.value = error instanceof Error ? error.message : '确认保存失败，请重试'
@@ -237,7 +237,7 @@ export const retryTrackingAnomalyFeedback = async (): Promise<boolean> => {
     // a slow request. Resume only from that exact saved frame.
     if (currentFrame.value !== intent.body.frameIndex) await seekVideo(frameToTime(intent.body.frameIndex))
     if (currentMediaId.value === intent.mediaId && currentFrame.value === intent.body.frameIndex && !frameError.value && !workspaceRestoring.value && !exactFrameLoading.value) await runAiTrack()
-    else showToast('确认已保存；暂停帧读取未完成，请返回该帧后手动继续追踪')
+    else showToast('确认已保存；暂停帧读取未完成，请返回该帧后手动继续追踪','warning')
   }
   return true
 }

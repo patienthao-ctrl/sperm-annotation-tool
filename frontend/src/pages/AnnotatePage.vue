@@ -3,6 +3,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { canvasZoomKey } from '../workbench/viewTransform'
 import AnnotationDatasetExport from '../components/AnnotationDatasetExport.vue'
 import AnnotationReviewPanel from '../components/AnnotationReviewPanel.vue'
+import AppNotice from '../components/AppNotice.vue'
+import { useNoticeCollapse } from '../annotation/useNoticeCollapse'
+import { TOAST_DURATION } from '../annotation/notices'
 import ReviewZoomPreview from '../components/ReviewZoomPreview.vue'
 import AnnotationMinimap from '../components/AnnotationMinimap.vue'
 import WorkbenchShell from '../components/WorkbenchShell.vue'
@@ -23,7 +26,7 @@ import '../annotation/annotation.css'
 import '../annotation/annotation-shell.css'
 const {
   collaborationConflict, collaborationBusy, resolveCollaboration, syncWorkspace, downloadWorkspaceBackup, currentRemoteTracking, lastEditors, discardLocalDraft, storageWarning, headBoxBusy, headBoxError, cancelHeadBox, mediaAssets, selectedMediaId, submissionBusy, mediaImportBusy, importError, duplicateImport, reimportSaving, cancelDuplicateImport, confirmDuplicateImport, restoreImportIntent, activeTool, selectedObjectId, currentFrame, currentTime, frameInput, isPlaying,
-  isAiBusy, statusMessage, toastMessage, imageRef, videoRef, exactFrameImageRef, exactFrameUrl, exactFrameLoading, videoPlaybackFallback, annotationHitRef, fileInputRef, videoInputRef, packageInputRef, packageImportReport, importPackage,
+  isAiBusy, statusMessage, toast, dismissToast, imageRef, videoRef, exactFrameImageRef, exactFrameUrl, exactFrameLoading, videoPlaybackFallback, annotationHitRef, fileInputRef, videoInputRef, packageInputRef, packageImportReport, importPackage,
   annotationsByMedia, selectedMedia, isVideo, maxFrameIndex, currentMediaId, currentObjects, selectedObject, displayObjects, editingBlocked, workspaceRestoring,
   anomalyFrames, pausedAnomalies, trackingPausedFrame, formatTime, selectTool, onStageClick, tempBbox, onBboxDown, onBboxMove, onBboxUp,
   selectObject, removeObject, undo, redo, canUndo, canRedo, copyPreviousFrame, brightness, contrast, mediaFilterStyle, resetMediaFilter, annotatedFrameCount,
@@ -620,6 +623,17 @@ onMounted(()=>{
   if(selectedMedia.value)void resetAnnotationViewForMedia(selectedMediaId.value)
   void review.loadSummary()
 })
+// Unresolved failures can be collapsed to the toolbar chip, never dropped; see docs/WORKFLOW.md.
+const {noticeOpen,collapse,expandNotices,collapsedCount}=useNoticeCollapse(computed(()=>({
+  save:saveError.value&&!collaborationConflict.value?`save|${saveError.value}`:'',
+  tracking:trackingError.value?`tracking|${selectedMediaId.value}|${trackingError.value.frameIndex}|${trackingError.value.phase}|${trackingError.value.message}`:'',
+  restart:trackingRestartError.value&&!restartDialogOpen.value?`restart|${trackingRestartError.value}`:'',
+  deletion:objectDeletionError.value&&!deletionDialogOpen.value?`deletion|${objectDeletionError.value}`:'',
+})))
+// A failed head click loses nothing and can simply be clicked again, so its message expires.
+let headErrorTimer:ReturnType<typeof setTimeout>|null=null
+watch(headBoxError,message=>{if(headErrorTimer)clearTimeout(headErrorTimer);headErrorTimer=message?setTimeout(()=>{headBoxError.value=''},TOAST_DURATION.error):null})
+onUnmounted(()=>{if(headErrorTimer)clearTimeout(headErrorTimer)})
 onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();cancelTrackingRestartRequest();closeRestartDialog();if(deleteDialog.value?.open){deleteDialog.value.close();document.body.style.overflow=deletionPriorOverflow}if(focused.value)restorePage();observer?.disconnect();cancelPointer();pausePlayback();removeGuard?.();window.removeEventListener('keydown',keys);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',blur);window.removeEventListener('beforeunload',beforeUnload)})
 </script>
 <template>
@@ -659,20 +673,20 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <span class="asset-type">{{ media.type==='video'?'VID':'IMG' }}</span><div><strong :title="media.name">{{ media.name }}</strong><small>{{ media.type==='video'?`${media.frameCount || '—'} 帧 · ${media.fps?.toFixed(1) || 30} fps`:`${media.width || '—'} × ${media.height || '—'}` }}<b v-if="media.serverMediaId && review.summary.value[media.serverMediaId]" class="asset-review" :class="review.summary.value[media.serverMediaId]">{{ review.label(media.serverMediaId,review.summary.value[media.serverMediaId]!) }}</b><b v-if="isTrackingMedia(media.id)" class="asset-review asset-tracking" data-testid="asset-tracking">追踪中</b></small><TrackingProgress v-if="isTrackingMedia(media.id)" variant="mini" :view="trackingProgressViewFor(media.id)" /></div><button class="asset-delete icon-button" :disabled="libraryBusy||workspaceRestoring||isTrackingMedia(media.id)" :title="media.serverMediaId?'删除素材（从服务器删除，不能撤销）':'删除素材（清除本机工作区内容，保留电脑原文件）'" :aria-label="`删除素材 ${media.name}`" @click.stop="deleteMedia(media.id)" @keydown.enter.stop @keydown.space.stop><AppIcon name="trash" :size="14" /></button>
       </div><p v-if="!visibleMedia.length" class="sidebar-empty">{{ search?'没有匹配素材':'导入视频或图片开始标注' }}</p></div>
       </div></template>
-      <template #alerts>
-        <div v-if="importError" class="error-banner" role="alert">{{ importError }}</div>
-        <div v-if="packageImportReport" class="error-banner package-import-report" role="status" data-testid="package-import-report"><span>标注包：导入 {{ packageImportReport.imported.length }} 个视频<template v-if="packageImportReport.imported.length">（未审查，请到审查页检查）</template><template v-for="item in packageImportReport.skipped" :key="item.videoName">；{{ item.videoName }} 未导入：{{ item.reason }}</template></span><button class="quiet-button" @click="packageImportReport=null">知道了</button></div>
-        <div v-if="saveError && !collaborationConflict" class="error-banner" role="alert" data-testid="workspace-save-error">{{ saveError }} <button class="quiet-button" :disabled="saveState==='saving'||workspaceRestoring||trackingRetryBusy||!!deletingMediaId||objectDeletionBusy||trackingFeedbackBusy" @click="retrySave">{{ saveState==='saving'?'正在重试保存…':saveRecoveryLabel }}</button><button class="quiet-button" @click="downloadWorkspaceBackup">导出本地备份</button><button class="quiet-button" @click="discardLocalDraft">放弃本机修改</button></div>
-        <div v-if="storageWarning" class="error-banner package-import-report" role="status" data-testid="storage-warning"><span>{{ storageWarning }}</span><button class="quiet-button" @click="storageWarning=''">知道了</button></div>
-        <div v-if="trackingError" class="error-banner tracking-error-banner" role="alert" data-testid="tracking-error"><span>第 {{ trackingError.frameIndex+1 }} 帧 · {{ trackingError.phase }}失败：{{ trackingError.message }}</span><button class="quiet-button" :disabled="trackingRetryBusy||workspaceRestoring||saveState==='saving'||!!objectDeletionPendingAction||trackingFeedbackPending" @click="retryTracking">{{ trackingRetryBusy?'正在重试…':trackingRetryLabel }}</button></div>
-        <div v-if="trackingRestartError&&!restartDialogOpen" class="error-banner tracking-error-banner" role="alert" data-testid="tracking-restart-error"><span>{{ trackingRestartError }}</span><button v-if="trackingRestartPendingAction&&trackingRestartPendingAction.phase!=='conflict'" class="quiet-button" data-testid="tracking-restart-retry" :disabled="trackingRestartBusy||workspaceRestoring" @click="retryTrackingRestart">{{ trackingRestartBusy?'正在恢复…':trackingRestartPendingAction.phase==='start'?'继续从原起点追踪':'重试原回退请求' }}</button><button v-else-if="trackingRestartPendingAction?.phase==='conflict'" class="quiet-button" :disabled="trackingRestartBusy||workspaceRestoring" @click="reloadWorkspaceFromServer">备份并重新读取</button></div>
-        <div v-if="trackingRestartStorageWarning" class="error-banner" role="status">{{ trackingRestartStorageWarning }}</div>
-        <div v-if="mediaDeleteError" class="error-banner" role="alert">{{ mediaDeleteError }}</div>
-        <div v-if="objectDeletionError && !deletionDialogOpen" class="error-banner" role="alert">{{ objectDeletionError }} <button class="quiet-button" :disabled="objectDeletionBusy" @click="objectDeletionPendingAction?.action==='delete'?openVideoDeletion():retryObjectDeletion()">重试本次{{ objectDeletionPendingAction?.action==='undo'?'撤销':objectDeletionPendingAction?.action==='redo'?'重做':'删除' }}</button></div>
-      </template>
       <template #canvas>
       <div class="annotation-view-body" :class="{'with-pause-details':focused && showPauseFeedback && pauseDetailsOpen}">
         <div class="annotation-canvas">
+          <TransitionGroup name="notice" tag="div" class="workbench-notices" aria-label="未处理提示">
+            <AppNotice v-if="importError" key="import" @close="importError=''">{{ importError }}</AppNotice>
+            <AppNotice v-if="packageImportReport" key="package" tone="info" data-testid="package-import-report" :closable="false"><span>标注包：导入 {{ packageImportReport.imported.length }} 个视频<template v-if="packageImportReport.imported.length">（未审查，请到审查页检查）</template><template v-for="item in packageImportReport.skipped" :key="item.videoName">；{{ item.videoName }} 未导入：{{ item.reason }}</template></span><template #actions><button class="quiet-button" @click="packageImportReport=null">知道了</button></template></AppNotice>
+            <AppNotice v-if="noticeOpen('save')" key="save" data-testid="workspace-save-error" close-label="收起提示（问题未解决）" @close="collapse('save')">{{ saveError }}<template #actions><button class="quiet-button" :disabled="saveState==='saving'||workspaceRestoring||trackingRetryBusy||!!deletingMediaId||objectDeletionBusy||trackingFeedbackBusy" @click="retrySave">{{ saveState==='saving'?'正在重试保存…':saveRecoveryLabel }}</button><button class="quiet-button" @click="downloadWorkspaceBackup">导出本地备份</button><button class="quiet-button" @click="discardLocalDraft">放弃本机修改</button></template></AppNotice>
+            <AppNotice v-if="storageWarning" key="storage" tone="warning" data-testid="storage-warning" :closable="false"><span>{{ storageWarning }}</span><template #actions><button class="quiet-button" @click="storageWarning=''">知道了</button></template></AppNotice>
+            <AppNotice v-if="noticeOpen('tracking')" key="tracking" data-testid="tracking-error" close-label="收起提示（问题未解决）" @close="collapse('tracking')"><span>第 {{ trackingError.frameIndex+1 }} 帧 · {{ trackingError.phase }}失败：{{ trackingError.message }}</span><template #actions><button class="quiet-button" :disabled="trackingRetryBusy||workspaceRestoring||saveState==='saving'||!!objectDeletionPendingAction||trackingFeedbackPending" @click="retryTracking">{{ trackingRetryBusy?'正在重试…':trackingRetryLabel }}</button></template></AppNotice>
+            <AppNotice v-if="noticeOpen('restart')" key="restart" data-testid="tracking-restart-error" close-label="收起提示（问题未解决）" @close="collapse('restart')"><span>{{ trackingRestartError }}</span><template v-if="trackingRestartPendingAction" #actions><button v-if="trackingRestartPendingAction&&trackingRestartPendingAction.phase!=='conflict'" class="quiet-button" data-testid="tracking-restart-retry" :disabled="trackingRestartBusy||workspaceRestoring" @click="retryTrackingRestart">{{ trackingRestartBusy?'正在恢复…':trackingRestartPendingAction.phase==='start'?'继续从原起点追踪':'重试原回退请求' }}</button><button v-else-if="trackingRestartPendingAction?.phase==='conflict'" class="quiet-button" :disabled="trackingRestartBusy||workspaceRestoring" @click="reloadWorkspaceFromServer">备份并重新读取</button></template></AppNotice>
+            <AppNotice v-if="trackingRestartStorageWarning" key="restart-storage" tone="warning" @close="trackingRestartStorageWarning=''">{{ trackingRestartStorageWarning }}</AppNotice>
+            <AppNotice v-if="mediaDeleteError" key="media-delete" @close="mediaDeleteError=''">{{ mediaDeleteError }}</AppNotice>
+            <AppNotice v-if="noticeOpen('deletion')" key="deletion" close-label="收起提示（问题未解决）" @close="collapse('deletion')">{{ objectDeletionError }}<template #actions><button class="quiet-button" :disabled="objectDeletionBusy" @click="objectDeletionPendingAction?.action==='delete'?openVideoDeletion():retryObjectDeletion()">重试本次{{ objectDeletionPendingAction?.action==='undo'?'撤销':objectDeletionPendingAction?.action==='redo'?'重做':'删除' }}</button></template></AppNotice>
+          </TransitionGroup>
           <div ref="scrollContainerRef" class="canvas-scroll" @wheel.capture="cancelPendingPauseView" @pointerdown.capture="cancelPendingPauseView" @wheel="wheel">
             <div ref="stageRef" class="annotation-stage" :style="stageStyle">
               <template v-if="selectedMedia"><template v-if="isVideo">
@@ -698,15 +712,18 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             <button class="shell-tool" :class="{active:enhancing}" :aria-expanded="enhancing" title="画面增强" aria-label="画面增强" @click="enhancing=!enhancing"><AppIcon name="sun" :size="17" /></button>
             <button class="shell-tool" :class="{active:minimapOn}" :aria-pressed="minimapOn" title="放大后显示小地图（会遮住画面右上角）" aria-label="小地图" @click="minimapOn=!minimapOn"><span>小地图</span></button>
             <button ref="focusButton" class="shell-tool" :class="{active:focused}" :aria-pressed="focused" :title="focused?'退出专注 (F / Esc)':'专注模式 (F)'" :aria-label="focused?'退出专注':'专注'" @click="toggleFocus"><AppIcon name="fit" :size="16" /></button>
+            <Transition name="notice-chip"><button v-if="collapsedCount" class="notice-chip" data-testid="notice-chip" title="展开未处理的提示" @click="expandNotices"><AppIcon name="alert" :size="14" /><span>{{ collapsedCount }} 条未处理</span></button></Transition>
           </div>
-          <div v-if="headBoxBusy || headBoxError" class="head-proposal-status" :role="headBoxError?'alert':'status'">
+          <Transition name="toast-corner"><div v-if="headBoxBusy || headBoxError" class="head-proposal-status" :class="{failed:!headBoxBusy&&!!headBoxError}" :role="headBoxError?'alert':'status'">
+            <AppIcon v-if="!headBoxBusy" name="alert" :size="15" /><i v-else class="notice-spinner" aria-hidden="true" />
             <span>{{ headBoxBusy?'正在识别点击处的头部…':headBoxError }}</span>
             <button class="quiet-button" @click="headBoxBusy?cancelHeadBox():headBoxError=''">{{ headBoxBusy?'取消':'关闭' }}</button>
-          </div>
+          </div></Transition>
           <div v-if="enhancing" class="annot-enhance enhancement-bar"><button v-for="p in ['原图','暗场','低对比']" :key="p" class="quiet-button" @click="enhancement(p)">{{ p }}</button><label>亮度 <input v-model.number="brightness" aria-label="亮度" type="range" min="50" max="200" /></label><label>对比 <input v-model.number="contrast" aria-label="对比度" type="range" min="50" max="220" /></label><label><input v-model="inverted" type="checkbox" />反相</label><span>只影响显示</span></div>
           <AnnotationMinimap v-if="selectedMedia && minimapOn" :source="minimapSource" :scroller="scrollContainerRef" :stage="stageRef" :media-width="selectedMedia.width||4" :media-height="selectedMedia.height||3" :redraw-key="`${currentMediaId}:${currentFrame}:${exactFrameUrl}:${stageSize.w}`" />
           <div v-if="exactFrameLoading||workspaceRestoring||isAiBusy||currentRemoteTracking" class="canvas-status" data-testid="canvas-status">{{ isAiBusy?'AI 正在追踪本视频 · 可切换到其他视频继续标注':currentRemoteTracking?`${currentRemoteTracking.userName||'其他人'}正在追踪本视频 · 完成后自动刷新，可先标注其他视频`:workspaceRestoring?'正在恢复工作区…':'正在读取帧…' }}</div>
           <div v-if="frameError" class="canvas-error" role="alert">{{ frameError }}<button class="btn-secondary" @click="retryExactFrame">重试读取</button></div>
+          <Transition name="toast"><div v-if="toast" :key="toast.id" class="status-toast" :class="`toast-${toast.tone}`" role="status" data-testid="status-toast"><span class="notice-icon"><AppIcon :name="toast.tone==='success'?'check':toast.tone==='info'?'info':'alert'" :size="14" /></span><span>{{ toast.message }}</span><button v-if="toast.tone==='error'" type="button" class="notice-close" aria-label="关闭提示" @click="dismissToast"><AppIcon name="close" :size="13" /></button></div></Transition>
           <div v-if="magnifier" class="loupe"><canvas ref="loupe" width="200" height="150" :style="{filter}" /><span>4× 原图局部 · {{ mousePixel?`${mousePixel.x}, ${mousePixel.y}`:'移动指针查看' }}</span></div>
           <div v-if="!isVideo" class="shell-zoom" role="group" aria-label="画面缩放"><span v-if="mousePixel" class="annot-coords">{{ mousePixel.x }}, {{ mousePixel.y }} px</span><button aria-label="缩小画面" @click="zoomAt(-1)">−</button><button title="适应画面 (0)" aria-label="适应画面" @click="fitView">{{ Math.round(zoom*100) }}%</button><button aria-label="放大画面" @click="zoomAt(1)">＋</button></div>
         </div>
@@ -808,7 +825,6 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
       <div v-if="help" class="dialog-mask" @click.self="help=false"><section ref="helpDialog" class="app-dialog annotation-help" role="dialog" aria-modal="true" aria-labelledby="annotation-help-title"><h2 id="annotation-help-title">标注快捷键</h2><dl><div v-for="[key,desc] in annotationShortcuts" :key="key"><dt><kbd>{{ key }}</kbd></dt><dd>{{ desc }}</dd></div></dl><p class="muted">{{ shortcutHelpNote }}</p><div class="app-dialog-actions"><button class="btn-primary" @click="help=false">知道了</button></div></section></div>
     </Teleport>
   </section>
-  <transition name="toast"><div v-if="toastMessage" class="status-toast" role="status">{{ toastMessage }}</div></transition>
 </template>
 
 <style scoped>

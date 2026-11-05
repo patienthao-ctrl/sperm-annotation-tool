@@ -4,6 +4,7 @@ import type { OverlapPairNotice } from '../../annotation/pauseDiagnostics'
 import { savedTrackingCalibration } from '../../annotation/trackingCalibration'
 import { describeTrackingProgress, type TrackingProgressInput, type TrackingProgressView } from '../../annotation/trackingProgress'
 import type { Box } from '../../annotation/geometry'
+import { createToastController, type Toast } from '../../annotation/notices'
 import type { AnnotationObject, AnnotationTool, MediaAsset, TrackingFrameResult } from '../../types/annotation'
 import { httpAnnotationApi } from '../../api/httpAnnotationApi'
 import { trackApi, type DuplicateVideo, type PackageImportResult, type TrackStatusResponse, type NormalMotionSample, type TrackingWarningSummary, type TrackingFeedbackEvent, type TrackingFeedbackInput, type TrackingRestartInput } from '../../api/trackApi'
@@ -120,13 +121,10 @@ export const pendingRestart = ref<TrackingRestartIntent | null>(null)
 export const trackingRestartBusy = ref(false), trackingRestartError = ref(''), trackingRestartStorageWarning = ref('')
 export const trackingRestartPendingAction = computed(() => pendingRestart.value?.mediaId === currentMediaId.value ? pendingRestart.value : null)
 export const zoom = ref(1)
-export const toastMessage = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-export const showToast = (message: string) => {
-  toastMessage.value = message
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastMessage.value = '' }, 2800)
-}
+export const toast = shallowRef<Toast | null>(null)
+const toastController = createToastController(next => { toast.value = next })
+export const showToast = toastController.show
+export const dismissToast = toastController.dismiss
 
 export const imageRef = ref<HTMLImageElement | null>(null)
 export const videoRef = ref<HTMLVideoElement | null>(null)

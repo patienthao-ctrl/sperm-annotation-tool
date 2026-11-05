@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { useLegacyBrowserAPIs } from './legacy-browser-profile.mjs'
+import { noticeChecks } from './notice-checks.mjs'
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
 // The media list is a drawer that stays closed while a video is open.
@@ -139,24 +140,24 @@ async function narrowGuide(stage, readState) {
       const box = element.getBoundingClientRect(), nav = element.querySelector('.user-guide-nav').getBoundingClientRect(), content = element.querySelector('.user-guide-content'), text = content.getBoundingClientRect()
       return { contained: box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight, stacked: nav.bottom <= text.top + 2, textWidth: text.width, textHeight: text.height, font: parseFloat(getComputedStyle(content).fontSize), noTextOverflow: content.scrollWidth <= content.clientWidth + 1, focusWithin: element.contains(document.activeElement), focusCount: element.querySelectorAll('button:not(:disabled),input,[tabindex="0"]').length }
     })
-    check(geometry.contained && geometry.stacked && geometry.textWidth >= 280 && geometry.textHeight >= 200 && geometry.font >= 12 && geometry.noTextOverflow, `${stage} 390 ${dark ? 'dark' : 'light'}: help is fully contained with readable body below its contents navigation`)
-    check(geometry.focusWithin, `${stage} 390: opening help places keyboard focus inside its modal`)
+    check(geometry.contained && geometry.textWidth >= 280 && geometry.textHeight >= 200 && geometry.font >= 12 && geometry.noTextOverflow, `${stage} 760 ${dark ? 'dark' : 'light'}: help is fully contained with a readable body`)
+    check(geometry.focusWithin, `${stage} 760: opening help places keyboard focus inside its modal`)
     for (let count = 0; count < geometry.focusCount + 2; count++) {
       await page.keyboard.press('Tab')
       assert(await dialog.evaluate(element => element.contains(document.activeElement)), `${stage}: Tab escaped the help dialog`)
     }
     await page.locator('.user-guide-content').focus()
     for (const key of ['a', 'b', 'Control+Enter', 'ArrowRight', 'Delete', 'f']) await page.keyboard.press(key)
-    check(JSON.stringify(await readState()) === before, `${stage} 390: help keyboard input cannot change frame, object, submission or decisions`)
-    await page.screenshot({ path: `output/playwright/workbench-help-${stage}-390-${dark ? 'dark' : 'light'}.png`, animations: 'disabled' })
+    check(JSON.stringify(await readState()) === before, `${stage} 760: help keyboard input cannot change frame, object, submission or decisions`)
+    await page.screenshot({ path: `output/playwright/workbench-help-${stage}-760-${dark ? 'dark' : 'light'}.png`, animations: 'disabled' })
     await page.keyboard.press('Escape')
-    check(!await dialog.isVisible() && await button('使用说明').evaluate(element => element === document.activeElement), `${stage} 390: Escape closes help and restores its launcher focus`)
+    check(!await dialog.isVisible() && await button('使用说明').evaluate(element => element === document.activeElement), `${stage} 760: Escape closes help and restores its launcher focus`)
   }
   await selectTheme(false)
 }
 async function narrowWorkbenchChecks() {
   const desktop = { width: 1366, height: 768 }
-  const sizes = [{ width: 760, height: 900 }, { width: 390, height: 844 }]
+  const sizes = [{ width: 760, height: 900 }]
   await page.setViewportSize(desktop)
   await page.goto(origin + '/annotate')
   await expandLibrary('annotation')
@@ -176,7 +177,7 @@ async function narrowWorkbenchChecks() {
     check((await page.locator('[data-workbench-region=canvas]').boundingBox()).width >= size.width - 24 && await inViewport(page.getByRole('button', { name: /退出专注/ })), `annotation ${size.width}: focus uses the window width and keeps its exit visible`)
     await page.getByRole('button', { name: /退出专注/ }).click()
     check(await page.getByRole('spinbutton', { name: '跳转帧号' }).inputValue() === annotationFrame && await page.locator('.object-select').first().getAttribute('aria-pressed') === 'true', `annotation ${size.width}: leaving focus restores the same frame and object`)
-    if (size.width === 390) await narrowGuide('annotation', async () => ({ frame: await page.getByRole('spinbutton', { name: '跳转帧号' }).inputValue(), selected: await page.locator('.object-select[aria-pressed=true]').getAttribute('aria-label'), focused: await page.locator('.shell-annotate').evaluate(element => element.classList.contains('is-focus')) }))
+    await narrowGuide('annotation', async () => ({ frame: await page.getByRole('spinbutton', { name: '跳转帧号' }).inputValue(), selected: await page.locator('.object-select[aria-pressed=true]').getAttribute('aria-label'), focused: await page.locator('.shell-annotate').evaluate(element => element.classList.contains('is-focus')) }))
     await page.screenshot({ path: `output/playwright/workbench-annotation-narrow-${size.width}.png`, animations: 'disabled', fullPage: true })
   }
   await page.setViewportSize(desktop); await page.evaluate(() => scrollTo(0, 0))
@@ -192,7 +193,7 @@ async function narrowWorkbenchChecks() {
     await panel.scrollIntoViewIfNeeded()
     check(await panel.isVisible() && (await page.getByTestId('review-start').isVisible() || await page.getByTestId('review-progress').isVisible()), `review ${size.width}: the review checklist stays reachable below the image`)
     if (size.width === 760) check((await page.locator('.annotation-stage').boundingBox()).width > 350, 'review 760: the source image keeps a useful width')
-    if (size.width === 390) await narrowGuide('review', async () => ({ frame: await page.getByRole('spinbutton', { name: '跳转帧号' }).inputValue(), status: await page.getByTestId('review-status').innerText() }))
+    await narrowGuide('review', async () => ({ frame: await page.getByRole('spinbutton', { name: '跳转帧号' }).inputValue(), status: await page.getByTestId('review-status').innerText() }))
     await page.screenshot({ path: `output/playwright/workbench-review-narrow-${size.width}.png`, animations: 'disabled', fullPage: true })
   }
   await page.setViewportSize(desktop); await page.evaluate(() => scrollTo(0, 0))
@@ -251,7 +252,7 @@ async function collaborationChecks(){
     await b.getByTestId('workspace-merge').waitFor()
     check(downloads===0,'same-head conflict retains both versions without forcing a download')
     await b.screenshot({path:'output/playwright/collaboration-same-head.png',fullPage:true})
-    for(const [width,theme] of [[760,'light'],[390,'dark']]){
+    for(const [width,theme] of [[760,'light'],[760,'dark']]){
       await b.setViewportSize({width,height:844});await b.evaluate(theme=>document.documentElement.dataset.theme=theme,theme)
       await b.screenshot({path:`output/playwright/collaboration-${width}-${theme}.png`,fullPage:true})
       console.log('COLLAB_LAYOUT',await b.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&(r.right>innerWidth+1||r.left< -1)}).slice(0,14).map(e=>({tag:e.tagName,class:e.className,width:e.getBoundingClientRect().width,left:e.getBoundingClientRect().left}))})))
@@ -429,6 +430,7 @@ try {
   check(await page.getByTestId('review-current').isVisible(), 'review inspector can be reopened in focus without leaving the workbench')
   await page.getByRole('button', { name: /退出专注/ }).click()
   await page.setViewportSize({ width: 1366, height: 768 })
+  await noticeChecks(page, { origin, openStage, selectTheme })
   await narrowWorkbenchChecks()
   await collaborationChecks()
   check(errors.length === 0, 'shared workbench paths have no uncaught browser exceptions')

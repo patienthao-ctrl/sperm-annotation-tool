@@ -77,7 +77,7 @@ export const buildSam3AnnotationsJson = async (mediaId: string) => {
 export const generateAnnotationsJson = async () => {
   const mediaId = currentMediaId.value
   const media = mediaAssets.value.find((item) => item.id === mediaId)
-  if (!media) return showToast('当前素材不存在')
+  if (!media) return showToast('当前素材不存在','error')
   try {
     const { width, height } = await getMediaPixelSize(media)
     if (media.type === 'video') {
@@ -97,7 +97,7 @@ export const generateAnnotationsJson = async () => {
         annotations,
       })
       statusMessage.value = `第 ${frameIndex + 1} 帧 JSON 已写入 ${result.filename}`
-      showToast(`第 ${frameIndex + 1} 帧 JSON 已保存到视频目录`)
+      showToast(`第 ${frameIndex + 1} 帧 JSON 已保存到视频目录`,'success')
     } else {
       const blob = await buildSam3AnnotationsJson(mediaId)
       const url = URL.createObjectURL(blob)
@@ -105,11 +105,11 @@ export const generateAnnotationsJson = async () => {
       link.href = url; link.download = 'annotations.json'; link.click()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
       statusMessage.value = 'JSON 生成成功：annotations.json'
-      showToast('图片 annotations.json 已生成')
+      showToast('图片 annotations.json 已生成','success')
     }
   } catch (error) {
     statusMessage.value = error instanceof Error ? error.message : 'JSON 生成失败'
-    showToast(statusMessage.value)
+    showToast(statusMessage.value,'error')
   }
 }
 

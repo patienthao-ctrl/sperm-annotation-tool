@@ -160,7 +160,7 @@ try{
   await page.locator('.object-select').first().click();await blur();await page.keyboard.press('Alt+ArrowRight');await page.waitForSelector('.error-banner')
   check((await state()).save==='error','autosave failure is visible instead of claiming data was saved')
   await page.unroute('**/api/track/workspace/ux-video');await uiButton('重试保存').click();await page.waitForFunction(()=>window.ws.saveState.value==='saved')
-  check(!(await page.locator('.error-banner').count()),'retry persists data and clears the saving error')
+  await page.locator('.error-banner').first().waitFor({state:'detached'});check(!(await page.locator('.error-banner').count()),'retry persists data and clears the saving error')
   const persisted=(await state()).objects
   await page.reload();await page.evaluate(async()=>{window.ws=(await import(performance.getEntriesByType('resource').find(r=>r.name.includes('/src/stores/workspace.ts')).name)).useWorkspace()})
   // Login validation precedes workspace mounting. Idle alone can be true
