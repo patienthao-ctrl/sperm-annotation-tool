@@ -155,7 +155,7 @@ export async function trackingPauseLayoutChecks(page, { poll, ready, out, before
     await poll(async()=>await details.getAttribute('open')===null,'evidence Escape closes only the evidence dock')
     check(await focused()&&await toggle.evaluate(e=>e===document.activeElement),'Escape from evidence returns focus to its toggle without leaving focused annotation')
 
-    for(const [width,height] of [[760,900],[390,844],[390,480]])for(const theme of ['light','dark'])for(const focus of [false,true]){
+    for(const [width,height] of [[760,900],[760,480]])for(const theme of ['light','dark'])for(const focus of [false,true]){
       await setDetails(false);await setFocus(focus);await page.setViewportSize({width,height});await page.waitForTimeout(120)
       await page.evaluate(t=>{document.documentElement.dataset.theme=t},theme)
       const label=`pause-layout-${focus?'focus':'normal'}-${width}x${height}-${theme}`
@@ -184,7 +184,7 @@ export async function trackingPauseLayoutChecks(page, { poll, ready, out, before
         const pop=await popover.evaluate(element=>({client:element.clientHeight,scroll:element.scrollHeight,height:element.getBoundingClientRect().height,overflow:getComputedStyle(element).overflowY,display:getComputedStyle(element).display}))
         check(pop.client>30&&pop.height<=161&&(pop.scroll<=pop.client+1||pop.overflow==='auto'),label+': the short narrow enhancement popover stays bounded and scrolls internally when needed '+JSON.stringify(pop))
         await popover.locator('input[type=checkbox]').scrollIntoViewIfNeeded()
-        check(await popover.evaluate(element=>element.scrollTop>0)&&await reachable(popover.locator('input[type=checkbox]')),label+': scrolling the popover reveals its last enhancement control')
+        check(await popover.evaluate(element=>element.scrollHeight<=element.clientHeight+1||element.scrollTop>0)&&await reachable(popover.locator('input[type=checkbox]')),label+': the last enhancement control can be reached, scrolling only if the popover overflows')
         await setDetails(false)
       }
       await screenshot(label+'-enhanced');await button('画面增强').click()

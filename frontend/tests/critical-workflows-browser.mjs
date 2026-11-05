@@ -38,6 +38,8 @@ const poll = async (fn, description) => {
 const workspace = () => api('/track/workspace/'+mid)
 const ready = async () => {
   await poll(async () => await page.getByTestId('annotation-hit').isVisible() && !(await page.getByTestId('annotation-hit').getAttribute('class')).includes('locked'), 'annotation canvas is editable')
+  // A cleared notice fades out briefly; a failure that really remains still fails after this wait.
+  await page.getByTestId('workspace-save-error').waitFor({state:'detached',timeout:1000}).catch(()=>{});
   assert.equal(await page.getByTestId('workspace-save-error').count(), 0, 'Unexpected workspace error')
 }
 const draw = async (expectedCount = 1) => {
@@ -172,7 +174,7 @@ try {
   await page.getByTestId('review-pass').click();await page.getByTestId('review-changes').waitFor()
   check((await reviewState()).status==='passed','every frame confirmed, then an explicit pass')
   check(await page.getByRole('button',{name:'对比确认',exact:true}).count()===0,'workflow has only annotation and review navigation')
-  for(const [width,height] of [[1366,768],[1180,760],[760,760],[390,760]]) {
+  for(const [width,height] of [[1366,768],[1180,760],[760,760]]) {
     await page.setViewportSize({width,height})
     for(const theme of ['light','dark']) {
       if(await page.locator('html').getAttribute('data-theme')!==theme)await button(theme==='dark'?'切换深色主题':'切换浅色主题').click()

@@ -32,6 +32,8 @@ const poll = async (fn, description) => {
 const workspace = () => api('/track/workspace/'+mid)
 const ready = async () => {
   await poll(async () => await page.getByTestId('annotation-hit').isVisible() && !(await page.getByTestId('annotation-hit').getAttribute('class')).includes('locked'), 'annotation canvas is editable')
+  // A cleared notice fades out briefly; a failure that really remains still fails after this wait.
+  await page.getByTestId('workspace-save-error').waitFor({state:'detached',timeout:1000}).catch(()=>{});
   assert.equal(await page.getByTestId('workspace-save-error').count(), 0, 'Unexpected workspace error')
 }
 const draw = async () => {

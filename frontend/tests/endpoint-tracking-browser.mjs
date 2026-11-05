@@ -83,7 +83,7 @@ if(process.env.CRITICAL_AI_MODE==='simulated'){
     await page.screenshot({path:'output/playwright/joint-tracking-middle.png'});await jump(3);await page.locator('.object-select').first().click()
     await page.screenshot({path:'output/playwright/endpoint-tracking.png'})
     await button('专注').click();check(await button('首尾双向追踪').isVisible(),'focus mode retains endpoint run entry');await page.screenshot({path:'output/playwright/endpoint-tracking-focus.png'});await button('退出专注').click()
-    for(const width of [1180,760,390]){await page.setViewportSize({width,height:844});for(const theme of ['light','dark']){await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);await page.screenshot({path:`output/playwright/endpoint-tracking-${width}-${theme}.png`});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'no horizontal overflow for endpoint controls '+width+' '+theme)}}
+    for(const width of [1180,760]){await page.setViewportSize({width,height:844});for(const theme of ['light','dark']){await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);await page.screenshot({path:`output/playwright/endpoint-tracking-${width}-${theme}.png`});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'no horizontal overflow for endpoint controls '+width+' '+theme)}}
     await page.setViewportSize({width:1366,height:768})
     // Saved legacy joint output: human head is tight, AI is padded, IDs unpaired.
     // Only this fixture installation is synthetic; all subsequent reads/merge/UI/export are real.

@@ -44,7 +44,7 @@ defineExpose({ collapseInspector: () => { inspectorCollapsed.value = true } })
     </aside>
     <section class="shell-center" data-workbench-region="canvas">
       <div v-if="focused" class="shell-focusbar"><div class="shell-context"><slot name="context" :inspector-visible="inspectorVisible" /></div></div>
-      <div class="shell-canvas"><div class="shell-alerts"><slot name="alerts" /></div><slot name="canvas" /></div>
+      <div class="shell-canvas"><slot name="canvas" /></div>
       <div v-if="$slots.bottom" class="shell-bottom"><slot name="bottom" /></div>
     </section>
     <aside v-show="inspectorVisible" class="shell-inspector" data-workbench-region="inspector">

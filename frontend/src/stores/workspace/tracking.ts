@@ -182,10 +182,10 @@ export const performTracking = async (resume=false, restartIntent?: TrackingRest
   if (pendingDeletion.value || pendingFeedback.value || (pendingRestart.value && pendingRestart.value !== restartIntent) || workspaceReadError.value || (isAiBusy.value&&!resume)) return
   if (!job&&lastPausedContext.value?.mediaId === mediaId && pausedAnomalies.value.some(item => !isObjectDeleted(mediaId, item.objectId, lastPausedContext.value!.frameIndex))) {
     anomalyPanelVisible.value = true
-    showToast('请先逐项确认暂停对象，或修正框后确认，再继续追踪')
+    showToast('请先逐项确认暂停对象，或修正框后确认，再继续追踪','warning')
     return
   }
-  if (!job&&!(restartSeedSnapshot?.objects ?? currentObjects.value).some(object => object.bbox)) { showToast('起始帧没有人工头框，请先完成首帧标注'); return }
+  if (!job&&!(restartSeedSnapshot?.objects ?? currentObjects.value).some(object => object.bbox)) { showToast('起始帧没有人工头框，请先完成首帧标注','warning'); return }
   anomalyObjectIds.value = []
   pausedAnomalies.value = []
   anomalyPanelVisible.value = false
@@ -218,7 +218,7 @@ export const performTracking = async (resume=false, restartIntent?: TrackingRest
     const persisted = await persistCurrentFrameManualAnnotations(media, mediaId, restartSeedSnapshot)
     ensureRestartCurrent()
     if (persisted.count) {
-      showToast(`第 ${startFrame + 1} 帧 ${persisted.count} 个人工标注已写入数据库`)
+      showToast(`第 ${startFrame + 1} 帧 ${persisted.count} 个人工标注已写入数据库`,'success')
     }
 
     // 关键：如果这是对旧 Tracking 结果的人工回退/修正，从当前帧重新开分支。
@@ -355,7 +355,7 @@ export const performTracking = async (resume=false, restartIntent?: TrackingRest
             { frame_index: pauseFrame, level, reasons },
           ]
           statusMessage.value = `⚠️ Tracking 暂停在第 ${pauseFrame + 1} 帧: ${reasons.join('; ')}`
-          showToast(`检测到异常，已暂停在第 ${pauseFrame + 1} 帧`)
+          showToast(`检测到异常，已暂停在第 ${pauseFrame + 1} 帧`,'warning')
         }
         trackingJobs.delete(mediaId);rememberTracking(mediaId);delete trackingErrors.value[mediaId]
         return
@@ -387,7 +387,7 @@ export const performTracking = async (resume=false, restartIntent?: TrackingRest
         statusMessage.value = `完成：已追踪到视频末尾第 ${lastProcessedFrame + 1} 帧。`
         if(finalStatus.jointTracking?.state==='checked') statusMessage.value='自动标注已完成，可微调后去审查。'
         else if(finalStatus.endpointVerification) statusMessage.value += finalStatus.endpointVerification.state==='checked'?'首尾核验完成，疑点请到审查页处理。':'反向核验失败或证据不足，请到审查页检查。'
-        showToast('已追踪到视频末尾')
+        showToast('已追踪到视频末尾','success')
       } else {
         statusMessage.value = `完成：SAM3 已追踪第 ${startFrame + 1}～${lastProcessedFrame + 1} 帧。请检查/修正最终帧后再次点击 AI Tracking 继续。`
         showToast(`已到达单轮上限第 ${lastProcessedFrame + 1} 帧，可检查后继续`)
@@ -403,7 +403,6 @@ export const performTracking = async (resume=false, restartIntent?: TrackingRest
     console.error('[annotation.tracking_failed]',{mediaId:media.serverMediaId,frameIndex:startFrame,phase,taskId:job?.taskId,requestKey:job?.key,error})
     if (mediaId === currentMediaId.value) {
       statusMessage.value = `${phase}失败：${message}`
-      showToast(statusMessage.value)
     }
   } finally {
     // This call added mediaId to trackingMedia; no other loop can own the video meanwhile.

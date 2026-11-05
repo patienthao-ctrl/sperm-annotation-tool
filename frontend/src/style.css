@@ -169,11 +169,26 @@ kbd {font-family:var(--font-mono);font-size:10.5px;line-height:1.3;border:1px so
 .app-dialog-actions {display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
 dialog[open] {animation:dialog-in var(--dur-slow) var(--ease-out)}
 dialog::backdrop {background:var(--mask);backdrop-filter:blur(4px);animation:fade-in var(--dur-base) var(--ease-standard)}
-.error-banner {color:var(--danger);background:var(--danger-soft);border:1px solid var(--danger);border-left-width:3px;padding:10px 13px;border-radius:var(--radius-sm);font-size:var(--fs-sm);line-height:1.6;overflow-wrap:anywhere;animation:rise-in var(--dur-base) var(--ease-out)}
-.status-toast {position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--surface-raised);color:var(--text);border:1px solid var(--line);border-radius:var(--radius-md);padding:12px 18px;max-width:calc(100vw - 24px);box-shadow:var(--shadow-lg);z-index:110;font-size:var(--fs-sm)}
+.error-banner {color:var(--text);background:var(--danger-soft);border:1px solid transparent;padding:10px 13px;border-radius:var(--radius-md);font-size:var(--fs-sm);line-height:1.6;overflow-wrap:anywhere;animation:rise-in var(--dur-base) var(--ease-out)}
+.app-notice {display:flex;align-items:flex-start;gap:10px;padding:7px 7px 7px 10px;background:var(--surface-raised);border-color:var(--line);box-shadow:var(--shadow-md);animation:none}
+.notice-icon {display:grid;place-items:center;flex-shrink:0;width:24px;height:24px;border-radius:50%;background:var(--danger-soft);color:var(--danger)}
+.notice-warning .notice-icon,.toast-warning .notice-icon {background:var(--warning-soft);color:var(--warning)}
+.notice-info .notice-icon,.toast-info .notice-icon {background:var(--accent-soft);color:var(--accent)}
+.toast-success .notice-icon {background:var(--success-soft);color:var(--success)}
+.notice-body {flex:1;min-width:0;align-self:center}
+.notice-actions {display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex-shrink:0}
+.app-notice .quiet-button {min-height:26px;padding:3px 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)}
+.app-notice .quiet-button:hover:not(:disabled) {background:var(--surface-hover)}
+.notice-close {display:grid;place-items:center;flex-shrink:0;width:26px;height:26px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--muted)}
+.notice-close:hover {background:var(--surface-hover);color:var(--text)}
+@media(max-width:640px) {.app-notice {flex-wrap:wrap}.notice-body {flex-basis:calc(100% - 76px)}.notice-actions {order:3;flex-basis:100%;padding-left:34px}}
+/* Transient, and pointer-transparent so it can never swallow a click meant for the canvas. */
+.status-toast {position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;align-items:center;gap:9px;width:max-content;max-width:min(480px,calc(100% - 24px));padding:6px 14px 6px 7px;background:var(--surface-raised);color:var(--text);border:1px solid var(--line);border-radius:var(--radius-xl);box-shadow:var(--shadow-lg);z-index:36;font-size:var(--fs-sm);line-height:1.5;overflow-wrap:anywhere;pointer-events:none}
+.status-toast .notice-close {width:22px;height:22px;margin:0 -8px 0 0;pointer-events:auto}
 .toast-enter-active {transition:opacity var(--dur-base) var(--ease-standard),transform var(--dur-slow) var(--ease-out)}
-.toast-leave-active {transition:opacity var(--dur-fast) var(--ease-standard),transform var(--dur-fast) var(--ease-standard)}
-.toast-enter-from,.toast-leave-to {opacity:0;transform:translate(-50%,12px) scale(.98)}
+.toast-leave-active {transition:opacity var(--dur-base) var(--ease-standard),transform var(--dur-base) var(--ease-standard)}
+.toast-enter-from {opacity:0;transform:translate(-50%,8px)}
+.toast-leave-to {opacity:0;transform:translate(-50%,4px)}
 /* Shared entrance motion: short, opacity-led, tiny offsets so hit targets settle fast. */
 @keyframes fade-in {from {opacity:0}}
 @keyframes rise-in {from {opacity:0;transform:translateY(4px)}}

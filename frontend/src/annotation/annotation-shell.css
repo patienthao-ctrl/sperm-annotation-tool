@@ -50,7 +50,29 @@
 }
 
 /* Readable non-modal feedback; canvas coordinates and scroll stay unchanged. */
-.head-proposal-status { position:absolute; top:64px; right:12px; max-width:min(360px,80%); padding:8px 12px; border-radius:8px; background:var(--surface); color:var(--text); border:1px solid var(--line); z-index:12; display:flex; align-items:center; gap:8px; font-size:13px; box-shadow:var(--shadow-md); animation:rise-in var(--dur-base) var(--ease-out); }
+.head-proposal-status { position:absolute; left:12px; bottom:12px; max-width:min(360px,calc(100% - 24px)); padding:6px 6px 6px 10px; border-radius:var(--radius-md); background:var(--surface-raised); color:var(--text); border:1px solid var(--line); z-index:34; display:flex; align-items:center; gap:8px; font-size:var(--fs-sm); box-shadow:var(--shadow-md); }
+.head-proposal-status.failed>svg { color:var(--danger); flex-shrink:0; }
+.head-proposal-status .quiet-button { min-height:26px; padding:3px 8px; }
+.notice-spinner { width:13px; height:13px; flex-shrink:0; border-radius:50%; border:2px solid var(--line); border-top-color:var(--accent); animation:notice-spin .9s linear infinite; }
+@keyframes notice-spin { to { transform:rotate(360deg); } }
+.toast-corner-enter-active { transition:opacity var(--dur-base) var(--ease-standard),transform var(--dur-slow) var(--ease-out); }
+.toast-corner-leave-active { transition:opacity var(--dur-fast) var(--ease-standard); }
+.toast-corner-enter-from { opacity:0; transform:translateY(6px); }
+.toast-corner-leave-to { opacity:0; }
+/* Unresolved failures sit in their own row under the toolbar: they take space from the canvas
+   instead of covering the image or capturing pointer events meant for it. */
+.shell-annotate .workbench-notices { order:-1; flex:none; width:100%; max-height:45%; overflow:auto; display:flex; flex-direction:column; gap:6px; padding:8px 12px 0; }
+.shell-annotate .workbench-notices:empty { display:none; }
+.notice-enter-active { transition:opacity var(--dur-base) var(--ease-standard),transform var(--dur-slow) var(--ease-out); }
+.notice-leave-active { transition:opacity var(--dur-fast) var(--ease-standard); }
+.notice-enter-from { opacity:0; transform:translateY(-6px); }
+.notice-leave-to { opacity:0; }
+.shell-annotate .notice-chip { margin-left:auto; display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 10px; border-radius:var(--radius-xl); border:0; background:var(--danger-soft); color:var(--danger); font-size:var(--fs-xs); font-weight:600; white-space:nowrap; }
+.shell-annotate .notice-chip:hover { box-shadow:var(--shadow-sm); }
+.notice-chip-enter-active { transition:opacity var(--dur-base) var(--ease-standard),transform var(--dur-base) var(--ease-out); }
+.notice-chip-leave-active { transition:opacity var(--dur-fast) var(--ease-standard); }
+.notice-chip-enter-from { opacity:0; transform:scale(.92); }
+.notice-chip-leave-to { opacity:0; }
 
 .annotation-page .edge-discovery-option { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; margin-block: 6px; }
 
