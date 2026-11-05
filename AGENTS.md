@@ -46,7 +46,7 @@
 
 ## 与其他 AI 工具交接
 
-- 同一时间只让一个工具在本工作目录写代码；需要并行时用独立 git worktree 或分支。
+- 同一时间只让一个工具在本工作目录写代码；需要并行时每个任务用独立 git worktree，步骤见 [TESTING.md 的并行开发](docs/TESTING.md#多个-ai-工具并行开发)。
 - 每次结束一段工作前，覆盖更新 `work/HANDOFF.md`（已被 Git 忽略），格式见 [docs/HANDOFF_TEMPLATE.md](docs/HANDOFF_TEMPLATE.md)：当前任务、分支、已完成、下一步、等用户确认的问题、不要碰的文件。
 - 稳定规则写进对应 `docs/*.md`；重大方案取舍写一篇 `docs/decisions/NNNN-标题.md`；验证结果写在提交信息或 PR 描述里。不新增“本次实现/最终审查/优化总结”类文档。
 - 提交信息说明改了什么、为什么、跑了哪些测试。

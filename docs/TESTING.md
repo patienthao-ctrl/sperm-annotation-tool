@@ -74,6 +74,38 @@ npm run build --prefix frontend
 
 构建包含类型检查。已有混合静态/动态导入和 Python 弃用警告应与新错误区分，不能因为日志有 warning 就猜测业务失败。
 
+## 多个 AI 工具并行开发
+
+同一个文件夹同一时间只让一个工具写代码，否则测试会混入别人改到一半的代码，失败无法归属，提交也挑不干净。要并行，每个任务开一个 git worktree：独立文件夹、独立分支，互相看不到未提交的改动。Claude Code 桌面版新建会话时可直接选择 worktree；其他工具在项目根目录手动执行：
+
+```bash
+git worktree add "../标注工具-审查卡片" -b feat/review-card main
+```
+
+最后一个参数是基线分支，按任务实际要接着做的分支填写。
+
+新 worktree 只有 Git 跟踪的文件，没有被忽略的依赖、`.env`、`/models/` 和 `work/`。不改依赖的任务直接链接主目录的依赖（`<主目录>` 换成原项目文件夹的绝对路径）：
+
+```bash
+ln -s "<主目录>/frontend/node_modules" frontend/node_modules
+mkdir -p work && ln -s "<主目录>/work/review-venv" work/review-venv
+```
+
+Windows 用目录联接：`mklink /J frontend\node_modules <主目录>\frontend\node_modules`，Python 解释器可直接用主目录的 `backend\.venv\Scripts\python.exe`。任务要改 `package.json`、`requirements*.txt` 时不要链接，在该 worktree 单独安装，避免改坏其他任务共用的依赖。
+
+- **测试数据天然分开**：上面的 `APP_DATA_DIR` 等都以 `$PWD/work/` 为根，浏览器回归自选空闲端口，`work/browser-regression.lock`、`work/e2e-*` 和 `output/playwright/` 也在各自 worktree 内，两个 worktree 可以同时跑回归。同时跑多组完整回归会抢 CPU、更容易超时，失败先单独重跑确认再下结论。
+- **交接记录各管各的**：`work/HANDOFF.md` 在各自 worktree 的 `work/` 下，写本任务的进度即可。
+- **按文件拆任务**：`AnnotatePage.vue`、`workspace.ts`、`annotation_review.py` 这类热点文件同一时间只交给一个任务，否则分支各自通过、合并时仍会冲突。
+- **需要真实模型或部署验证**（SAM3 权重、`.env`、Docker）的任务在主目录做，或明确链接所需目录；不要把 CPU/模拟结果当成 GPU 验收。
+- **合并后再过一次门禁**：每个分支先按“测试分层”的提交前要求通过并提交；合并到一起后再跑一次完整门禁（七组浏览器回归）。各分支单独通过不代表合并后通过。
+
+完成并合并后清理：
+
+```bash
+git worktree remove "../标注工具-审查卡片"
+git branch -d feat/review-card
+```
+
 ## 按修改选择测试
 
 先按下表找到修改面；各专项的详细覆盖与限制见 [details/testing-specialty.md](details/testing-specialty.md)。
