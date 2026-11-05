@@ -2,10 +2,12 @@
 from copy import deepcopy
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
 import sqlite3
+import tarfile
 
 import pytest
 
@@ -349,8 +351,8 @@ def transaction(updater, runtime, bundle, tmp_path, monkeypatch):
     def docker_json(*args):
         calls.append(("json", *args))
         if args[:2] == ("image", "inspect"):
-            image_id = args[2]
-            return [{"Id": image_id, "Os": "linux", "Architecture": "amd64", "Config": {"Labels": {
+            by_tag = {image["tag"]: image["id"] for image in manifest["images"].values()}
+            return [{"Id": by_tag.get(args[2], args[2]), "Os": "linux", "Architecture": "amd64", "Config": {"Labels": {
                 "org.opencontainers.image.revision": manifest["revision"],
                 "org.opencontainers.image.version": manifest["version"],
                 "io.sperm-annotation.offline-contract": "1", "io.sperm-annotation.mode": manifest["mode"],
@@ -655,3 +657,64 @@ def test_audit_operations_script_is_restored_with_config(updater, tmp_path):
     finally:
         tool.log.close()
         tool.lock.close()
+
+
+def containerd_store(updater, agent, manifest, monkeypatch, *, backend_id=None):
+    """A daemon using the containerd image store: image IDs are manifest digests, so
+    the packaged config digests do not resolve. Real archive parsing, mocked Docker."""
+    packaged = {image["tag"]: image["id"] for image in manifest["images"].values()}
+    local = {tag: "sha256:" + str(i + 7) * 64 for i, tag in enumerate(packaged)}
+    archive = agent.bundle / "images.tar"
+    with tarfile.open(archive, "w") as tar:
+        def add(name, value):
+            data = json.dumps(value).encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        add("manifest.json", [{"Config": "blobs/sha256/" + image.split(":")[1], "RepoTags": [tag], "Layers": []} for tag, image in packaged.items()])
+        add("index.json", {"schemaVersion": 2, "manifests": [
+            {"digest": local[tag], "annotations": {"io.containerd.image.name": "docker.io/library/" + tag}} for tag in packaged]})
+    manifest["files"]["images.tar"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (agent.bundle / "manifest.json").write_text(json.dumps(manifest))
+    if backend_id:
+        local[manifest["images"]["backend"]["tag"]] = backend_id
+    mocked = agent.docker_json
+
+    def docker_json(*args):
+        if args[:2] == ("image", "inspect"):
+            if args[2] in packaged.values():
+                raise updater.UpdateError("No such image: " + args[2])
+            result = mocked(*args)
+            result[0]["Id"] = local.get(args[2], args[2])
+            return result
+        return mocked(*args)
+
+    monkeypatch.setattr(agent, "docker_json", docker_json)
+    return local
+
+
+def test_containerd_image_store_upgrades_with_the_daemons_own_image_ids(updater, transaction, monkeypatch):
+    agent, calls, _, _, _, installed, manifest = transaction
+    local = containerd_store(updater, agent, manifest, monkeypatch)
+    agent.update()
+    state = json.loads(agent.state_path.read_text())
+    for name, image in manifest["images"].items():
+        assert state["images"][name]["id"] == local[image["tag"]]
+        assert state["images"][name]["packageId"] == image["id"]
+    current = json.loads((agent.root / "current-compose.json").read_text())
+    assert current["services"]["backend"]["image"] == local[manifest["images"]["backend"]["tag"]]
+    # Installing the same package again recognises it through the recorded package ID.
+    installed.clear()
+    installed.update(state)
+    calls.clear()
+    agent.update()
+    assert not any(call[:3] == ("run", "docker", "load") for call in calls)
+
+
+def test_tagged_image_outside_the_verified_archive_is_rejected_before_stopping(updater, transaction, monkeypatch):
+    agent, calls, _, _, _, _, manifest = transaction
+    containerd_store(updater, agent, manifest, monkeypatch, backend_id="sha256:" + "0" * 64)
+    with pytest.raises(updater.UpdateError, match="不属于本更新包"):
+        agent.update()
+    assert not any(call[0] == "compose" and call[2] == "stop" for call in calls)
+    assert not agent.pending.exists()

@@ -19,6 +19,7 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import tarfile
 import uuid
 
 CONTRACT = 1
@@ -237,6 +238,41 @@ def identify_version(backend, state, legacy, fingerprint):
     return {'version': 'legacy-' + record['revision'][:12], 'revision': record['revision'], 'contract': CONTRACT}
 
 
+def archive_image_ids(path):
+    """{tag: {image IDs}} declared by a verified images.tar, for either image store.
+
+    Docker names one image by its config digest under overlay2 and by its manifest
+    digest under the containerd store, so the ID depends on the daemon that loads it.
+    """
+    ids = {}
+    try:
+        with tarfile.open(path, 'r:') as archive:
+            def member(name):
+                try:
+                    handle = archive.extractfile(name)
+                except KeyError:
+                    return None
+                return json.load(handle) if handle else None
+            for entry in member('manifest.json') or []:
+                digest = re.search('[0-9a-f]{64}', entry.get('Config', ''))
+                for tag in (entry.get('RepoTags') or []) if digest else []:
+                    ids.setdefault(tag, set()).add('sha256:' + digest.group())
+            for entry in (member('index.json') or {}).get('manifests', []):
+                name = (entry.get('annotations') or {}).get('io.containerd.image.name', '')
+                if name and IMAGE_ID.fullmatch(entry.get('digest', '')):
+                    ids.setdefault(re.sub('^docker[.]io/library/', '', name), set()).add(entry['digest'])
+    except (tarfile.TarError, OSError, ValueError, AttributeError) as error:
+        raise UpdateError('无法读取更新包镜像清单：' + str(error))
+    return ids
+
+
+def same_release_images(installed, images):
+    recorded = installed.get('images') or {}
+    return set(recorded) == set(images) and all(
+        recorded[name].get('packageId', recorded[name].get('id')) == image['id'] and recorded[name].get('tag') == image['tag']
+        for name, image in images.items())
+
+
 def freeze_compose(config, images):
     result = copy.deepcopy(config)
     result['services'] = {key: value for key, value in result['services'].items() if key in ('backend', 'frontend')}
@@ -409,14 +445,23 @@ class Updater:
     def idle(self, backend_id):
         self.run(['docker', 'exec', backend_id, 'python', '-c', BUSY_CODE])
 
-    def validate_images(self, manifest):
+    def resolve_images(self, manifest):
+        """Loaded images under this daemon's own IDs. images.tar is already verified
+        against the manifest; an ID outside that archive is not this release."""
+        resolved, archive = {}, None
         for name, image in manifest['images'].items():
-            obj = self.docker_json('image', 'inspect', image['id'])[0]
-            require(obj['Id'] == image['id'] and obj['Os'] + '/' + obj['Architecture'] == manifest['platform'], '镜像平台或 ID 不匹配：' + name)
+            obj = self.docker_json('image', 'inspect', image['tag'])[0]
+            local = obj['Id']
+            if local != image['id']:
+                archive = archive_image_ids(self.bundle / 'images.tar') if archive is None else archive
+                require(local in archive.get(image['tag'], ()), '镜像 ' + image['tag'] + ' 不属于本更新包：' + local)
+            require(obj['Os'] + '/' + obj['Architecture'] == manifest['platform'], '镜像平台不匹配：' + name)
             labels = obj['Config'].get('Labels', {})
             require(labels.get('org.opencontainers.image.revision') == manifest['revision'] and labels.get('org.opencontainers.image.version') == manifest['version']
                     and labels.get('io.sperm-annotation.offline-contract') == str(CONTRACT)
                     and labels.get('io.sperm-annotation.mode') == manifest['mode'], '镜像发布信息不匹配：' + name)
+            resolved[name] = dict(image) if local == image['id'] else dict(image, id=local, packageId=image['id'])
+        return resolved
 
     def status(self):
         if self.pending.exists():
@@ -546,7 +591,7 @@ class Updater:
         arch = self.docker_json('image', 'inspect', backend['Image'])[0]
         require(arch['Os'] + '/' + arch['Architecture'] == manifest['platform'], '更新包平台与当前服务器镜像不同')
         self.note('当前 ' + installed['version'] + ' → 目标 ' + manifest['version'])
-        if installed.get('images') == manifest['images']:
+        if same_release_images(installed, manifest['images']):
             self.note('此版本已安装，无需重复更新。')
             return
         require(installed['revision'] in manifest['sourceHistory'], '目标源码不包含当前版本历史，禁止误降级或跨分支更新；降级请使用带数据恢复的回滚')
@@ -571,8 +616,8 @@ class Updater:
         write_json(backup / 'transaction.json', {'paths': paths, 'from': installed, 'to': manifest['version']})
         self.note('导入镜像；所有启动操作禁止联网拉取…')
         self.run(['docker', 'load', '-i', str(self.bundle / 'images.tar')], timeout=7200)
-        self.validate_images(manifest)
-        candidate = freeze_compose(config, manifest['images'])
+        images = self.resolve_images(manifest)
+        candidate = freeze_compose(config, images)
         self.save_compose(backup / 'candidate-compose.json', candidate)
         self.compose(backup / 'candidate-compose.json', 'config', '--quiet')
         # Real model/CUDA availability test uses the new image with the preserved
@@ -604,7 +649,8 @@ class Updater:
             phase = 'committing'
             write_json(self.pending, {'backup': self.stamp, 'phase': phase})
             atomic_write(self.deployment / '.env', update_env((self.deployment / '.env').read_text(encoding='utf-8-sig')))
-            state = {k: manifest[k] for k in ('version', 'revision', 'contract', 'mode', 'platform', 'images')}
+            state = {k: manifest[k] for k in ('version', 'revision', 'contract', 'mode', 'platform')}
+            state['images'] = images
             state.update(backup=self.stamp, backendFingerprint=fingerprint, installedAt=dt.datetime.now(dt.timezone.utc).isoformat(), schemaFingerprint=self.check_db(Path(paths['database']) / 'app.db'))
             write_json(self.state_path, state)
             manager = ('#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname -- "${BASH_SOURCE[0]}")"\n'
