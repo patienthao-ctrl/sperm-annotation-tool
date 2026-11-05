@@ -1,11 +1,12 @@
 import { computed, ref } from 'vue'
 import { useAuth } from './auth'
-import { annotationReviewApi as api, type CheckResult, type Failure, type ReviewState, type ReviewStatus } from '../api/annotationReviewApi'
+import { annotationReviewApi as api, type CheckResult, type Failure, type ReviewStage, type ReviewState, type ReviewStatus } from '../api/annotationReviewApi'
 
 // One review state for the selected server video, shared by the review panel, the
 // frame strip, the header status and the export gate.
 const state = ref<ReviewState | null>(null)
 const summary = ref<Record<string, ReviewStatus>>({})
+const stages = ref<Record<string, ReviewStage>>({})
 const busy = ref(false)
 const error = ref('')
 let loadSeq = 0
@@ -33,6 +34,7 @@ function describe(e: unknown) {
 function apply(next: ReviewState) {
   state.value = next
   summary.value = { ...summary.value, [next.mediaId]: next.status }
+  if (next.stage) stages.value = { ...stages.value, [next.mediaId]: next.stage }
 }
 
 async function load(mediaId: string | null | undefined) {
@@ -59,19 +61,21 @@ async function run(mediaId: string, reviewId: string | null, action: () => Promi
   } catch (e) {
     console.warn('[annotation_review.action_failed]', {mediaId,reviewId,error:e})
     if (current()) error.value = describe(e)
+    // The server saw a frame change that this page has not shown yet.
+    if (current() && (e as Failure).code === 'REVIEW_FRAME_CHANGED') { const message = error.value; await load(mediaId); error.value = message }
     return false
   } finally { busy.value = false }
 }
 
 async function loadSummary() {
-  try { summary.value = (await api.summary()).items }
+  try { const next = await api.summary(); summary.value = next.items; stages.value = next.stages }
   catch (e) { console.warn('[annotation_review.summary_failed]', e) }
 }
 
 export function useAnnotationReview() {
   return {
-    state, summary, busy, error, status, targetFrames, checkedFrames, nextUnchecked,
-    load, loadSummary,
+    state, summary, stages, busy, error, status, targetFrames, checkedFrames, nextUnchecked,
+    load, loadSummary, label,
     start: (mediaId: string) => run(mediaId, null, () => api.start(mediaId)),
     check: (mediaId: string, reviewId: string, frame: number, result: CheckResult) => run(mediaId, reviewId, () => api.check(mediaId, reviewId, frame, result)),
     pass: (mediaId: string, reviewId: string) => run(mediaId, reviewId, () => api.pass(mediaId, reviewId)),
@@ -80,4 +84,10 @@ export function useAnnotationReview() {
 
 export const reviewStatusLabel: Record<ReviewStatus, string> = {
   none: '待审查', open: '审查中', passed: '审查通过', stale: '需重新审查',
+}
+const stageLabel: Record<ReviewStage, string> = { unstarted: '未开始', annotating: '标注中', ready: reviewStatusLabel.none }
+/** What the list and headers show: a video nobody has worked on is not waiting for review. */
+function label(mediaId: string | null | undefined, status: ReviewStatus) {
+  const stage = mediaId ? stages.value[mediaId] : undefined
+  return status === 'none' && stage ? stageLabel[stage] : reviewStatusLabel[status]
 }

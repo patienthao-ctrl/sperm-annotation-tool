@@ -20,7 +20,7 @@ import { revealBoxScroll } from '../annotation/geometry'
 import { useAuth } from '../stores/auth'
 import { useWorkspace } from '../stores/workspace'
 import { addLeaveGuard, useRouter } from '../router'
-import { useAnnotationReview, reviewStatusLabel } from '../stores/annotationReview'
+import { useAnnotationReview } from '../stores/annotationReview'
 import type { MergeChoice, MergeEntry } from '../annotation/workspaceWrites'
 import '../annotation/annotation.css'
 import '../annotation/annotation-shell.css'
@@ -645,7 +645,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
       <section ref="importDialog" role="dialog" aria-modal="true" aria-label="视频已存在" @keydown="importDialogKeys" class="app-dialog w-[520px]">
         <h2 class="mb-4 text-lg font-semibold">该视频已存在，是否覆盖重新标注？</h2>
         <p>「{{ duplicateImport.videoName }}」与本次导入的视频内容相同。</p>
-        <p v-if="duplicateImport.canOverwrite" class="my-3">覆盖将舍弃该视频的旧人工标注、AI 追踪、删除规则、校准与撤销记录，从第 1 帧重新标注。此操作不能撤销。已撤回的送审快照留作历史记录。</p>
+        <p v-if="duplicateImport.canOverwrite" class="my-3">覆盖将舍弃该视频的旧人工标注、AI 追踪、删除规则、校准与撤销记录，从第 1 帧重新标注。此操作在页面上不能撤销，需要时可由维护者从服务器回收目录恢复。已撤回的送审快照留作历史记录。</p>
         <p v-else class="my-3" role="alert">{{ duplicateImport.reason||'当前工作区或送审状态已变化，请关闭后重新导入。' }}</p>
         <p v-if="duplicateImport.error" class="my-3 text-[var(--danger)]" role="alert">{{ duplicateImport.error }}</p>
         <div class="mt-5 flex justify-end gap-3"><button class="btn-secondary" :disabled="reimportSaving||duplicateImport.pending" @click="cancelDuplicateImport">取消导入</button><button v-if="duplicateImport.canOverwrite" class="btn-primary" :disabled="reimportSaving" @click="confirmDuplicateImport">{{ reimportSaving?'正在覆盖…':duplicateImport.pending?'重试覆盖':'覆盖并重新标注' }}</button></div>
@@ -659,7 +659,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <!-- The AI card already shows the full bar; the header carries it only when that card is off screen. -->
         <TrackingProgress v-if="!inspectorVisible || reviewing" variant="compact" :view="currentTrackingProgress" :finished="currentTrackingFinished" />
         <button class="icon-button" title="快捷键 (?)" aria-label="快捷键" @click="help=true"><AppIcon name="keyboard" :size="17" /></button>
-        <span v-if="reviewMediaId && review.status.value" class="review-chip" :class="review.status.value" data-testid="header-review-status">{{ reviewStatusLabel[review.status.value] }}</span>
+        <span v-if="reviewMediaId && review.status.value" class="review-chip" :class="review.status.value" data-testid="header-review-status">{{ review.label(reviewMediaId,review.status.value) }}</span>
         <button v-if="!reviewing && reviewMediaId && review.status.value!=='passed'" class="btn-secondary" data-testid="go-review" @click="router.push('/review')">去审查</button>
         <button v-if="reviewing" class="quiet-button" @click="router.push('/annotate')">回到标注</button>
         <AnnotationDatasetExport />
@@ -670,7 +670,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
       <div v-if="!reviewing" class="asset-actions"><button class="btn-primary" :disabled="libraryBusy" @click="openFilePicker('video')"><AppIcon name="upload" :size="15" />导入视频</button><button class="btn-secondary" :disabled="libraryBusy" @click="openFilePicker('image')">图片</button><button class="btn-secondary" :disabled="libraryBusy" title="导入别人用本工具导出的训练数据集 ZIP（导出时需勾选“包含原视频”），导入后在审查页检查和修改" @click="packageInputRef?.click()">标注包</button></div>
       <div class="asset-search"><input v-model="search" class="input" placeholder="查找素材…" aria-label="查找素材" /></div>
       <div class="asset-list"><div v-for="media in visibleMedia" :key="media.id" class="asset-card" :class="{selected:selectedMediaId===media.id}" role="button" :tabindex="libraryBusy?-1:0" :aria-disabled="libraryBusy" @click="!libraryBusy&&(selectedMediaId=media.id,libraryOpen=false)" @keydown.enter="!libraryBusy&&(selectedMediaId=media.id)" @keydown.space.prevent.stop="!libraryBusy&&(selectedMediaId=media.id)">
-        <span class="asset-type">{{ media.type==='video'?'VID':'IMG' }}</span><div><strong :title="media.name">{{ media.name }}</strong><small>{{ media.type==='video'?`${media.frameCount || '—'} 帧 · ${media.fps?.toFixed(1) || 30} fps`:`${media.width || '—'} × ${media.height || '—'}` }}<b v-if="media.serverMediaId && review.summary.value[media.serverMediaId]" class="asset-review" :class="review.summary.value[media.serverMediaId]">{{ reviewStatusLabel[review.summary.value[media.serverMediaId]!] }}</b><b v-if="isTrackingMedia(media.id)" class="asset-review asset-tracking" data-testid="asset-tracking">追踪中</b></small><TrackingProgress v-if="isTrackingMedia(media.id)" variant="mini" :view="trackingProgressViewFor(media.id)" /></div><button class="asset-delete icon-button" :disabled="libraryBusy||workspaceRestoring||isTrackingMedia(media.id)" :title="media.serverMediaId?'删除素材（从服务器删除，不能撤销）':'删除素材（清除本机工作区内容，保留电脑原文件）'" :aria-label="`删除素材 ${media.name}`" @click.stop="deleteMedia(media.id)" @keydown.enter.stop @keydown.space.stop><AppIcon name="trash" :size="14" /></button>
+        <span class="asset-type">{{ media.type==='video'?'VID':'IMG' }}</span><div><strong :title="media.name">{{ media.name }}</strong><small>{{ media.type==='video'?`${media.frameCount || '—'} 帧 · ${media.fps?.toFixed(1) || 30} fps`:`${media.width || '—'} × ${media.height || '—'}` }}<b v-if="media.serverMediaId && review.summary.value[media.serverMediaId]" class="asset-review" :class="review.summary.value[media.serverMediaId]">{{ review.label(media.serverMediaId,review.summary.value[media.serverMediaId]!) }}</b><b v-if="isTrackingMedia(media.id)" class="asset-review asset-tracking" data-testid="asset-tracking">追踪中</b></small><TrackingProgress v-if="isTrackingMedia(media.id)" variant="mini" :view="trackingProgressViewFor(media.id)" /></div><button class="asset-delete icon-button" :disabled="libraryBusy||workspaceRestoring||isTrackingMedia(media.id)" :title="media.serverMediaId?'删除素材（从服务器删除，不能撤销）':'删除素材（清除本机工作区内容，保留电脑原文件）'" :aria-label="`删除素材 ${media.name}`" @click.stop="deleteMedia(media.id)" @keydown.enter.stop @keydown.space.stop><AppIcon name="trash" :size="14" /></button>
       </div><p v-if="!visibleMedia.length" class="sidebar-empty">{{ search?'没有匹配素材':'导入视频或图片开始标注' }}</p></div>
       </div></template>
       <template #canvas>
@@ -763,7 +763,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <button class="btn-primary" :disabled="!mergeReady||collaborationBusy" @click="resolveCollaboration(mergeChoices)">{{ collaborationBusy?'正在保存…':'应用选择并继续' }}</button>
         <div class="collaboration-more"><button class="quiet-button" @click="downloadWorkspaceBackup">导出本地备份</button><button class="quiet-button" @click="discardLocalDraft">全部用服务器版本</button></div>
       </section>
-      <AnnotationReviewPanel v-if="reviewing" ref="reviewPanel" :media-id="reviewMediaId" :current-frame="currentFrame" :frame-count="maxFrameIndex+1" :object-count="currentObjects.length" :frame-ready="reviewFrameReady" :blocked="editingBlocked" :tracking-pending="hasPausedTracking" :flush="flushWorkspace" @seek="seekReviewFrame" />
+      <AnnotationReviewPanel v-if="reviewing" ref="reviewPanel" :media-id="reviewMediaId" :last-editor="lastEditors[currentMediaId]||null" :current-frame="currentFrame" :frame-count="maxFrameIndex+1" :object-count="currentObjects.length" :frame-ready="reviewFrameReady" :blocked="editingBlocked" :tracking-pending="hasPausedTracking" :flush="flushWorkspace" @seek="seekReviewFrame" />
       <section v-show="showPauseFeedback" class="pause-inspector-panel" aria-label="暂停核对">
         <div ref="pauseControlHost" class="pause-control-host" />
         <div v-show="pauseDetailsOpen" ref="inspectorDetailsHost" class="pause-inspector-details" />

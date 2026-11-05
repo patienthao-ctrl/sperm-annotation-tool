@@ -86,7 +86,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 3000
 server {
     listen 80;
     server_name annotation.example.internal;
-    client_max_body_size 2g;
+    client_max_body_size 8g;
 
     root E:/rare-sperm/frontend/dist;
     location / { try_files $uri $uri/ /index.html; }

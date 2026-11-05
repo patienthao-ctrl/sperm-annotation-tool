@@ -161,11 +161,14 @@ async function download() {
   if (!job.value || busy.value) return
   busy.value = true; error.value = ''
   try {
-    const blob = await api.download(job.value.exportId)
-    const url = URL.createObjectURL(blob), link = document.createElement('a')
-    const count = intent.value?.settings.finalVersionIds.length || 1
-    link.href = url; link.download = `${props.mediaName}${count > 1 ? `等${count}个视频` : ''}-训练数据集-${job.value.exportId}.zip`
-    link.click(); setTimeout(() => URL.revokeObjectURL(url), 2000)
+    // The browser saves the file itself, so its size is not limited by page memory or a
+    // timeout, but it cannot report a refusal: ask first and show any problem here.
+    const current = await api.status(job.value.exportId)
+    job.value = current
+    if (current.state !== 'ready' || !current.downloadUrl) return
+    const link = document.createElement('a'), count = intent.value?.settings.finalVersionIds.length || 1
+    link.href = current.downloadUrl; link.download = `${props.mediaName}${count > 1 ? `等${count}个视频` : ''}-训练数据集-${current.exportId}.zip`
+    link.click()
   } catch (e) { fail(e, 'download') }
   finally { busy.value = false }
 }

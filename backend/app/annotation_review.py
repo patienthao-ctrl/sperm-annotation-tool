@@ -57,6 +57,8 @@ def migrate(c):
     columns={r[1] for r in c.execute('PRAGMA table_info(annotation_reviews)')}
     for name in ('evidence_policy','checklist_history_json','empty_frames_json'):
         if name not in columns:c.execute(f'ALTER TABLE annotation_reviews ADD COLUMN {name} TEXT')
+    if 'frame_digest' not in {r[1] for r in c.execute('PRAGMA table_info(annotation_review_checks)')}:
+        c.execute('ALTER TABLE annotation_review_checks ADD COLUMN frame_digest TEXT')
 
 
 # ---------------------------------------------------------------- content
@@ -146,6 +148,11 @@ def frame_key(frame):
     return f"frame-{frame}"
 
 
+def frame_digest(frame):
+    """What a confirmation vouches for: the content of that frame when it was looked at."""
+    return digest(frame)
+
+
 # ---------------------------------------------------------------- state
 
 
@@ -158,13 +165,41 @@ def last_passed(c, media_id):
 
 
 def checks(c, review_id):
-    return {r["item_id"]: dict(result=r["result"], actorId=r["actor_id"], checkedAt=r["checked_at"])
+    return {r["item_id"]: dict(result=r["result"], actorId=r["actor_id"], checkedAt=r["checked_at"], digest=r["frame_digest"])
             for r in c.execute("SELECT * FROM annotation_review_checks WHERE review_id=?", (review_id,))}
 
 
 def frame_checks(c, review_id):
     """{frameIndex: check} for a frame-checklist round."""
     return {int(k[6:]): v for k, v in checks(c, review_id).items() if k.startswith("frame-")}
+
+
+def round_frames(c, row, frames_list):
+    """Frames to check: the round's list plus anything that left the passed content since.
+
+    A re-review lists only the frames changed at its start; a frame a colleague changes
+    while the round is open needs a person just the same.
+    """
+    listed = item_frames(json.loads(row["items_json"]))
+    passed = last_passed(c, row["media_id"])
+    if row["state"] != "open" or passed is None or not passed["passed_frames_json"]:
+        return listed
+    return sorted(set(listed) | set(changed_frames(json.loads(passed["passed_frames_json"]), frames_list)))
+
+
+def current_checks(c, review_id, frames_list):
+    """(confirmations still matching the content, frames changed after being confirmed).
+
+    Confirmations from before frame digests existed have nothing to compare and stay valid.
+    """
+    valid, changed = {}, []
+    for frame, check_ in frame_checks(c, review_id).items():
+        same = check_["digest"] is None or (frame < len(frames_list) and check_["digest"] == frame_digest(frames_list[frame]))
+        if same:
+            valid[frame] = check_
+        else:
+            changed.append(frame)
+    return valid, changed
 
 
 def review_edited(c, media_id):
@@ -199,14 +234,18 @@ def upgrade(c, row, frames_list):
     return latest(c,row['media_id'])
 
 
-def round_data(c, row):
+def round_data(c, row, frames_list):
     if row is None:
         return None
-    if row["evidence_policy"] == CHECKLIST_POLICY:
+    changed = []
+    if row["evidence_policy"] != CHECKLIST_POLICY:  # A passed round of the old checklist: only its record is shown.
+        targets, done = [], {}
+    elif row["state"] == "open":
+        targets = round_frames(c, row, frames_list)
+        done, changed = current_checks(c, row["id"], frames_list)
+    else:  # What was confirmed then is the record, whatever the content is now.
         targets = item_frames(json.loads(row["items_json"]))
         done = frame_checks(c, row["id"])
-    else:  # A passed round of the old checklist: only its record is shown.
-        targets, done = [], {}
     checked = []
     for i in targets:
         result = done.get(i, {}).get("result")
@@ -220,7 +259,9 @@ def round_data(c, row):
                              (row["id"],)).fetchone()
     return dict(reviewId=row["id"], round=row["round"], state=row["state"], startedBy=row["started_by"],
                 startedAt=row["started_at"], frames=spans(targets), checkedFrames=checked,
-                lastActorId=latest_check["actor_id"] if latest_check else row["started_by"],
+                changedFrames=spans(changed),
+                lastActorId=(last_actor := latest_check["actor_id"] if latest_check else row["started_by"]),
+                lastActorName=(c.execute("SELECT username FROM users WHERE id=?", (last_actor,)).fetchone() or [None])[0],
                 lastActivityAt=latest_check["checked_at"] if latest_check else row["started_at"],
                 checked=sum(1 for i in targets if i in done), total=len(targets),
                 passedBy=row["passed_by"], passedAt=row["passed_at"],
@@ -234,7 +275,7 @@ def status(media_id, directory, info):
         if e.code != "SOURCE_UNAVAILABLE":
             raise
         # Nothing annotated yet: not an error for the review page, just not ready.
-        return dict(mediaId=media_id, status="none", currentRevision=None, unknownFrames=info["frameCount"],
+        return dict(mediaId=media_id, status="none", stage=stage(directory), currentRevision=None, unknownFrames=info["frameCount"],
                     review=None, lastPassed=None, notReady=e.message)
     current = revision(frames_list)
     with closing(connect()) as c, c:
@@ -251,11 +292,28 @@ def status(media_id, directory, info):
                 c.execute("UPDATE annotation_reviews SET passed_stamp=? WHERE id=?", (fresh, passed["id"]))
         else:
             state = "stale"
-        return dict(mediaId=media_id, status=state, currentRevision=current,
+        return dict(mediaId=media_id, status=state, stage=stage(directory) if state == "none" else None, currentRevision=current,
                     unknownFrames=sum(f is None for f in frames_list),
-                    review=round_data(c, row),
+                    review=round_data(c, row, frames_list),
                     lastPassed=None if passed is None else dict(reviewId=passed["id"], round=passed["round"],
                                                                 passedBy=passed["passed_by"], passedAt=passed["passed_at"]))
+
+
+def stage(directory):
+    """How far a video without a review round has got; only a hint for the media list."""
+    from .annotation_state import read_state
+    try:
+        if (directory / "tracker_results.json").exists():
+            return "ready"
+        if json.loads((directory / "media.json").read_text(encoding="utf-8")).get("importedFrom"):
+            return "ready"
+    except (OSError, ValueError):
+        pass  # Older media may lack media.json; the workspace below still tells.
+    try:
+        return "annotating" if read_state(directory).get("manualAnnotations") else "unstarted"
+    except (OSError, ValueError):
+        log.warning("annotation_review.stage_unreadable media=%s", directory.name)
+        return "ready"
 
 
 def summary(media_dirs):
@@ -287,7 +345,7 @@ def start(media_id, directory, info, actor):
         c.execute("BEGIN IMMEDIATE")
         row = latest(c, media_id)
         if row is not None and row["state"] == "open":
-            return round_data(c, upgrade(c, row, frames_list))
+            return round_data(c, upgrade(c, row, frames_list), frames_list)
         passed = last_passed(c, media_id)
         previous = json.loads(passed["passed_frames_json"]) if passed else None
         if passed and passed["passed_revision"] == revision(frames_list):
@@ -299,7 +357,7 @@ def start(media_id, directory, info, actor):
             (rid, media_id, (row["round"] + 1) if row else 1, "open", actor, now(), revision(frames_list), packed(frames_list), packed(items), CHECKLIST_POLICY),
         )
         log.info("annotation_review.started media=%s review=%s actor=%s frames=%s rereview=%s", media_id, rid, actor, len(item_frames(items)), previous is not None)
-        return round_data(c, latest(c, media_id))
+        return round_data(c, latest(c, media_id), frames_list)
 
 
 def open_round(c, media_id, review_id):
@@ -319,7 +377,7 @@ def check(media_id, review_id, frame, result, actor, current_frames):
     with closing(connect()) as c, c:
         c.execute("BEGIN IMMEDIATE")
         row = upgrade(c, open_round(c, media_id, review_id), current_frames)
-        if frame not in set(item_frames(json.loads(row["items_json"]))):
+        if frame not in set(round_frames(c, row, current_frames)):
             raise ReviewError("ITEM_NOT_FOUND", f"第 {frame + 1} 帧不在本轮审查范围内", 404)
         unknown = current_frames[frame] is None
         if result == "empty" and not unknown:
@@ -329,10 +387,10 @@ def check(media_id, review_id, frame, result, actor, current_frames):
         if result == "ok" and unknown:
             raise ReviewError("INVALID_RESULT", "这一帧没有任何标注，请补标或确认无目标", 422)
         c.execute(
-            "INSERT INTO annotation_review_checks VALUES (?,?,?,?,?) ON CONFLICT(review_id,item_id) DO UPDATE SET result=excluded.result,actor_id=excluded.actor_id,checked_at=excluded.checked_at",
-            (review_id, frame_key(frame), result, actor, now()),
+            "INSERT INTO annotation_review_checks(review_id,item_id,result,actor_id,checked_at,frame_digest) VALUES (?,?,?,?,?,?) ON CONFLICT(review_id,item_id) DO UPDATE SET result=excluded.result,actor_id=excluded.actor_id,checked_at=excluded.checked_at,frame_digest=excluded.frame_digest",
+            (review_id, frame_key(frame), result, actor, now(), frame_digest(current_frames[frame])),
         )
-        return round_data(c, latest(c, media_id))
+        return round_data(c, latest(c, media_id), current_frames)
 
 
 def diff(old, new):
@@ -370,8 +428,11 @@ def pass_review(media_id, directory, info, review_id, actor):
     with closing(connect()) as c, c:
         c.execute("BEGIN IMMEDIATE")
         row = upgrade(c, open_round(c, media_id, review_id), frames_list)
-        targets = item_frames(json.loads(row["items_json"]))
-        done = frame_checks(c, review_id)
+        targets = round_frames(c, row, frames_list)
+        done, changed = current_checks(c, review_id, frames_list)
+        changed = [i for i in changed if i in targets]
+        if changed:
+            raise ReviewError("REVIEW_FRAME_CHANGED", f"有 {len(changed)} 帧在确认后又被改动（第 {changed[0] + 1} 帧起），请重新确认", 409)
         missing = [i for i in targets if i not in done]
         if missing:
             raise ReviewError("REVIEW_INCOMPLETE", f"还有 {len(missing)} 帧没有检查（第 {missing[0] + 1} 帧起）", 409)
@@ -393,7 +454,7 @@ def pass_review(media_id, directory, info, review_id, actor):
             (actor, now(), revision(frames_list), packed(frames_list), stamp(directory), packed(changes), packed(sorted(empty)), review_id),
         )
         log.info("annotation_review.passed media=%s review=%s actor=%s frames=%s added=%s removed=%s moved=%s", media_id, review_id, actor, len(targets), changes["added"], changes["removed"], changes["moved"])
-        return round_data(c, latest(c, media_id))
+        return round_data(c, latest(c, media_id), frames_list)
 
 
 def require_passed(c, media_id, frames, frame_count):

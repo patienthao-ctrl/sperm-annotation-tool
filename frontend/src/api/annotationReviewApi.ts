@@ -3,19 +3,23 @@ import { tokenStore } from './http'
 
 export type ReviewStatus = 'none' | 'open' | 'passed' | 'stale'
 export type CheckResult = 'ok' | 'empty'
+/** How far a video without a review round has got. */
+export type ReviewStage = 'unstarted' | 'annotating' | 'ready'
 export interface ReviewChanges {
   added: number; removed: number; moved: number; reviewers: number[]
   frames: { frameIndex: number; added: number[]; removed: number[]; moved: number[]; checkedBy: number | null }[]
 }
 export interface ReviewRound {
   reviewId: string; round: number; state: 'open' | 'passed'; startedBy: number; startedAt: string
-  lastActorId: number; lastActivityAt: string
+  lastActorId: number; lastActorName: string | null; lastActivityAt: string
+  /** Frames confirmed earlier whose content has changed since: they count as unchecked. */
+  changedFrames: [number, number][]
   /** Frames to check in this round as inclusive [start, end] spans; checkedFrames adds the result. */
   frames: [number, number][]; checkedFrames: [number, number, CheckResult][]
   checked: number; total: number; passedBy: number | null; passedAt: string | null; changes: ReviewChanges | null
 }
 export interface ReviewState {
-  mediaId: string; status: ReviewStatus; currentRevision: string | null; unknownFrames: number; notReady?: string
+  mediaId: string; status: ReviewStatus; stage?: ReviewStage | null; currentRevision: string | null; unknownFrames: number; notReady?: string
   review: ReviewRound | null
   lastPassed: { reviewId: string; round: number; passedBy: number; passedAt: string } | null
 }
@@ -45,7 +49,7 @@ export const annotationReviewApi = {
   start: (id: string) => request<ReviewState>(media(id) + '/start', 'POST'),
   check: (id: string, reviewId: string, frame: number, result: CheckResult) => request<ReviewState>(`${media(id)}/frames/${frame}`, 'PUT', { reviewId, result }),
   pass: (id: string, reviewId: string) => request<ReviewState>(media(id) + '/pass', 'POST', { reviewId }),
-  summary: () => request<{ items: Record<string, ReviewStatus> }>('/annotation-review/summary'),
+  summary: () => request<{ items: Record<string, ReviewStatus>; stages: Record<string, ReviewStage> }>('/annotation-review/summary'),
   resetAnnotations: (id: string, revision: number, key: string) => request<{ ok: boolean; mediaId: string; revision: number; generationId: string }>(media(id) + '/reset-annotations', 'POST', { expectedRevision: revision, confirmDiscard: true }, key),
   exportPreview: (id: string) => request<CompletionPreview>(`/datasets/annotations/${encodeURIComponent(id)}/preview`),
 }

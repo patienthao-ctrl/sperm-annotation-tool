@@ -386,7 +386,7 @@ try {
   })
   await page.waitForFunction(()=>window.ws && !window.ws.workspaceRestoring.value && !window.ws.exactFrameLoading.value && !window.ws.editingBlocked.value)
   await page.getByTestId('review-concurrent').waitFor()
-  check((await page.getByTestId('review-concurrent').innerText()).includes('用户 #1 也在审查'), 'recent activity by another reviewer shows a non-blocking yellow warning')
+  check((await page.getByTestId('review-concurrent').innerText()).includes(' 也在审查') && !(await page.getByTestId('review-concurrent').innerText()).includes('用户 #'), 'recent activity by another reviewer shows a non-blocking yellow warning')
 
   // Keyboard confirm and next frame: inputs must isolate both.
   await page.keyboard.press('n'); await ready()
@@ -406,6 +406,21 @@ try {
   await page.evaluate(()=>document.activeElement instanceof HTMLElement && document.activeElement.blur())
   await page.evaluate(f=>window.ws.frameInput.value=f,frameBefore); await page.evaluate(async()=>window.ws.seekToInputFrame()); await ready()
   check(await page.getByTestId('review-frame-state').innerText()==='已确认' && await page.getByTestId('review-checked').isVisible(), 'a confirmed frame shows its result and can be confirmed again after edits')
+  // A colleague's edit after a confirmation withdraws it, and the page says which frame.
+  const colleague={Authorization:`Bearer ${confirmation.authorToken}`,'Content-Type':'application/json'}
+  const shared=await (await page.request.get(origin+'/api/track/workspace/ux-video',{headers:colleague})).json()
+  const edited=await page.request.put(origin+'/api/track/workspace/ux-video',{headers:{...colleague,'Idempotency-Key':'colleague-edit-after-confirm'},data:{...shared,expectedRevision:shared.revision,
+    manualAnnotations:[...shared.manualAnnotations,{id:'colleague-box',objectId:900,name:'rare sperm 900',source:'manual',frameIndex:frameBefore,bbox:{x:20,y:20,width:8,height:8}}]}})
+  check(edited.ok(),'a colleague saves a change to a confirmed frame')
+  await page.getByTestId('review-changed').waitFor({timeout:15000})
+  check((await page.getByTestId('review-changed').innerText()).includes(`第 ${frameBefore+1} 帧`),'the review panel names the frame changed after its confirmation')
+  check(await progress()===checkedAfter-1,'a frame changed after confirmation no longer counts as checked')
+  await page.getByTestId('review-changed').click(); await ready()
+  check(await page.getByTestId('review-frame-state').innerText()==='未检查','the warning goes to the changed frame, now unchecked')
+  await page.evaluate(()=>document.activeElement instanceof HTMLElement && document.activeElement.blur())
+  await page.keyboard.press('1')
+  await poll(async()=>await progress()===checkedAfter,'the changed frame can be confirmed again')
+  check(await page.getByTestId('review-changed').count()===0,'the warning clears once someone has looked at the new content')
   await page.setViewportSize({ width: 1180, height: 760 })
   await button('专注').click()
   check(await page.getByTestId('review-current').isVisible() && (await page.locator('[data-workbench-region=canvas]').boundingBox()).width > 800, 'review focus retains core review actions beside a useful image')

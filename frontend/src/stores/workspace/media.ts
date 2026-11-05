@@ -21,7 +21,7 @@ export const deleteMedia = async (mediaId: string) => {
   if (!media || segmentBusy.value || isTrackingMedia(mediaId) || deletingMediaId.value || workspaceRestoring.value || objectDeletionBusy.value || trackingFeedbackBusy.value || pendingDeletion.value || pendingFeedback.value) return
   mediaDeleteError.value = ''
   const message = media.serverMediaId
-    ? `将从共享素材库删除「${media.name}」的原视频、工作区和追踪文件，其他使用者也将无法访问。此操作不能撤销；已有历史审查记录的视频不能删除。是否继续？`
+    ? `将从共享素材库删除「${media.name}」的原视频、工作区和追踪文件，其他使用者也将无法访问。此操作在页面上不能撤销，需要时可由维护者从服务器回收目录恢复；已有历史审查记录的视频不能删除。是否继续？`
     : `将删除「${media.name}」在本机工作区中的素材和标注，不能撤销。电脑原文件和已保存到服务器的标注记录会保留。是否继续？`
   if (!window.confirm(message)) return
   deletingMediaId.value = mediaId

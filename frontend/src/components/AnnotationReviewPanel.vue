@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
-import { useAnnotationReview, reviewStatusLabel } from '../stores/annotationReview'
+import { useAnnotationReview } from '../stores/annotationReview'
 import { useAuth } from '../stores/auth'
 import type { CheckResult } from '../api/annotationReviewApi'
 
 // Every frame of the round is checked by a person: look, fix in place, confirm, next.
 const props = defineProps<{
   mediaId: string | null; currentFrame: number; frameCount: number; objectCount: number; frameReady: boolean
-  blocked: boolean; trackingPending: boolean; flush: () => Promise<unknown>
+  blocked: boolean; trackingPending: boolean; flush: () => Promise<unknown>; lastEditor: string | null
 }>()
 const emit = defineEmits<{ seek: [frame: number] }>()
 const review = useAnnotationReview()
@@ -29,8 +29,10 @@ const concurrentReviewer = computed(() => {
   if (!Number.isFinite(me) || value.lastActorId === me || !value.lastActivityAt) return null
   const age = Date.now() - Date.parse(value.lastActivityAt)
   if (!Number.isFinite(age) || age < 0 || age > 10 * 60 * 1000) return null
-  return { actor: value.lastActorId, minutes: Math.max(1, Math.floor(age / 60000)) }
+  return { actor: value.lastActorName || `用户 #${value.lastActorId}`, minutes: Math.max(1, Math.floor(age / 60000)) }
 })
+const firstChanged = computed(() => round.value?.changedFrames[0]?.[0] ?? null)
+const changedCount = computed(() => (round.value?.changedFrames ?? []).reduce((total, [start, end]) => total + end - start + 1, 0))
 
 const targets = computed(() => new Set(targetFrames.value))
 const inRound = computed(() => targets.value.has(props.currentFrame))
@@ -84,7 +86,7 @@ defineExpose({ confirm, next })
   <section class="shell-card review-panel" aria-label="审查" data-testid="review-panel">
     <div class="shell-card-head">
       <AppIcon name="check" :size="16" /><strong>审查</strong>
-      <span v-if="status" class="review-status" :class="status" data-testid="review-status">{{ reviewStatusLabel[status] }}</span>
+      <span v-if="status" class="review-status" :class="status" data-testid="review-status">{{ review.label(mediaId, status) }}</span>
     </div>
     <p v-if="!mediaId" class="review-note">选择一个视频开始审查。</p>
     <p v-else-if="!state && !error" class="review-note">正在读取…</p>
@@ -105,7 +107,8 @@ defineExpose({ confirm, next })
         <div class="review-progress" aria-live="polite">
           <progress :max="Math.max(1, round.total)" :value="round.checked" /><span data-testid="review-progress">{{ round.checked }} / {{ round.total }} 帧</span>
         </div>
-        <p v-if="concurrentReviewer" class="review-warning" role="status" data-testid="review-concurrent">用户 #{{ concurrentReviewer.actor }} 也在审查这段视频（最近一次操作 {{ concurrentReviewer.minutes }} 分钟前），同时修改可能互相覆盖。</p>
+        <p v-if="concurrentReviewer" class="review-warning" role="status" data-testid="review-concurrent">{{ concurrentReviewer.actor }} 也在审查这段视频（最近一次操作 {{ concurrentReviewer.minutes }} 分钟前），同时修改可能互相覆盖。</p>
+        <button v-if="firstChanged != null" class="review-warning review-changed" data-testid="review-changed" @click="emit('seek', firstChanged)">{{ changedCount > 1 ? `${changedCount} 帧在确认后被改动，从第 ${firstChanged + 1} 帧起` : `第 ${firstChanged + 1} 帧在确认后被改动` }}<template v-if="lastEditor">（最后保存：{{ lastEditor }}）</template>，需要重新确认。点此定位。</button>
 
         <div class="review-current" data-testid="review-current" :data-frame="currentFrame">
           <div class="review-current-head">
@@ -118,7 +121,7 @@ defineExpose({ confirm, next })
             <button class="btn-primary review-wide review-confirm" data-testid="review-confirm" :aria-label="confirmLabel" :title="`${confirmLabel}（快捷键 1）`" :disabled="!canConfirm" @click="confirm">
               <span>{{ confirmLabel }}</span><kbd aria-hidden="true">1</kbd>
             </button>
-            <p v-if="currentResult" class="review-checked" data-testid="review-checked">已确认过；修改后可再次确认。</p>
+            <p v-if="currentResult" class="review-checked" data-testid="review-checked">已确认过；修改后需要再次确认。</p>
           </template>
           <p v-else class="review-question">这一帧没有改动，不需要检查。</p>
           <button v-if="remaining" class="quiet-button review-next" data-testid="review-next" title="下一未检查帧（快捷键 N）" @click="next"><AppIcon name="next" :size="14" />下一未检查帧<kbd aria-hidden="true">N</kbd></button>
@@ -167,4 +170,5 @@ defineExpose({ confirm, next })
 .review-spans small { color: var(--muted); }
 .review-span { padding: 2px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
 .review-span:hover { background: var(--surface-hover); }
+.review-changed { width: 100%; border: 0; text-align: left; cursor: pointer; }
 </style>

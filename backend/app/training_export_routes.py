@@ -2,11 +2,12 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from pydantic import Field, model_validator
 
 from . import training_export as export
+from .auth import current_download_user
 from .review_workflow import ReviewError
 from .api_common import Key, LoggedRoute, Model, User, AnnotationComplete
 
@@ -86,9 +87,10 @@ def status(eid: str, user: User):
 
 
 @router.get("/exports/{eid}/download")
-def download(eid: str, user: User):
+def download(eid: str, user: Annotated[dict, Depends(current_download_user)]):
     path = export.download(eid, user["uid"])
-    return FileResponse(path, media_type="application/zip", filename=f"{eid}.zip")
+    # No Content-Disposition name: it would override the readable name the page's link asks for.
+    return FileResponse(path, media_type="application/zip")
 
 
 @legacy_router.post("/api/export/dataset")
@@ -104,12 +106,15 @@ def retired(user: User):
 def annotation_snapshot(media_id: str, body: AnnotationComplete, user: User, key: Key):
     from .annotation_export import freeze, replay
     from .api_common import completion_context
-    from .review_source_lock import completion_read
+    from .media_reimport import source_sha
+    from .review_source_lock import source_read
     prior=replay(user['uid'],key,media_id,body.model_dump())
     if prior is not None: return prior
-    with completion_read():
+    directory, video, _ = completion_context(media_id)
+    sha = source_sha(directory, video)  # May read the whole video: never under the shared lock.
+    with source_read():  # Waits briefly for a colleague's save instead of failing the export.
         directory, video, info = completion_context(media_id)
-        return freeze(directory, video, media_id, user['uid'], key, body.model_dump(), info)
+        return freeze(directory, video, media_id, user['uid'], key, body.model_dump(), info, sha)
 
 
 @router.get('/annotations/{media_id}/preview')
