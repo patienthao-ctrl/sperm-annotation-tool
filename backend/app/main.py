@@ -1380,11 +1380,10 @@ def delete_media(media_id: str, user: dict[str, Any] = Depends(current_user)) ->
     if current.is_dir() and legacy.is_dir() and current.resolve() != legacy.resolve():
         logger.warning("media.delete_rejected media=%s user=%s reason=duplicate_storage", media_id, user["uid"])
         raise HTTPException(409, "新旧存储中存在同名目录，请管理员先核对迁移，避免删除后旧视频重新出现")
-    import shutil
     source_video = find_video(directory)
     try:
         if source_video is None:
-            shutil.rmtree(directory)
+            trash = media_reimport.move_to_trash(directory, directory.parent, media_id)
         else:
             # Exact-frame previews intentionally cache an OpenCV VideoCapture.
             # Its open handle prevents unlinking the source on Windows, so
@@ -1392,11 +1391,11 @@ def delete_media(media_id: str, user: dict[str, Any] = Depends(current_user)) ->
             # until the directory removal has finished.
             from .video_frames import frames
             with frames.removing(source_video):
-                shutil.rmtree(directory)
+                trash = media_reimport.move_to_trash(directory, directory.parent, media_id)
     except OSError as exc:
         logger.exception("media.delete_failed media=%s user=%s", media_id, user["uid"])
         raise HTTPException(500, "删除素材文件失败，请管理员查看服务日志后重试") from exc
-    logger.info("media.deleted media=%s user=%s", media_id, user["uid"])
+    logger.info("media.deleted media=%s user=%s trash=%s", media_id, user["uid"], trash.name)
     return {"deleted": True, "mediaId": media_id}
 
 

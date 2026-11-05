@@ -5,6 +5,7 @@ journal reconciles filesystem moves with the SQLite receipt after a restart.
 Callers hold the single-process source lock; SQL transactions exclude claims.
 """
 from contextlib import closing
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
@@ -17,6 +18,18 @@ from .db import connect
 from .review_workflow import ReviewError, digest, now, packed
 
 log = logging.getLogger('review.media')
+
+
+def move_to_trash(path, root, label):
+    """Keep what a delete or overwrite removes in <root>/_trash for manual recovery.
+
+    Same filesystem, so this is a rename and costs nothing for large videos. Directories
+    starting with "_" are invisible to the media list and duplicate detection.
+    """
+    target = root / '_trash' / f"{label}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    path.replace(target)
+    return target
 
 
 def file_sha(path):
@@ -110,7 +123,10 @@ def recover(root):
                     old.replace(directory / name)
             if 'workspace_state.json' not in data['files']:
                 (directory / 'workspace_state.json').unlink(missing_ok=True)
-        shutil.rmtree(folder)
+        if committed:
+            move_to_trash(folder, root, f'{media_id}-overwritten')
+        else:
+            shutil.rmtree(folder)
         log.warning('media.reset_recovered media=%s committed=%s', media_id, bool(committed))
 
 
@@ -175,6 +191,6 @@ def reset(directory, uid, key, body, tracking_busy):
                 recover(directory.parent)
             else:
                 try:
-                    shutil.rmtree(folder)
+                    move_to_trash(folder, directory.parent, f'{media_id}-overwritten')
                 except OSError:
                     log.exception('media.reset_cleanup_pending media=%s', media_id)

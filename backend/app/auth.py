@@ -15,16 +15,23 @@ from .db import get_user_by_id
 
 VIDEO_COOKIE = 'annotation-video-session'
 VIDEO_COOKIE_PATH = '/api/track/video/'
+EXPORT_COOKIE = 'annotation-export-session'
+EXPORT_COOKIE_PATH = '/api/datasets/exports/'
 
 
 def set_video_session(response: Response, request: Request, uid: int) -> None:
     response.set_cookie(VIDEO_COOKIE, sign_jwt({'uid': uid, 'purpose': 'source-video'}),
                         max_age=TOKEN_EXPIRES_IN_SEC, httponly=True,
                         secure=request.url.scheme == 'https', samesite='strict', path=VIDEO_COOKIE_PATH)
+    # Same idea for a dataset ZIP: the browser saves it directly, so the link carries no token.
+    response.set_cookie(EXPORT_COOKIE, sign_jwt({'uid': uid, 'purpose': 'dataset-download'}),
+                        max_age=TOKEN_EXPIRES_IN_SEC, httponly=True,
+                        secure=request.url.scheme == 'https', samesite='strict', path=EXPORT_COOKIE_PATH)
 
 
 def clear_video_session(response: Response) -> None:
     response.delete_cookie(VIDEO_COOKIE, path=VIDEO_COOKIE_PATH, httponly=True, samesite='strict')
+    response.delete_cookie(EXPORT_COOKIE, path=EXPORT_COOKIE_PATH, httponly=True, samesite='strict')
 
 
 def hash_password(password: str) -> str:
@@ -99,4 +106,13 @@ def current_video_user(request: Request, authorization: str | None = Header(defa
     payload = verify_jwt(request.cookies.get(VIDEO_COOKIE, ''))
     if not payload or payload.get('purpose') != 'source-video':
         raise HTTPException(401, '未登录或视频播放凭据已过期，请重新登录')
+    return _payload_user(payload)
+
+
+def current_download_user(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if authorization is not None:
+        return current_user(authorization)
+    payload = verify_jwt(request.cookies.get(EXPORT_COOKIE, ''))
+    if not payload or payload.get('purpose') != 'dataset-download':
+        raise HTTPException(401, '未登录或下载凭据已过期，请重新登录')
     return _payload_user(payload)

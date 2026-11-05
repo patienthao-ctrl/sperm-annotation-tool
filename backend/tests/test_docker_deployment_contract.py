@@ -23,7 +23,7 @@ def test_nginx_serves_spa_and_proxies_api_without_exposing_backend() -> None:
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
 
     assert "try_files $uri $uri/ /index.html" in nginx
-    assert "client_max_body_size 2g" in nginx
+    assert "client_max_body_size 8g" in nginx
     assert "set $backend_upstream backend:3000;" in nginx
     assert "resolver 127.0.0.11" in nginx
     assert "proxy_pass http://$backend_upstream;" in nginx

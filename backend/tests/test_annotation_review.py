@@ -137,6 +137,12 @@ def test_pass_rejects_frames_that_are_still_unknown(source):
     review.check(MID, state["reviewId"], 2, "ok", 1, boxed)
     with pytest.raises(ReviewError) as e:
         review.pass_review(MID, source, INFO, state["reviewId"], 1)
+    assert e.value.code == "REVIEW_FRAME_CHANGED"
+    # A confirmation from before digests existed cannot notice that; the unknown frame still blocks.
+    with db.connect() as c:
+        c.execute("UPDATE annotation_review_checks SET frame_digest=NULL")
+    with pytest.raises(ReviewError) as e:
+        review.pass_review(MID, source, INFO, state["reviewId"], 1)
     assert e.value.code == "UNKNOWN_FRAMES"
 
 
@@ -215,7 +221,7 @@ def test_open_round_of_the_old_checklist_is_rebuilt_as_frames_without_its_checks
              dict(id="unknown-2", kind="unknown", startFrame=2, endFrame=2, frame=2)]
     legacy_round("arev_legacy", "open", current, items)
     with db.connect() as c:
-        c.execute("INSERT INTO annotation_review_checks VALUES (?,?,?,?,?)", ("arev_legacy", "doubt-1", "ok", 1, "2026-10-01T00:01:00Z"))
+        c.execute("INSERT INTO annotation_review_checks(review_id,item_id,result,actor_id,checked_at) VALUES (?,?,?,?,?)", ("arev_legacy", "doubt-1", "ok", 1, "2026-10-01T00:01:00Z"))
     state = review.status(MID, source, INFO)
     assert state["status"] == "open"
     assert state["review"]["frames"] == [[0, 2]] and state["review"]["checked"] == 0
@@ -234,7 +240,7 @@ def test_passed_round_of_the_old_checklist_still_gates_export_with_its_empty_fra
                  passed_by=1, passed_at="2026-10-01T00:02:00Z", passed_revision=review.revision(current),
                  passed_frames_json=json.dumps(current), passed_stamp=review.stamp(source))
     with db.connect() as c:
-        c.execute("INSERT INTO annotation_review_checks VALUES (?,?,?,?,?)", ("arev_old_pass", "unknown-1", "empty", 1, "2026-10-01T00:01:00Z"))
+        c.execute("INSERT INTO annotation_review_checks(review_id,item_id,result,actor_id,checked_at) VALUES (?,?,?,?,?)", ("arev_old_pass", "unknown-1", "empty", 1, "2026-10-01T00:01:00Z"))
     state = review.status(MID, source, INFO)
     assert state["status"] == "passed" and state["review"]["frames"] == []
     from app.annotation_completion import source as read
@@ -249,3 +255,79 @@ def test_passed_round_of_the_old_checklist_still_gates_export_with_its_empty_fra
     with db.connect() as c:
         _, frames = read(source, 1, INFO, require_author=False)
         assert review.require_passed(c, MID, frames, 3) == {2}
+
+
+def test_frame_changed_after_confirmation_must_be_confirmed_again(source):
+    state = check_all(source, review.start(MID, source, INFO, 1))
+    assert state["checked"] == state["total"] == 3 and state["changedFrames"] == []
+    edit_manual(source, 77)  # A colleague changes frame 0 after user 1 confirmed it.
+    current = review.status(MID, source, INFO)["review"]
+    assert (current["checked"], current["total"]) == (2, 3)
+    assert current["changedFrames"] == [[0, 0]] and all(0 < start for start, _, _ in current["checkedFrames"])
+    with pytest.raises(ReviewError) as e:
+        review.pass_review(MID, source, INFO, state["reviewId"], 1)
+    assert e.value.code == "REVIEW_FRAME_CHANGED" and "第 1 帧" in e.value.message
+    frames = review.load(source, INFO)
+    state = review.check(MID, state["reviewId"], 0, "ok", 2, frames)  # Someone looks at the new content.
+    assert state["changedFrames"] == [] and state["checked"] == 3
+    passed = review.pass_review(MID, source, INFO, state["reviewId"], 2)
+    assert passed["changes"]["frames"][0]["checkedBy"] == 2 and passed["changes"]["reviewers"] == [1, 2]
+
+
+def test_empty_confirmation_does_not_survive_a_new_annotation(source):
+    state = check_all(source, review.start(MID, source, INFO, 1))
+    workspace = json.loads((source / "workspace_state.json").read_text())
+    workspace["manualAnnotations"].append({"source": "manual", "objectId": 9, "frameIndex": 2, "name": "sperm 9",
+                                           "bbox": {"x": 40, "y": 40, "width": 10, "height": 10}})
+    workspace["revision"] = workspace.get("revision", 0) + 1
+    (source / "workspace_state.json").write_text(json.dumps(workspace))
+    current = review.status(MID, source, INFO)["review"]
+    assert current["changedFrames"] == [[2, 2]] and current["checked"] == 2
+
+
+def test_rereview_also_covers_frames_changed_during_the_round(source):
+    first = check_all(source, review.start(MID, source, INFO, 1))
+    review.pass_review(MID, source, INFO, first["reviewId"], 1)
+    edit_manual(source, 30)
+    state = review.start(MID, source, INFO, 1)
+    assert state["frames"] == [[0, 0]]
+    state = check_all(source, state)
+    workspace = json.loads((source / "workspace_state.json").read_text())
+    workspace["manualAnnotations"].append({"source": "manual", "objectId": 9, "frameIndex": 1, "name": "sperm 9",
+                                           "bbox": {"x": 40, "y": 40, "width": 10, "height": 10}})
+    workspace["revision"] = workspace.get("revision", 0) + 1
+    (source / "workspace_state.json").write_text(json.dumps(workspace))  # Frame 1 was not on the list.
+    current = review.status(MID, source, INFO)["review"]
+    assert current["frames"] == [[0, 1]] and (current["checked"], current["total"]) == (1, 2)
+    with pytest.raises(ReviewError) as e:
+        review.pass_review(MID, source, INFO, state["reviewId"], 1)
+    assert e.value.code == "REVIEW_INCOMPLETE"
+    frames = review.load(source, INFO)
+    state = review.check(MID, state["reviewId"], 1, "ok", 1, frames)
+    assert review.pass_review(MID, source, INFO, state["reviewId"], 1)["state"] == "passed"
+
+
+def test_confirmations_from_before_the_upgrade_stay_valid(source):
+    state = check_all(source, review.start(MID, source, INFO, 1))
+    with db.connect() as c:
+        c.execute("UPDATE annotation_review_checks SET frame_digest=NULL")
+    edit_manual(source, 77)
+    assert review.status(MID, source, INFO)["review"]["checked"] == 3
+    assert review.pass_review(MID, source, INFO, state["reviewId"], 1)["state"] == "passed"
+
+
+def test_round_reports_the_last_actor_name(source):
+    state = check_all(source, review.start(MID, source, INFO, 2), uid=2)
+    assert state["lastActorId"] == 2 and state["lastActorName"] == "B"
+
+
+def test_stage_separates_untouched_annotating_and_ready_videos(tmp_path):
+    (tmp_path / "workspace_state.json").write_text(json.dumps({"manualAnnotations": []}))
+    assert review.stage(tmp_path) == "unstarted"
+    (tmp_path / "workspace_state.json").write_text(json.dumps({"manualAnnotations": [{"objectId": 1}]}))
+    assert review.stage(tmp_path) == "annotating"
+    (tmp_path / "media.json").write_text(json.dumps({"importedFrom": {"exportId": "x"}}))
+    assert review.stage(tmp_path) == "ready"  # An imported package arrives finished.
+    (tmp_path / "media.json").write_text("{}")
+    (tmp_path / "tracker_results.json").write_text("")
+    assert review.stage(tmp_path) == "ready"

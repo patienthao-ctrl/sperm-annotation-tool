@@ -42,9 +42,9 @@ export interface ExportJob {
   manifest: { counts: ExportSummary & { train: number; val: number; test?: number } } | null
 }
 
-async function request<T>(path: string, method = 'GET', body?: unknown, key?: string, blob = false): Promise<T> {
+async function request<T>(path: string, method = 'GET', body?: unknown, key?: string): Promise<T> {
   try {
-    return await withRequestTimeout(blob ? 300000 : 30000, async (signal) => {
+    return await withRequestTimeout(30000, async (signal) => {
       const response = await fetch('/api/datasets' + path, {
         method,
         signal,
@@ -64,7 +64,7 @@ async function request<T>(path: string, method = 'GET', body?: unknown, key?: st
           requestId: data.requestId || response.headers.get('X-Request-ID'),
         }
       }
-      return (blob ? await response.blob() : await response.json()) as T
+      return (await response.json()) as T
     })
   } catch (error) {
     console.error('[dataset.request_failed]', { path, method, error })
@@ -78,5 +78,4 @@ export const trainingExportApi = {
   annotationSnapshots: () => request<{ items: AnnotationSnapshotItem[] }>('/annotations/snapshots'),
   create: (settings: ExportSettings, key: string) => request<ExportJob>('/exports', 'POST', settings, key),
   status: (id: string) => request<ExportJob>(`/exports/${id}`),
-  download: (id: string) => request<Blob>(`/exports/${id}/download`, 'GET', undefined, undefined, true),
 }
