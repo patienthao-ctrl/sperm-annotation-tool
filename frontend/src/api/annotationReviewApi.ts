@@ -5,6 +5,8 @@ export type ReviewStatus = 'none' | 'open' | 'passed' | 'stale'
 export type CheckResult = 'ok' | 'empty'
 /** How far a video without a review round has got. */
 export type ReviewStage = 'unstarted' | 'annotating' | 'ready'
+/** Who the list shows beside a video, and who passed it. */
+export interface ReviewPerson { actorId: number | null; actorName: string | null; passedBy: number | null; passedAt: string | null }
 export interface ReviewChanges {
   added: number; removed: number; moved: number; reviewers: number[]
   frames: { frameIndex: number; added: number[]; removed: number[]; moved: number[]; checkedBy: number | null }[]
@@ -49,7 +51,7 @@ export const annotationReviewApi = {
   start: (id: string) => request<ReviewState>(media(id) + '/start', 'POST'),
   check: (id: string, reviewId: string, frame: number, result: CheckResult) => request<ReviewState>(`${media(id)}/frames/${frame}`, 'PUT', { reviewId, result }),
   pass: (id: string, reviewId: string) => request<ReviewState>(media(id) + '/pass', 'POST', { reviewId }),
-  summary: () => request<{ items: Record<string, ReviewStatus>; stages: Record<string, ReviewStage> }>('/annotation-review/summary'),
+  summary: () => request<{ items: Record<string, ReviewStatus>; stages: Record<string, ReviewStage>; people: Record<string, ReviewPerson> }>('/annotation-review/summary'),
   resetAnnotations: (id: string, revision: number, key: string) => request<{ ok: boolean; mediaId: string; revision: number; generationId: string }>(media(id) + '/reset-annotations', 'POST', { expectedRevision: revision, confirmDiscard: true }, key),
   exportPreview: (id: string) => request<CompletionPreview>(`/datasets/annotations/${encodeURIComponent(id)}/preview`),
 }

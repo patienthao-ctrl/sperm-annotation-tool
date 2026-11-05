@@ -31,7 +31,8 @@ def summary(user: User):
     from .main import iter_media_dirs
     directories = {d.name: d for d in iter_media_dirs()}
     items = review.summary(list(directories.items()))
-    return {"items": items, "stages": {m: review.stage(directories[m]) for m, s in items.items() if s == "none"}}
+    return {"items": items, "stages": {m: review.stage(directories[m]) for m, s in items.items() if s == "none"},
+            "people": review.people(list(directories.items()), items)}
 
 
 @router.get("/media/{media_id}")

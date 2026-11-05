@@ -105,7 +105,7 @@ def resolve(c, vid, directory=None, info=None):
         from .api_common import completion_context
         directory, _, info = completion_context(row['media_id'])
     if annotation.source(directory,row['actor_id'],info,require_author=False)[0] != row['source_revision']:
-        raise ReviewError('SOURCE_REVISION_CONFLICT','标注已变化，请从标注页重新导出')
+        raise ReviewError('SOURCE_REVISION_CONFLICT',f"「{row['media_id']}」的标注已变化，请重新审查后再导出")
     frames=json.loads(row['frames_json'])
     return {'final':dict(id=vid, snapshot_hash=row['snapshot_hash'], frame_count=len(frames),
                         baseline_id=None, review_version_id=None, confirmation_id=None),

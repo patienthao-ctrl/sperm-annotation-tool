@@ -75,6 +75,16 @@ def create(body: Export, user: User, key: Key):
     return export.create(user["uid"], key, settings(body))
 
 
+@router.get("/exports")
+def my_exports(user: User):
+    return {"items": export.my_jobs(user["uid"]), "exported": export.exported_media()}
+
+
+@router.delete("/exports/{eid}")
+def delete_export(eid: str, user: User):
+    return export.delete(eid, user["uid"])
+
+
 @router.get("/annotations/snapshots")
 def annotation_snapshots(user: User):
     from .annotation_export import latest

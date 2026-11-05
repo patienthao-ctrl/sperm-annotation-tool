@@ -331,7 +331,7 @@ def status(eid, actor):
             "downloadUrl": None,
         }
         # A running job is polled every second; run() itself stops when a source changes.
-        if row["state"] not in ("queued", "running"):
+        if row["state"] not in ("queued", "running", "deleted"):
             try:
                 eligible(c, json.loads(row["request_json"])["finalVersionIds"])
             except ReviewError as e:
@@ -353,6 +353,50 @@ def download(eid, actor):
         raise ReviewError("EXPORT_FILE_MISSING", "导出文件已不存在，请重新生成", 404)
     log.info("dataset.download export=%s actor=%s", eid, actor)
     return path
+
+
+def media_of(c, ids):
+    placeholders = ",".join("?" * len(ids))
+    return {r["id"]: r["media_id"] for r in c.execute(f"SELECT id,media_id FROM annotation_export_snapshots WHERE id IN ({placeholders})", ids)} if ids else {}
+
+
+def my_jobs(actor, limit=30):
+    """Recent jobs of one account. Validity is checked on download: re-reading every source here would make listing slow."""
+    with closing(connect()) as c:
+        rows = c.execute("SELECT id,state,completed_frames,total_frames,error_message,request_json,created_at,updated_at FROM training_exports WHERE actor_id=? AND state<>'deleted' ORDER BY created_at DESC,rowid DESC LIMIT ?", (actor, limit)).fetchall()
+        items = []
+        for row in rows:
+            ids = json.loads(row["request_json"])["finalVersionIds"]
+            media = media_of(c, ids)
+            items.append(dict(exportId=row["id"], state=row["state"], completedFrames=row["completed_frames"], totalFrames=row["total_frames"],
+                              errorMessage=row["error_message"], createdAt=row["created_at"], updatedAt=row["updated_at"],
+                              videoCount=len(ids), mediaIds=[media[i] for i in ids if i in media]))
+    return items
+
+
+def exported_media():
+    """{mediaId: time of its latest finished export, by any account}, deleted ZIPs included."""
+    out = {}
+    with closing(connect()) as c:
+        for row in c.execute("SELECT request_json,updated_at,created_at FROM training_exports WHERE state IN ('ready','deleted') ORDER BY created_at"):
+            for media_id in media_of(c, json.loads(row["request_json"])["finalVersionIds"]).values():
+                out[media_id] = row["created_at"]
+    return out
+
+
+def delete(eid, actor):
+    """Remove a finished job's ZIP; the row stays because audit and export history refer to it."""
+    with closing(connect()) as c, c:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT state FROM training_exports WHERE id=? AND actor_id=?", (eid, actor)).fetchone()
+        if not row or row["state"] == "deleted":
+            raise ReviewError("EXPORT_NOT_FOUND", "导出任务不存在", 404)
+        if row["state"] in ("queued", "running"):
+            raise ReviewError("EXPORT_RUNNING", "任务还在生成，完成后才能删除", 409)
+        c.execute("UPDATE training_exports SET state='deleted',updated_at=? WHERE id=?", (now(), eid))
+    (DATASET_EXPORT_DIR / (eid + ".zip")).unlink(missing_ok=True)
+    log.info("dataset.deleted export=%s actor=%s", eid, actor)
+    return {"deleted": True, "exportId": eid}
 
 
 def mark_failed(eid, code, message):

@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS annotations (
   raw_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS media_folder (
+  media_id TEXT PRIMARY KEY,
+  path TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_ann_user ON annotations(user_id);
 CREATE INDEX IF NOT EXISTS idx_ann_media ON annotations(media_id);
 """

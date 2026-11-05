@@ -27,6 +27,8 @@ Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前�
 | 人工标注 UI / 状态 | `pages/AnnotatePage.vue`、`stores/workspace/editing.ts`、`annotation/annotation.css` / `annotation-shell.css`；缩放小地图 `components/AnnotationMinimap.vue` |
 | 框绘制/坐标/缓存 | `components/AnnotationOverlay.vue`、`annotation/geometry.ts`、`annotation/frameCache.ts` |
 | 审查 | `pages/AnnotatePage.vue`（`mode="review"`）、`components/AnnotationReviewPanel.vue`（逐帧确认）、`stores/annotationReview.ts`、`api/annotationReviewApi.ts`；后端 `annotation_review.py`（帧清单、按帧确认、通过与修改记录、导出门槛）与 `annotation_review_routes.py`；共享请求与日志 `api_common.py` |
+| 素材文件夹与批量导入 | `components/MediaLibrary.vue`（抽屉、树、筛选、确认窗）、`components/FolderOrganizer.vue`、`stores/importQueue.ts`；后端 `backend/app/media_library.py` |
+| 批量选择导出 | `components/AnnotationDatasetExport.vue`（选视频、固定快照、任务列表）→ `components/TrainingDatasetExport.vue`（设置） |
 | 重复视频与覆盖重新标注 | `stores/workspace/media.ts`、`backend/app/media_reimport.py`、`main.py`；文件恢复日志与轮次保护见 STORAGE_LAYOUT |
 | 导入标注包 | `backend/app/package_import.py`（训练 ZIP → 新素材 + 人工工作区）、`main.py` 的 `/api/track/import-package`；前端 `stores/workspace/media.ts` 的 `importPackage` 与素材库“标注包”按钮 |
 | 追踪证据 | `backend/app/review_evidence.py`（身份风险/对象缺失）/ `endpoint_tracking.py` 写入Tracking行，供追踪自身使用，审查不读取；旧 `concentrated_review` 仅保留历史数据层 |

@@ -331,3 +331,13 @@ def test_stage_separates_untouched_annotating_and_ready_videos(tmp_path):
     (tmp_path / "media.json").write_text("{}")
     (tmp_path / "tracker_results.json").write_text("")
     assert review.stage(tmp_path) == "ready"
+
+
+def test_people_shows_who_passed_and_who_is_reviewing(source):
+    dirs = [(MID, source)]
+    assert review.people(dirs, {MID: "none"})[MID]["actorId"] == 1
+    state = check_all(source, review.start(MID, source, INFO, 2), uid=2)
+    assert review.people(dirs, {MID: "open"})[MID]["actorName"] == "B"
+    review.pass_review(MID, source, INFO, state["reviewId"], 2)
+    who = review.people(dirs, {MID: "passed"})[MID]
+    assert who["passedBy"] == 2 and who["actorName"] == "B" and who["passedAt"]

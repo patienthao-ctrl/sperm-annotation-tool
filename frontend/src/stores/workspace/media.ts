@@ -5,6 +5,7 @@ import type { MediaAsset } from '../../types/annotation'
 import { trackApi, type TrackUploadResponse } from '../../api/trackApi'
 import { useAuth } from '../auth'
 import { annotationReviewApi } from '../../api/annotationReviewApi'
+import { useAnnotationReview } from '../annotationReview'
 import { annotationsByMedia, api, closedMediaFrontendIds, currentMediaId, deletedFrameObjects, deletedObjectIds, deletedTrackingIds, deletingMediaId, duplicateImport, fileInputRef, importError, isTrackingMedia, isVideoFile, mediaAssets, mediaDeleteError, mediaImportBusy, normalMotionSamples, objectDeletionBusy, packageImportReport, packageInputRef, pendingDeletion, pendingFeedback, pendingRestart, persistClosedMediaFrontendIds, saveQueues, saveTickets, segmentBusy, selectedMedia, selectedMediaId, selectedObjectId, showToast, statusMessage, submissionBusy, trackingErrors, trackingFeedbackBusy, trackingFeedbackEvents, trackingFramesByMedia, trackingJobs, trackingRestartBusy, videoDeletionHistory, videoInputRef, workspaceRestoring, workspaceViews, workspaceWrites } from './state'
 import { histories } from './history'
 import { cancelAnnotationGesture } from './editing'
@@ -189,7 +190,7 @@ export const handleFiles = async (files: FileList | null, type: 'image' | 'video
  * 关键修复：通过 serverMediaId 匹配已持久化（localStorage）的素材，
  * 复用原 id（如 local-xxx），这样 annotationsByMedia 的 key 才能对上。
  */
-export const loadServerMedia = async () => {
+export const loadServerMedia = async ({ keepView = false }: { keepView?: boolean } = {}) => {
   try {
     const cachedIds = new Set(mediaAssets.value.filter(item => item.serverMediaId).map(item => item.id))
     const res = await trackApi.listMedia()
@@ -210,6 +211,8 @@ export const loadServerMedia = async () => {
         // 已有记录：刷新后 blob: URL 必然失效，用后端新地址覆盖 url；保留原 id
         if (item.videoUrl) existing.url = item.videoUrl
         existing.serverVideoName = item.sourceVideoName || existing.serverVideoName
+        existing.folderPath = item.folderPath ?? ''
+        if (item.sizeBytes) existing.sizeBytes = item.sizeBytes
         if (item.fps) existing.fps = item.fps
         if (item.width) existing.width = item.width
         if (item.height) existing.height = item.height
@@ -224,6 +227,8 @@ export const loadServerMedia = async () => {
         serverMediaId: item.mediaId,
         serverVideoName: item.sourceVideoName,
         name: item.videoName,
+        folderPath: item.folderPath ?? '',
+        sizeBytes: item.sizeBytes,
         type: 'video',
         url: item.videoUrl,
         fps: item.fps || undefined,
@@ -246,9 +251,15 @@ export const loadServerMedia = async () => {
       selectedMediaId.value = mediaAssets.value[0]?.id ?? ''
     }
     const active = mediaAssets.value.find((item) => item.id === selectedMediaId.value)
-    if (active?.serverMediaId) await resetAnnotationViewForMedia(active.id)
+    if (active?.serverMediaId && !keepView) await resetAnnotationViewForMedia(active.id)
   } catch (error) {
     console.error('[annotation.media_list_failed]', error)
     statusMessage.value = '素材列表同步失败，请刷新重试；本机列表已保留'
   }
+}
+
+/** Pick up colleagues' imports, moves and review results without disturbing the open video. */
+export const refreshLibrary = async () => {
+  await loadServerMedia({ keepView: true })
+  await useAnnotationReview().loadSummary()
 }

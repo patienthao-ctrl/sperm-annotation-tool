@@ -257,3 +257,35 @@ def test_dataset_download_cookie_is_limited_to_downloads(source, monkeypatch, tm
     client.cookies.clear()
     client.cookies.set(auth.EXPORT_COOKIE, auth.sign_jwt({'uid': 2, 'purpose': 'dataset-download'}))
     assert client.get(url).status_code == 404  # Another account's cookie opens nothing.
+
+
+def test_job_list_exported_record_and_delete(source, monkeypatch, tmp_path):
+    eid = exportable(source, monkeypatch, tmp_path)
+    assert export.my_jobs(1)[0]['state'] == 'queued' and export.exported_media() == {}
+    with pytest.raises(Exception) as e:
+        export.delete(eid, 1)
+    assert e.value.code == 'EXPORT_RUNNING'
+    export.run(eid)
+    job = export.my_jobs(1)[0]
+    assert job['exportId'] == eid and job['state'] == 'ready' and job['mediaIds'] == ['complete-media'] and job['videoCount'] == 1
+    assert export.my_jobs(2) == []
+    assert list(export.exported_media()) == ['complete-media']
+    with pytest.raises(Exception) as e:
+        export.delete(eid, 2)
+    assert e.value.code == 'EXPORT_NOT_FOUND'
+    zip_file = export.DATASET_EXPORT_DIR / (eid + '.zip')
+    assert zip_file.exists()
+    assert export.delete(eid, 1)['deleted'] and not zip_file.exists()
+    assert export.my_jobs(1) == [] and list(export.exported_media()) == ['complete-media']  # It was still exported.
+    with pytest.raises(Exception):
+        export.download(eid, 1)
+
+
+def test_invalidated_download_names_the_changed_video(source, monkeypatch, tmp_path):
+    eid = exportable(source, monkeypatch, tmp_path)
+    export.run(eid)
+    state = json.loads((source / 'workspace_state.json').read_text())
+    state['manualAnnotations'][0]['bbox']['x'] = 12
+    (source / 'workspace_state.json').write_text(json.dumps(state))
+    result = export.status(eid, 1)
+    assert result['state'] == 'invalidated' and 'complete-media' in result['errorMessage']

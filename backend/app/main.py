@@ -13,7 +13,7 @@ import tempfile
 import time
 import hashlib
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.responses import Response, JSONResponse
@@ -45,6 +45,7 @@ from .tracker import (
     _load_latest_manual_baselines,
 )
 from .review_routes import register_review_routers
+from .review_workflow import ReviewError
 from .review_source_lock import source_write
 from . import annotation_state, media_reimport
 
@@ -458,7 +459,12 @@ def _save_upload_stream(stream, target: Path, limit: int = MAX_VIDEO_BYTES) -> i
 
 
 @app.post("/api/track/upload", status_code=201)
-async def upload_video(file: UploadFile = File(...), user: dict[str, Any] = Depends(current_user)):
+async def upload_video(file: UploadFile = File(...), folderPath: str = Form(''), user: dict[str, Any] = Depends(current_user)):
+    from . import media_library
+    try:
+        folder = media_library.normalize(folderPath)
+    except ReviewError as exc:
+        raise HTTPException(422, exc.message) from exc
     filename = Path(file.filename or "video.bin").name
     if not Path(filename).suffix:
         raise HTTPException(400, "视频文件必须包含扩展名")
@@ -472,25 +478,38 @@ async def upload_video(file: UploadFile = File(...), user: dict[str, Any] = Depe
             try:
                 video_meta = await run_in_threadpool(_probe_video,target)
             except Exception as exc:
-                raise HTTPException(400, f"无法解码该视频格式：{exc}") from exc
+                # The decoder's message contains the server's temporary path.
+                logging.getLogger('review.media').warning('media.upload_undecodable actor=%s file=%s error=%s', user["uid"], filename, exc)
+                raise HTTPException(400, "无法解码这个视频，文件可能已损坏或格式不受支持") from exc
             if any(float(video_meta.get(key) or 0) <= 0 for key in ("frameCount", "width", "height", "fps")):
                 raise HTTPException(400, "上传文件不可读取，或无法获得有效的帧数、尺寸、FPS 元数据")
-            return await run_in_threadpool(publish_upload,target, filename, video_meta, user["uid"])
+            result = await run_in_threadpool(publish_upload,target, filename, video_meta, user["uid"])
+            if isinstance(result, dict):  # A duplicate stays in the folder it already has.
+                await run_in_threadpool(media_library.place, result["mediaId"], folder)
+            return result
     finally:
         await file.close()
 
 
 @app.post("/api/track/import-package", status_code=201)
-async def import_annotation_package(file: UploadFile = File(...), user: dict[str, Any] = Depends(current_user)):
+async def import_annotation_package(file: UploadFile = File(...), folderPath: str = Form(''), user: dict[str, Any] = Depends(current_user)):
     """Import a training ZIP exported with original videos; each video arrives unreviewed."""
+    from . import media_library
     from .package_import import import_package
+    try:
+        folder = media_library.normalize(folderPath)
+    except ReviewError as exc:
+        raise HTTPException(422, exc.message) from exc
     TRACK_DATA_DIR.mkdir(parents=True, exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(prefix="_import-", dir=TRACK_DATA_DIR) as tmp:
             package = Path(tmp) / "package.zip"
             if await run_in_threadpool(_save_upload_stream, file.file, package, MAX_PACKAGE_BYTES) <= 0:
                 raise HTTPException(400, "文件为空")
-            return await run_in_threadpool(import_package, package, int(user["uid"]), Path(tmp))
+            report = await run_in_threadpool(import_package, package, int(user["uid"]), Path(tmp))
+            for item in report["imported"]:
+                await run_in_threadpool(media_library.place, item["mediaId"], folder)
+            return report
     finally:
         await file.close()
 
@@ -1314,8 +1333,10 @@ def tracking_result_file(media_id: str, required: bool = Query(default=False), u
 @source_write
 def list_media(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     """列出后端已有的所有视频素材（刷新页面后可恢复素材列表）。"""
+    from . import media_library
     items: list[dict[str, Any]] = []
     name_count: dict[str, int] = {}
+    folders = media_library.paths()
     for entry in iter_media_dirs():
         video_file = find_video(entry)
         if not video_file:
@@ -1341,6 +1362,8 @@ def list_media(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
             "directoryName": entry.name,
             "sourceVideoName": base_name,
             "videoName": display_name,
+            "folderPath": folders.get(entry.name, ""),
+            "sizeBytes": video_file.stat().st_size,
             "videoUrl": f"/api/track/video/{entry.name}",
             "videoMimeType": meta.get("videoMimeType") or _video_media_type(video_file),
             "hasTrackingResult": has_result,

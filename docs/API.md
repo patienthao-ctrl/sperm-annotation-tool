@@ -16,7 +16,9 @@
 | `POST /api/annotation-review/media/{id}/start` | 已有进行中的轮次则原样返回；已通过且内容未变返回 409 `REVIEW_ALREADY_PASSED`；Tracking 运行中 409 `SOURCE_BUSY` |
 | `PUT /api/annotation-review/media/{id}/frames/{frameIndex}` | `{reviewId, result:'ok'|'empty'}`，确认一帧，可重复确认（以最后一次为准）。服务端按当前工作区校验：有框的帧只能 `ok`；未知帧（无任何标注行）只能 `empty`，提交 `ok` 返回 422；已知空帧提交 `empty` 记为 `ok`。帧不在本轮或超出视频 404 `ITEM_NOT_FOUND`，非当前轮 409 `REVIEW_NOT_CURRENT`，已结束 409 `REVIEW_CLOSED`。旧 `/items/{itemId}` 已删除 |
 | `POST /api/annotation-review/media/{id}/pass` | `{reviewId}`；有帧在确认后被改动 409 `REVIEW_FRAME_CHANGED`，有未确认帧 409 `REVIEW_INCOMPLETE`，仍有未确认无目标的未知帧 409 `UNKNOWN_FRAMES`；成功固定 `passed_revision`、确认无目标的帧和修改记录 |
-| `GET /api/annotation-review/summary` | `{items:{mediaId: status}, stages:{mediaId: unstarted/annotating/ready}}`，列表用，不读追踪文件；`stages` 只含 `status=none` 的视频 |
+| `PUT /api/library/folder` | `{mediaIds,path}` 移动视频，`path` 为空表示未分类；路径最多 8 层、每层 100 字，无效 422，素材不存在 404 |
+| `POST /api/library/folder/rename` | `{oldPath,newPath}` 重命名文件夹及其下全部，同名即合并；不能移到自身之内 |
+| `GET /api/annotation-review/summary` | `{items:{mediaId: status}, stages:{mediaId: unstarted/annotating/ready}, people:{mediaId:{actorId,actorName,passedBy,passedAt}}}`，列表用，不读追踪文件；`stages` 只含 `status=none` 的视频 |
 | `POST /api/annotation-review/media/{id}/reset-annotations` | 原 `/api/review/media/{id}/reset-annotations` 迁移至此，正文与幂等语义不变；不再因历史送审拒绝 |
 | `GET /api/datasets/annotations/{id}/preview` | 导出弹窗预览（取代 `completion-preview`）：`sourceRevision`、有框/空/未知帧，审查确认无目标的帧计为空 |
 | `POST /api/datasets/annotations/{id}/snapshot` | 同前；另要求最近一次审查通过且内容未变，否则 409 `REVIEW_REQUIRED` |
@@ -66,7 +68,7 @@
 | --- | --- |
 | `POST /api/auth/register`、`/api/auth/login`；`GET /api/auth/me` | 真实账号与 JWT |
 | `POST /api/track/upload`；`GET /api/track/media` | 原视频上传、可用媒体 |
-| `POST /api/track/import-package` | multipart `file`：含原视频的训练数据集 ZIP。201 `{imported:[{mediaId,videoName,…,objects,emptyFrames}],skipped:[{videoName,reason,mediaId?}]}`；非 ZIP 或非本工具 manifest v2 返回 422，超过 `MAX_PACKAGE_BYTES`（默认 8 GiB）返回 413。规则见 WORKFLOW“导入标注包” |
+| `POST /api/track/import-package` | multipart `file`，可选 `folderPath`（`/api/track/upload` 同样可选，`/api/track/media` 返回 `folderPath`、`sizeBytes`）：含原视频的训练数据集 ZIP。201 `{imported:[{mediaId,videoName,…,objects,emptyFrames}],skipped:[{videoName,reason,mediaId?}]}`；非 ZIP 或非本工具 manifest v2 返回 422，超过 `MAX_PACKAGE_BYTES`（默认 8 GiB）返回 413。规则见 WORKFLOW“导入标注包” |
 | `DELETE /api/track/media/{mediaId}` | 把视频目录移入回收目录 `_trash/`；需要登录。成功返回 `deleted: true, mediaId`；AI 运行、基准引用、新旧存储同名目录返回 409；文件系统失败返回 500 并记录日志，不能伪报成功 |
 | `GET /api/track/video/{mediaId}`、`/api/track/frame/{mediaId}/{fi}` | 原视频、真实指定帧 |
 | `GET / PUT /api/track/workspace/{mediaId}` | 可恢复工作区 |
@@ -137,6 +139,8 @@
 | `POST /api/datasets/exports` | `finalVersionIds`、`format:'yolo'|'coco'|'both'`、`splitRatio`（训练比例，默认 0.8）、`splitMode:'frame'|'video'`（省略时为旧的按帧划分）、`testRatio`（仅 video，默认 0，`splitRatio+testRatio<1`）、`videoSplits{finalVersionId:'train'|'val'|'test'}`（仅 video，须为所选视频）、`includeSourceVideos`（默认 false） |
 | `GET /api/datasets/annotations/snapshots` | 本人每个视频最新的标注导出快照：`finalVersionId,mediaId,name,frameCount,createdAt,valid,reason`；标注变化或视频不可用时 `valid:false` |
 | `GET /api/datasets/exports/{id}` | 本人任务阶段、帧数、错误和下载资格 |
+| `GET /api/datasets/exports` | `{items:[{exportId,state,completedFrames,totalFrames,errorMessage,createdAt,updatedAt,videoCount,mediaIds}],exported:{mediaId:最近完成导出的创建时间}}`；`items` 只含本账号最近 30 个，不重读来源，资格在下载前校验 |
+| `DELETE /api/datasets/exports/{id}` | 删除本账号已结束任务的 ZIP，任务记录标为 `deleted` 并保留；生成中 409 `EXPORT_RUNNING` |
 | `GET /api/datasets/exports/{id}/download` | 校验当前资格后返回真实 ZIP，支持 Range。除 Bearer 令牌外接受登录时设置的 `annotation-export-session` Cookie（HttpOnly、SameSite=Strict，路径限于 `/api/datasets/exports/`，只能用于下载），所以页面用普通链接下载，令牌不进网址 |
 | `POST /api/export/dataset` | 旧入口拒绝，410 `FINAL_CONFIRMATION_REQUIRED` |
 

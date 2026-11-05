@@ -2,6 +2,9 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { canvasZoomKey } from '../workbench/viewTransform'
 import AnnotationDatasetExport from '../components/AnnotationDatasetExport.vue'
+import MediaLibrary from '../components/MediaLibrary.vue'
+import { importRunning, prepareImport } from '../stores/importQueue'
+import { reviewFilterKey } from '../stores/annotationReview'
 import AnnotationReviewPanel from '../components/AnnotationReviewPanel.vue'
 import AppNotice from '../components/AppNotice.vue'
 import { useNoticeCollapse } from '../annotation/useNoticeCollapse'
@@ -26,7 +29,7 @@ import '../annotation/annotation.css'
 import '../annotation/annotation-shell.css'
 const {
   collaborationConflict, collaborationBusy, resolveCollaboration, syncWorkspace, downloadWorkspaceBackup, currentRemoteTracking, lastEditors, discardLocalDraft, storageWarning, headBoxBusy, headBoxError, cancelHeadBox, mediaAssets, selectedMediaId, submissionBusy, mediaImportBusy, importError, duplicateImport, reimportSaving, cancelDuplicateImport, confirmDuplicateImport, restoreImportIntent, activeTool, selectedObjectId, currentFrame, currentTime, frameInput, isPlaying,
-  isAiBusy, statusMessage, toast, dismissToast, imageRef, videoRef, exactFrameImageRef, exactFrameUrl, exactFrameLoading, videoPlaybackFallback, annotationHitRef, fileInputRef, videoInputRef, packageInputRef, packageImportReport, importPackage,
+  refreshLibrary, isAiBusy, statusMessage, toast, dismissToast, imageRef, videoRef, exactFrameImageRef, exactFrameUrl, exactFrameLoading, videoPlaybackFallback, annotationHitRef, fileInputRef, videoInputRef, packageInputRef, packageImportReport, importPackage,
   annotationsByMedia, selectedMedia, isVideo, maxFrameIndex, currentMediaId, currentObjects, selectedObject, displayObjects, editingBlocked, workspaceRestoring,
   anomalyFrames, pausedAnomalies, trackingPausedFrame, formatTime, selectTool, onStageClick, tempBbox, onBboxDown, onBboxMove, onBboxUp,
   selectObject, removeObject, undo, redo, canUndo, canRedo, copyPreviousFrame, brightness, contrast, mediaFilterStyle, resetMediaFilter, annotatedFrameCount,
@@ -101,6 +104,19 @@ watch(saveState, value => {
   if (reviewRefresh) clearTimeout(reviewRefresh)
   reviewRefresh = setTimeout(() => { if(!review.busy.value)void review.load(reviewMediaId.value) }, 1500)
 })
+// One file keeps the single-file flow (it may offer to overwrite); several go to the batch queue, which never does.
+function pickVideos(event:Event){const input=event.target as HTMLInputElement;if((input.files?.length||0)>1){prepareImport(input.files);input.value=''}else void handleFiles(input.files,'video')}
+function pickPackages(event:Event){const input=event.target as HTMLInputElement;if((input.files?.length||0)>1){prepareImport(input.files);input.value=''}else void importPackage(input.files)}
+// The list shows colleagues' work without a timer: on opening the drawer and on returning to the page.
+const refreshIdle=()=>{if(!libraryBusy.value)void refreshLibrary()}
+onMounted(()=>window.addEventListener('focus',refreshIdle))
+onUnmounted(()=>window.removeEventListener('focus',refreshIdle))
+const nextReviewVideo=computed(()=>{
+  const current=selectedMedia.value
+  if(!current)return null
+  const waiting=(media:typeof current)=>media.id!==current.id&&!!media.serverMediaId&&['ready','stale'].includes(reviewFilterKey(media.serverMediaId)||'')
+  return mediaAssets.value.find(media=>waiting(media)&&(media.folderPath||'')===(current.folderPath||''))??mediaAssets.value.find(waiting)??null
+})
 const importDialog=ref<HTMLElement|null>(null)
 watch(duplicateImport,async value=>{if(value){await nextTick();importDialog.value?.querySelector<HTMLElement>('button:not(:disabled)')?.focus()}})
 function importDialogKeys(e:KeyboardEvent){if(e.key==='Escape'){e.preventDefault();cancelDuplicateImport()}if(e.key==='Tab'){const nodes=Array.from(importDialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled)')||[]);if(nodes.length){e.preventDefault();const i=nodes.indexOf(document.activeElement as HTMLElement);nodes[(i+(e.shiftKey?-1:1)+nodes.length)%nodes.length]?.focus()}}}
@@ -109,10 +125,11 @@ const help = ref(false), helpDialog = ref<HTMLElement | null>(null), focused = r
 // Switching or importing videos stays possible while the current video tracks.
 const libraryBusy = computed(() => submissionBusy.value || mediaImportBusy.value || !!duplicateImport.value || !!deletingMediaId.value || objectDeletionBusy.value || trackingFeedbackBusy.value || trackingRestartBusy.value || !!trackingRestartPendingAction.value || !!objectDeletionPendingAction.value || trackingFeedbackPending.value)
 const mediaBusy = computed(() => submissionBusy.value || mediaImportBusy.value || !!duplicateImport.value || isAiBusy.value || !!deletingMediaId.value || objectDeletionBusy.value || trackingFeedbackBusy.value || trackingRestartBusy.value || !!trackingRestartPendingAction.value || !!objectDeletionPendingAction.value || trackingFeedbackPending.value)
-const search = ref(''), jumpFrame = ref(1)
+const jumpFrame = ref(1)
 // The shell keeps the media drawer closed while a video is open (it opens itself
 // when nothing is selected) and the inspector forced open while tracking is paused.
 const libraryOpen = ref(false)
+watch(libraryOpen,value=>{if(value)refreshIdle()})
 const frameStats = computed(() => {
   const stats = new Map<number, { manual: number; ai: number }>()
   for (const object of annotationsByMedia.value[currentMediaId.value] ?? []) {
@@ -155,7 +172,6 @@ const stageStyle = computed(() => ({
 const pauseStageMargins = ref<{marginLeft:number;marginRight:number;marginTop:number;marginBottom:number} | null>(null)
 // Another video tracking in the background: the closed media drawer shows a pulsing dot.
 const backgroundTracking = computed(() => mediaAssets.value.some(media => media.id !== selectedMediaId.value && isTrackingMedia(media.id)))
-const visibleMedia = computed(() => mediaAssets.value.filter(m => m.name.toLowerCase().includes(search.value.toLowerCase())))
 const filter = computed(() => `${mediaFilterStyle.value} ${inverted.value ? 'invert(1)' : ''}`)
 const saveLabel = computed(() => workspaceRecoveryRequired.value ? '需重新读取' : selectedMedia.value?.serverMediaId ? ({ idle:'自动保存', saving:'保存中…', saved:'已保存', error:'保存失败' }[saveState.value]) : '本机自动保存')
 // Shortcut help and the full guide share the same maintained Markdown source.
@@ -590,7 +606,7 @@ function keys(e:KeyboardEvent){
 }
 function keyup(e:KeyboardEvent){if(e.key===' ')spaceHeld.value=false}
 function blur(){spaceHeld.value=false;cancelPointer()}
-function beforeUnload(e:BeforeUnloadEvent){if(mediaImportBusy.value||duplicateImport.value||saveState.value==='saving'||saveState.value==='error'||objectDeletionBusy.value||trackingFeedbackBusy.value||trackingRestartBusy.value||trackingRestartPendingAction.value||objectDeletionPendingAction.value||trackingFeedbackPending.value){e.preventDefault();e.returnValue=''}}
+function beforeUnload(e:BeforeUnloadEvent){if(importRunning.value||mediaImportBusy.value||duplicateImport.value||saveState.value==='saving'||saveState.value==='error'||objectDeletionBusy.value||trackingFeedbackBusy.value||trackingRestartBusy.value||trackingRestartPendingAction.value||objectDeletionPendingAction.value||trackingFeedbackPending.value){e.preventDefault();e.returnValue=''}}
 watch(trackingRestartPendingAction,(value,previous)=>{if(!value&&previous&&restartDialogOpen.value)closeRestartDialog()})
 watch(help,async value=>{if(value){helpPriorFocus=document.activeElement as HTMLElement;await nextTick();helpDialog.value?.querySelector<HTMLElement>('button')?.focus()}else helpPriorFocus?.focus()})
 // Single-class head boxes: the point tool and per-object names are no longer offered.
@@ -639,8 +655,8 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
 <template>
   <section class="annotation-page" :class="{'tracking-paused':hasPausedTracking,'review-mode':reviewing}" data-testid="annotation-page">
     <input ref="fileInputRef" type="file" accept="image/*" multiple hidden @change="handleFiles(($event.target as HTMLInputElement).files,'image')" />
-    <input ref="videoInputRef" type="file" accept="video/*" multiple hidden @change="handleFiles(($event.target as HTMLInputElement).files,'video')" />
-    <input ref="packageInputRef" type="file" accept=".zip,application/zip" hidden data-testid="package-input" @change="importPackage(($event.target as HTMLInputElement).files)" />
+    <input ref="videoInputRef" type="file" accept="video/*" multiple hidden @change="pickVideos($event)" />
+    <input ref="packageInputRef" type="file" accept=".zip,application/zip" multiple hidden data-testid="package-input" @change="pickPackages($event)" />
     <Teleport to="body"><div v-if="duplicateImport" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" data-reimport-dialog @keydown.esc.prevent="cancelDuplicateImport">
       <section ref="importDialog" role="dialog" aria-modal="true" aria-label="视频已存在" @keydown="importDialogKeys" class="app-dialog w-[520px]">
         <h2 class="mb-4 text-lg font-semibold">该视频已存在，是否覆盖重新标注？</h2>
@@ -651,7 +667,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <div class="mt-5 flex justify-end gap-3"><button class="btn-secondary" :disabled="reimportSaving||duplicateImport.pending" @click="cancelDuplicateImport">取消导入</button><button v-if="duplicateImport.canOverwrite" class="btn-primary" :disabled="reimportSaving" @click="confirmDuplicateImport">{{ reimportSaving?'正在覆盖…':duplicateImport.pending?'重试覆盖':'覆盖并重新标注' }}</button></div>
       </section>
     </div></Teleport>
-    <WorkbenchShell name="annotate" :focused="focused" :focus-keeps-inspector="reviewing || !!collaborationConflict" drawer-label="素材库" :drawer-count="mediaAssets.length" :drawer-forced="!selectedMedia" :drawer-busy="backgroundTracking" v-model:drawer-open="libraryOpen" :inspector-forced="showPauseFeedback || !!collaborationConflict" :inspector-badge="currentObjects.length">
+    <WorkbenchShell name="annotate" :focused="focused" :focus-keeps-inspector="reviewing || !!collaborationConflict" drawer-label="素材库" :drawer-count="mediaAssets.length" :drawer-forced="!selectedMedia" :drawer-busy="backgroundTracking||importRunning" v-model:drawer-open="libraryOpen" :inspector-forced="showPauseFeedback || !!collaborationConflict" :inspector-badge="currentObjects.length">
       <template #context="{ inspectorVisible }"><span class="annot-context" :class="{'is-tracking':(!inspectorVisible||reviewing)&&(currentTrackingProgress||currentTrackingFinished)}" data-testid="annotation-stage-status" aria-label="标注工作区状态">
         <strong :title="selectedMedia?.name">{{ selectedMedia?.name || (reviewing?'选择视频开始审查':'选择素材开始标注') }}</strong>
         <span v-if="isVideo" class="shell-meta">第 {{ currentFrame+1 }} / {{ maxFrameIndex+1 }} 帧 · {{ annotatedFrameCount }} 帧有框</span>
@@ -666,13 +682,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <template v-if="focused && isVideo && !reviewing"><button class="quiet-button" :disabled="editingBlocked||isAiBusy" @click="seekVideo(0)">首帧</button><button class="quiet-button" :disabled="editingBlocked||isAiBusy" @click="seekVideo(frameToTime(maxFrameIndex))">尾帧</button><button class="quiet-button" :disabled="editingBlocked||isAiBusy||hasPausedTracking||maxFrameIndex<1||!endpointCount(0)" @click="requestEndpointTracking">首尾双向追踪</button></template>
         <template v-if="focused"><UserGuide :page="reviewing?'/review':'/annotate'" /></template>
       </span></template>
-      <template #drawer><div class="asset-panel annot-assets">
-      <div v-if="!reviewing" class="asset-actions"><button class="btn-primary" :disabled="libraryBusy" @click="openFilePicker('video')"><AppIcon name="upload" :size="15" />导入视频</button><button class="btn-secondary" :disabled="libraryBusy" @click="openFilePicker('image')">图片</button><button class="btn-secondary" :disabled="libraryBusy" title="导入别人用本工具导出的训练数据集 ZIP（导出时需勾选“包含原视频”），导入后在审查页检查和修改" @click="packageInputRef?.click()">标注包</button></div>
-      <div class="asset-search"><input v-model="search" class="input" placeholder="查找素材…" aria-label="查找素材" /></div>
-      <div class="asset-list"><div v-for="media in visibleMedia" :key="media.id" class="asset-card" :class="{selected:selectedMediaId===media.id}" role="button" :tabindex="libraryBusy?-1:0" :aria-disabled="libraryBusy" @click="!libraryBusy&&(selectedMediaId=media.id,libraryOpen=false)" @keydown.enter="!libraryBusy&&(selectedMediaId=media.id)" @keydown.space.prevent.stop="!libraryBusy&&(selectedMediaId=media.id)">
-        <span class="asset-type">{{ media.type==='video'?'VID':'IMG' }}</span><div><strong :title="media.name">{{ media.name }}</strong><small>{{ media.type==='video'?`${media.frameCount || '—'} 帧 · ${media.fps?.toFixed(1) || 30} fps`:`${media.width || '—'} × ${media.height || '—'}` }}<b v-if="media.serverMediaId && review.summary.value[media.serverMediaId]" class="asset-review" :class="review.summary.value[media.serverMediaId]">{{ review.label(media.serverMediaId,review.summary.value[media.serverMediaId]!) }}</b><b v-if="isTrackingMedia(media.id)" class="asset-review asset-tracking" data-testid="asset-tracking">追踪中</b></small><TrackingProgress v-if="isTrackingMedia(media.id)" variant="mini" :view="trackingProgressViewFor(media.id)" /></div><button class="asset-delete icon-button" :disabled="libraryBusy||workspaceRestoring||isTrackingMedia(media.id)" :title="media.serverMediaId?'删除素材（从服务器删除，不能撤销）':'删除素材（清除本机工作区内容，保留电脑原文件）'" :aria-label="`删除素材 ${media.name}`" @click.stop="deleteMedia(media.id)" @keydown.enter.stop @keydown.space.stop><AppIcon name="trash" :size="14" /></button>
-      </div><p v-if="!visibleMedia.length" class="sidebar-empty">{{ search?'没有匹配素材':'导入视频或图片开始标注' }}</p></div>
-      </div></template>
+      <template #drawer><MediaLibrary :busy="libraryBusy" :reviewing="reviewing" @select="id=>{selectedMediaId=id;libraryOpen=false}" /></template>
       <template #canvas>
       <div class="annotation-view-body" :class="{'with-pause-details':focused && showPauseFeedback && pauseDetailsOpen}">
         <div class="annotation-canvas">
@@ -763,7 +773,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <button class="btn-primary" :disabled="!mergeReady||collaborationBusy" @click="resolveCollaboration(mergeChoices)">{{ collaborationBusy?'正在保存…':'应用选择并继续' }}</button>
         <div class="collaboration-more"><button class="quiet-button" @click="downloadWorkspaceBackup">导出本地备份</button><button class="quiet-button" @click="discardLocalDraft">全部用服务器版本</button></div>
       </section>
-      <AnnotationReviewPanel v-if="reviewing" ref="reviewPanel" :media-id="reviewMediaId" :last-editor="lastEditors[currentMediaId]||null" :current-frame="currentFrame" :frame-count="maxFrameIndex+1" :object-count="currentObjects.length" :frame-ready="reviewFrameReady" :blocked="editingBlocked" :tracking-pending="hasPausedTracking" :flush="flushWorkspace" @seek="seekReviewFrame" />
+      <AnnotationReviewPanel v-if="reviewing" ref="reviewPanel" :media-id="reviewMediaId" :last-editor="lastEditors[currentMediaId]||null" :next-video="nextReviewVideo?.name||null" @next-video="nextReviewVideo&&(selectedMediaId=nextReviewVideo.id)" :current-frame="currentFrame" :frame-count="maxFrameIndex+1" :object-count="currentObjects.length" :frame-ready="reviewFrameReady" :blocked="editingBlocked" :tracking-pending="hasPausedTracking" :flush="flushWorkspace" @seek="seekReviewFrame" />
       <section v-show="showPauseFeedback" class="pause-inspector-panel" aria-label="暂停核对">
         <div ref="pauseControlHost" class="pause-control-host" />
         <div v-show="pauseDetailsOpen" ref="inspectorDetailsHost" class="pause-inspector-details" />

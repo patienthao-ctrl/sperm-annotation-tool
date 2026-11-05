@@ -8,9 +8,9 @@ import type { CheckResult } from '../api/annotationReviewApi'
 // Every frame of the round is checked by a person: look, fix in place, confirm, next.
 const props = defineProps<{
   mediaId: string | null; currentFrame: number; frameCount: number; objectCount: number; frameReady: boolean
-  blocked: boolean; trackingPending: boolean; flush: () => Promise<unknown>; lastEditor: string | null
+  blocked: boolean; trackingPending: boolean; flush: () => Promise<unknown>; lastEditor: string | null; nextVideo: string | null
 }>()
-const emit = defineEmits<{ seek: [frame: number] }>()
+const emit = defineEmits<{ seek: [frame: number]; nextVideo: [] }>()
 const review = useAnnotationReview()
 const auth = useAuth()
 const { state, busy, error, status, targetFrames, checkedFrames, nextUnchecked } = review
@@ -100,6 +100,7 @@ defineExpose({ confirm, next })
 
       <template v-else-if="status === 'passed' && state.review">
         <p class="review-note">已通过，可以导出训练数据集。之后再改标注需要重新审查。</p>
+        <button v-if="nextVideo" class="btn-primary review-wide" data-testid="review-next-video" :title="nextVideo" @click="emit('nextVideo')">下一段待审查</button>
         <p v-if="state.review.changes" class="review-changes" data-testid="review-changes">本轮修改：移动 {{ state.review.changes.moved }} · 新增 {{ state.review.changes.added }} · 删除 {{ state.review.changes.removed }}</p>
       </template>
 

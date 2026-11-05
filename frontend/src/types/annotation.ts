@@ -35,6 +35,8 @@ export interface MediaAsset {
   /** 后端为该视频建立的独立目录/资源 ID。 */
   serverMediaId?: string
   serverVideoName?: string
+  /** Library folder such as "第一批/样本A"; empty means uncategorized. */
+  folderPath?: string
   frameFallback?: boolean
 }
 

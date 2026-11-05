@@ -336,6 +336,29 @@ def summary(media_dirs):
     return out
 
 
+def people(media_dirs, statuses):
+    """Who to show beside each video in the list, and who passed it, from existing records."""
+    from .annotation_state import read_state
+    out = {}
+    with closing(connect()) as c:
+        names = {r["id"]: r["username"] for r in c.execute("SELECT id,username FROM users")}
+        for media_id, directory in media_dirs:
+            status, actor, passed_by, passed_at = statuses.get(media_id), None, None, None
+            row = c.execute("SELECT id,started_by,passed_by,passed_at FROM annotation_reviews WHERE media_id=? ORDER BY round DESC LIMIT 1", (media_id,)).fetchone()
+            if status == "open" and row:
+                last = c.execute("SELECT actor_id FROM annotation_review_checks WHERE review_id=? ORDER BY checked_at DESC,rowid DESC LIMIT 1", (row["id"],)).fetchone()
+                actor = last["actor_id"] if last else row["started_by"]
+            elif status == "passed" and row:
+                actor, passed_by, passed_at = row["passed_by"], row["passed_by"], row["passed_at"]
+            else:
+                try:
+                    actor = read_state(directory).get("updatedBy")
+                except (OSError, ValueError):
+                    log.warning("annotation_review.people_unreadable media=%s", media_id)
+            out[media_id] = dict(actorId=actor, actorName=names.get(actor), passedBy=passed_by, passedAt=passed_at)
+    return out
+
+
 # ---------------------------------------------------------------- actions
 
 
