@@ -170,7 +170,7 @@ ZIP 包含 15 个必需 CSV/JSONL、2 个可选历史表（存在时）和 manif
 
 ### 点选头部
 
-`POST /api/track/head-box/{media_id}`（需登录）：`{frameIndex,x,y}` 为原始帧号和原图像素点击坐标；返回 `{frameIndex,width,height,bbox:[x1,y1,x2,y2],confidence}`。只提供候选，不写工作区或建立对象 ID。422 表示坐标/候选无效或歧义，404 表示素材/帧不存在，503 表示模型不可用或忙。日志 `annotation.head_click` 记录素材、帧、框、耗时与失败原因。
+`POST /api/track/head-box/{media_id}`（需登录）：`{frameIndex,x,y}` 为原始帧号和原图像素点击坐标；返回 `{frameIndex,width,height,bbox:[x1,y1,x2,y2],confidence}`。只提供候选，不写工作区或建立对象 ID。422 表示坐标/候选无效或歧义，404 表示素材/帧不存在，503 表示模型不可用，或排队约 20 秒仍未轮到。日志 `annotation.head_click` 记录素材、帧、框、耗时与失败原因。
 
 
 检测器与固定权重随仓库及后端镜像提供；`HEAD_DETECTOR_MODEL` 可指定自定义权重。`HEAD_DETECTOR_DEVICE` 默认 `cuda:0`（`compose.gpu.yaml` 同值，CPU 部署 `compose.yaml` 显式设为 `cpu`）；GPU 不可用时请求失败，不静默切换 CPU。惰性加载、单请求推理，不自动下载模型。

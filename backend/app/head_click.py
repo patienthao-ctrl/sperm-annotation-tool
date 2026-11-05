@@ -4,11 +4,54 @@ import json
 import logging
 import math
 import os
+import time
+from collections import deque
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 
 log = logging.getLogger('review.annotation.head_click')
-_lock = Lock()
+# Clicks must answer inside the frontend's 30 s request timeout, so its own busy
+# message is shown; tracking has no one waiting on it and already did costly work.
+INTERACTIVE_WAIT_SECONDS = 20
+BACKGROUND_WAIT_SECONDS = 120
+
+
+class _FifoLock:
+    """First come, first served. A plain Lock lets a tracking loop re-acquire
+    before a waiting click wakes, so release hands over to the oldest waiter."""
+    def __init__(self):
+        self._guard = Lock()
+        self._waiters = deque()
+        self._held = False
+
+    def acquire(self, timeout):
+        with self._guard:
+            if not self._held:
+                self._held = True
+                return True
+            turn = Event()
+            self._waiters.append(turn)
+        if turn.wait(timeout):
+            return True
+        with self._guard:
+            if turn.is_set():  # Handed over just as the wait expired.
+                return True
+            self._waiters.remove(turn)
+            return False
+
+    def release(self):
+        with self._guard:
+            if self._waiters:
+                self._waiters.popleft().set()  # Stays held by the next waiter.
+            else:
+                self._held = False
+
+    def waiting(self):
+        with self._guard:
+            return len(self._waiters)
+
+
+_lock = _FifoLock()
 _model = None
 _model_path = None
 BUNDLED_MODEL = Path(__file__).resolve().parent / 'model_assets' / 'head-detector.pt'
@@ -41,6 +84,18 @@ class ProposalError(ValueError):
     def __init__(self, message, status=422):
         super().__init__(message)
         self.status = status
+
+
+def _take_turn(caller, timeout, busy_message):
+    """Queue for the shared detector; the caller must release _lock afterwards."""
+    started = time.monotonic()
+    if not _lock.acquire(timeout):
+        log.warning('annotation.head_detector_wait_timeout caller=%s waited_ms=%.0f queued=%s',
+                    caller, (time.monotonic()-started)*1000, _lock.waiting())
+        raise ProposalError(busy_message, 503)
+    waited = time.monotonic()-started
+    if waited >= 1:
+        log.info('annotation.head_detector_waited caller=%s waited_ms=%.0f', caller, waited*1000)
 
 
 def choose(rows, x, y, width, height):
@@ -78,8 +133,7 @@ def propose(image, x, y):
     path = model_path()
     if not path.is_file():
         raise ProposalError('头部检测权重缺失，请获取完整仓库文件或检查自定义模型路径；仍可手动画框。',503)
-    if not _lock.acquire(blocking=False):
-        raise ProposalError('头部检测正在处理其他请求，请稍后重试。',503)
+    _take_turn('click', INTERACTIVE_WAIT_SECONDS, '头部检测正在处理其他请求，请稍后重试。')
     try:
         _get_model(path)
         h,w=image.shape[:2]
@@ -115,8 +169,7 @@ def detect_edges(image):
     path = model_path()
     if not path.is_file():
         raise ProposalError('边缘识别权重缺失，请获取完整仓库文件或检查自定义模型路径。', 503)
-    if not _lock.acquire(blocking=False):
-        raise ProposalError('头部检测器忙，请稍后重试。', 503)
+    _take_turn('edge_entry', BACKGROUND_WAIT_SECONDS, '头部检测器长时间繁忙，边缘识别未完成，请稍后重试。')
     try:
         model = _get_model(path)
         h, w = image.shape[:2]
@@ -140,8 +193,7 @@ def detect_frame(image):
     path = model_path()
     if not path.is_file():
         raise ProposalError('头部检测权重缺失，自动核验未完成，请检查仓库文件或自定义路径。', 503)
-    if not _lock.acquire(blocking=False):
-        raise ProposalError('头部检测器忙，自动核验未完成。', 503)
+    _take_turn('full_frame', BACKGROUND_WAIT_SECONDS, '头部检测器长时间繁忙，自动核验未完成。')
     try:
         model = _get_model(path)
         h,w=image.shape[:2]
@@ -174,7 +226,7 @@ def detect_regions(image, boxes):
     if not boxes:return []
     path=model_path()
     if not path.is_file():raise ProposalError('综合标注的头部检测权重缺失，请获取完整仓库文件或检查自定义路径。',503)
-    if not _lock.acquire(timeout=30):raise ProposalError('头部检测器忙，综合标注未完成，请重试。',503)
+    _take_turn('joint_regions',BACKGROUND_WAIT_SECONDS,'头部检测器长时间繁忙，综合标注未完成，请重试。')
     try:
         model=_get_model(path);h,w=image.shape[:2];tiles=set()
         for b in boxes:
