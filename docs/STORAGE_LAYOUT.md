@@ -6,7 +6,7 @@
 > - 写入依赖版本、幂等回执与原子发布；删除是持久过滤规则，不物理擦除追踪原始数据。
 > - 测试与夹具必须使用独立的 `APP_DATA_DIR` / `APP_DB_FILE` / `APP_STORAGE_DIR`。
 
-`annotation_reviews` 兼容追加可空的 `evidence_policy`、`checklist_history_json`、`empty_frames_json`。当前清单策略为 `frame-review-v1`（逐帧清单）；未结束的旧策略轮次在同一SQLite事务内归档旧items/检查快照到 `checklist_history_json` 并改建为帧清单；原 `annotation_review_checks` 记录不删除。已通过历史轮次不重建，原Tracking诊断和几何文件不改写。新增列对旧数据兼容，不改变离线存储 contract。
+`annotation_review_checks` 兼容追加可空的 `frame_digest`（确认时这一帧的内容摘要），代码须按列名写入。`annotation_reviews` 兼容追加可空的 `evidence_policy`、`checklist_history_json`、`empty_frames_json`。当前清单策略为 `frame-review-v1`（逐帧清单）；未结束的旧策略轮次在同一SQLite事务内归档旧items/检查快照到 `checklist_history_json` 并改建为帧清单；原 `annotation_review_checks` 记录不删除。已通过历史轮次不重建，原Tracking诊断和几何文件不改写。新增列对旧数据兼容，不改变离线存储 contract。
 
 ## 概览
 
@@ -51,6 +51,7 @@ storage/
     .frame_cache/                # 逐帧 JPEG 缓存，128 帧/128 MiB 上限
       source.json               # 源文件路径/大小/mtime/文件身份，失效后重建 JPEG
   media/_annotation_resets/<id>/ # 覆盖事务的临时文件及 journal.json；重启按 DB 回执恢复/清理
+  media/_trash/                  # 回收目录：<mediaId>-<时间>-<随机串>/ 是删除的视频目录，<mediaId>-overwritten-…/ 是覆盖重标替换下的文件。不自动清理
   datasets/
     train_<id>.zip               # 当前训练导出生成包，认证接口下载
     train_<id>.zip.partial       # 打包临时文件
@@ -133,6 +134,7 @@ A/B/F 不随浏览、缩放、草稿、重新确认或退回重审而改写。F 
 - 旧 `backend/track_data/<media-id>` 保留兼容读取；新上传写入 storage/media。受支持的编辑流程仍可能对已定位到的旧媒体目录写入工作区，不能将“兼容读取”误解为整个目录被文件系统锁定只读。
 - 迁移前停后端，备份，然后逐个移动旧素材子目录到 media；不要套入一层 track_data 或覆盖同名 ID。
 - 缺少完整 A/B/空帧的历史任务保持只读并解释原因；不能猜测补帧或冒充可导出 F，需在当前流程中重新审查通过后导出。
+- `_trash/` 与媒体目录在同一文件系统，移入只是改名，占用的空间不释放。恢复：停写后把 `<mediaId>-时间-随机串` 改回 `<mediaId>` 移回 `media/`；覆盖重标的旧文件在停服务后逐个移回视频目录。确认不需要后手动删除。旧 `backend/track_data` 下的视频进入该目录自己的 `_trash/`。
 - `.frame_cache` 可重建；训练任务正常完成/失败会清理临时目录。异常进程终止留下的 `.work` / `.partial` 需停服务后核对再清理。
 - 原视频、seed、Tracking、工作区、DB 和历史版本不是缓存。不要因文档整理或测试删除它们。已完成 ZIP 暂无自动过期策略，清理需考虑任务记录及下载关系。
 

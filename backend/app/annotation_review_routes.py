@@ -29,7 +29,9 @@ class ResetAnnotations(Model):
 @router.get("/summary")
 def summary(user: User):
     from .main import iter_media_dirs
-    return {"items": review.summary([(d.name, d) for d in iter_media_dirs()])}
+    directories = {d.name: d for d in iter_media_dirs()}
+    items = review.summary(list(directories.items()))
+    return {"items": items, "stages": {m: review.stage(directories[m]) for m, s in items.items() if s == "none"}}
 
 
 @router.get("/media/{media_id}")

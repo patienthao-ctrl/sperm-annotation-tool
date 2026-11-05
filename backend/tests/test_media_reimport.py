@@ -88,6 +88,10 @@ def test_overwrite_clears_all_active_annotation_files_and_db_and_replays(imports
     assert not list(directory.glob('annotations_frame_*.json'))
     assert not (directory / 'tracker_overlay.mp4').exists()
     assert (directory / 'same.avi').read_bytes() == original
+    kept = list((directory.parent / '_trash').iterdir())  # The discarded work stays recoverable by hand.
+    assert len(kept) == 1 and kept[0].name.startswith(mid + '-overwritten-')
+    assert json.loads((kept[0] / 'workspace_state.json').read_text())['manualAnnotations']
+    assert (kept[0] / 'tracker_overlay.mp4').read_bytes() == b'overlay'
     with db.connect() as c:
         assert c.execute('SELECT COUNT(*) FROM annotations WHERE media_id=?', (mid,)).fetchone()[0] == 0
     # An older tab cannot republish old boxes, including unversioned clients.

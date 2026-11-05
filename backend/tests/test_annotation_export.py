@@ -115,7 +115,7 @@ def test_snapshot_failure_preserves_source_and_no_partial_snapshot(source, monke
     with db.connect() as c: export.migrate(c)
     review_pass(source)
     before=(source/'workspace_state.json').read_bytes()
-    monkeypatch.setattr(direct,'compute_file_sha256',lambda _:(_ for _ in ()).throw(OSError('injected disk error')))
+    monkeypatch.setattr(direct,'source_sha',lambda *_:(_ for _ in ()).throw(OSError('injected disk error')))
     with pytest.raises(OSError):direct.freeze(source,source/'video.avi','complete-media',1,'fail',body(source),INFO)
     with db.connect() as c:assert c.execute('SELECT COUNT(*) FROM annotation_export_snapshots').fetchone()[0]==0
     assert (source/'workspace_state.json').read_bytes()==before
@@ -129,7 +129,8 @@ def test_latest_snapshot_per_video_reports_changed_workspaces(source, monkeypatc
     first = direct.freeze(source, source/'video.avi', 'complete-media', 1, 'list-1', body(source), INFO)
     second = direct.freeze(source, source/'video.avi', 'complete-media', 1, 'list-2', body(source), INFO)
     items = direct.latest(1)
-    assert [i['finalVersionId'] for i in items] == [second['finalVersionId']] != [first['finalVersionId']]
+    assert first == second  # Unchanged content reuses its snapshot.
+    assert [i['finalVersionId'] for i in items] == [first['finalVersionId']]
     assert items[0]['valid'] and items[0]['name'] == 'video.avi' and items[0]['frameCount'] == 3
     assert direct.latest(2) == []
     state = json.loads((source/'workspace_state.json').read_text())
@@ -170,3 +171,89 @@ def test_export_marks_boxes_the_reviewer_changed(source, monkeypatch, tmp_path):
     objects=[(s['frameIndex'],o['objectId'],o['reviewEdited']) for s in manifest['samples'] for o in s['objects']]
     assert objects and all(edited==((fi,oid) in moved) for fi,oid,edited in objects)
     assert any(edited for _,_,edited in objects)
+
+
+def exportable(source, monkeypatch, tmp_path):
+    from app import main, api_common as routes, confirmation_workflow as confirmation
+    from .test_training_export import video_file
+    video = video_file(source, n=3)
+    with db.connect() as c:
+        confirmation.migrate(c)
+        export.migrate(c)
+    monkeypatch.setattr(routes, 'completion_context', lambda mid: (source, video, INFO))
+    monkeypatch.setattr(main, 'media_dir', lambda mid: source)
+    monkeypatch.setattr(export, 'DATASET_EXPORT_DIR', tmp_path / 'packages')
+    monkeypatch.setattr(export, 'enqueue', lambda eid: None)
+    review_pass(source)
+    final = direct.freeze(source, video, 'complete-media', 1, 'snapshot', body(source), INFO)['finalVersionId']
+    return export.create(1, 'export', dict(finalVersionIds=[final], format='yolo', splitRatio=.8))['exportId']
+
+
+def test_build_fully_validates_only_at_its_start_and_end(source, monkeypatch, tmp_path):
+    eid = exportable(source, monkeypatch, tmp_path)
+    seen, original = [], export.eligible
+    monkeypatch.setattr(export, 'eligible', lambda c, ids: (seen.append(ids), original(c, ids))[1])
+    export.run(eid)
+    assert len(seen) == 2  # Progress checks in between only compare file stamps.
+    assert export.status(eid, 1)['state'] == 'ready'
+
+
+def test_source_change_during_the_build_stops_it(source, monkeypatch, tmp_path):
+    eid = exportable(source, monkeypatch, tmp_path)
+    build = export.build_package
+
+    def change_then_build(*args):
+        state = json.loads((source / 'workspace_state.json').read_text())
+        state['manualAnnotations'][0]['bbox']['x'] = 12
+        (source / 'workspace_state.json').write_text(json.dumps(state))
+        return build(*args)
+    monkeypatch.setattr(export, 'build_package', change_then_build)
+    export.run(eid)
+    result = export.status(eid, 1)
+    assert result['state'] in ('failed', 'invalidated') and result['errorCode'] == 'SOURCE_REVISION_CONFLICT'
+    assert not (export.DATASET_EXPORT_DIR / (eid + '.zip')).exists()
+
+
+def test_status_of_a_running_job_does_not_revalidate(source, monkeypatch, tmp_path):
+    eid = exportable(source, monkeypatch, tmp_path)
+    monkeypatch.setattr(export, 'eligible', lambda *_: pytest.fail('polling must not re-read the sources'))
+    assert export.status(eid, 1)['state'] == 'queued'
+
+
+def test_jpegs_are_stored_uncompressed(source, monkeypatch, tmp_path):
+    import zipfile
+    eid = exportable(source, monkeypatch, tmp_path)
+    export.run(eid)
+    with zipfile.ZipFile(export.download(eid, 1)) as z:
+        kinds = {i.filename.rsplit('.')[-1]: i.compress_type for i in z.infolist()}
+    assert kinds['jpg'] == zipfile.ZIP_STORED and kinds['txt'] == zipfile.ZIP_DEFLATED
+
+
+def test_dataset_download_cookie_is_limited_to_downloads(source, monkeypatch, tmp_path):
+    from fastapi import FastAPI, Response, Request
+    from fastapi.testclient import TestClient
+    from app import auth
+    from app.training_export_routes import router
+    eid = exportable(source, monkeypatch, tmp_path)
+    export.run(eid)
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    url = f'/api/datasets/exports/{eid}/download'
+    assert client.get(url).status_code == 401
+    response = Response()
+    auth.set_video_session(response, Request({'type': 'http', 'scheme': 'http', 'headers': [], 'path': '/', 'server': ('t', 80)}), 1)
+    header = next(v.decode() for k, v in response.raw_headers if k == b'set-cookie' and auth.EXPORT_COOKIE.encode() in v)
+    assert 'Path=/api/datasets/exports/' in header and 'HttpOnly' in header and 'samesite=strict' in header.lower()
+    token = header.split(';')[0].split('=', 1)[1]
+    client.cookies.set(auth.EXPORT_COOKIE, token)
+    got = client.get(url)
+    assert got.status_code == 200 and got.headers['content-type'] == 'application/zip'
+    assert 'content-disposition' not in got.headers  # The page's link names the file.
+    assert client.get(url, headers={'Range': 'bytes=0-9'}).status_code == 206  # An interrupted download can resume.
+    assert client.get(f'/api/datasets/exports/{eid}').status_code == 401  # The cookie only opens downloads.
+    client.cookies.set(auth.EXPORT_COOKIE, auth.sign_jwt({'uid': 1, 'purpose': 'source-video'}))
+    assert client.get(url).status_code == 401  # A video cookie is not a download cookie.
+    client.cookies.clear()
+    client.cookies.set(auth.EXPORT_COOKIE, auth.sign_jwt({'uid': 2, 'purpose': 'dataset-download'}))
+    assert client.get(url).status_code == 404  # Another account's cookie opens nothing.

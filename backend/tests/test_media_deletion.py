@@ -6,7 +6,7 @@ import shutil
 
 import pytest
 from fastapi.testclient import TestClient
-from app import main
+from app import main, media_reimport
 from app.auth import sign_jwt
 from app.video_frames import frames
 from .test_review_workflow import task
@@ -94,10 +94,9 @@ def test_failed_filesystem_delete_returns_error_and_log_not_false_success(media,
     assert key in frames.decoders
 
     def denied(*args, **kwargs):
-        if not kwargs.get('ignore_errors'):
-            raise PermissionError('fixture read-only directory')
+        raise PermissionError('fixture read-only directory')
 
-    monkeypatch.setattr(shutil, 'rmtree', denied)
+    monkeypatch.setattr(media_reimport, 'move_to_trash', denied)
     response = client.delete('/api/track/media/' + root.name)
     assert response.status_code == 500
     assert root.exists()
@@ -163,3 +162,24 @@ def test_delete_rejects_noncanonical_ids_without_touching_storage(media, media_i
         main.delete_media(media_id, {'uid': 1})
     assert error.value.status_code == 400
     assert root.exists()
+
+
+def test_deleted_media_stays_recoverable_and_leaves_the_library(media):
+    client, root = media
+    video = (root / 'video.avi').read_bytes()
+    assert client.delete('/api/track/media/' + root.name).status_code == 200
+    kept = list((main.TRACK_DATA_DIR / '_trash').iterdir())
+    assert len(kept) == 1 and kept[0].name.startswith(root.name + '-')
+    assert (kept[0] / 'video.avi').read_bytes() == video and (kept[0] / 'workspace_state.json').exists()
+    assert client.get('/api/track/media').json()['items'] == []
+    # Moving it back by hand restores the medium.
+    kept[0].replace(root)
+    assert [item['mediaId'] for item in client.get('/api/track/media').json()['items']] == [root.name]
+
+
+def test_trashed_video_does_not_block_a_fresh_upload(media):
+    client, root = media
+    video = (root / 'video.avi').read_bytes()
+    assert client.delete('/api/track/media/' + root.name).status_code == 200
+    response = client.post('/api/track/upload', files={'file': ('video.avi', video, 'video/x-msvideo')})
+    assert response.status_code == 201, response.text

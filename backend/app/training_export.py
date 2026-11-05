@@ -63,6 +63,30 @@ def shutdown():
         pool.shutdown(wait=True)
 
 
+def source_stamps(c, ids):
+    """{snapshot id: file stamp} for annotation snapshots; older final versions have none."""
+    from .annotation_export import source_stamp
+    out = {}
+    for vid in ids:
+        row = c.execute("SELECT media_id FROM annotation_export_snapshots WHERE id=?", (vid,)).fetchone() if vid.startswith("annexp_") else None
+        if row:
+            out[vid] = source_stamp(row["media_id"])
+    return out
+
+
+def recheck(c, ids, stamps):
+    """Re-validate only what changed on disk, so a long build stays cheap at any size.
+
+    ``stamps`` must be read before the validation they stand for; a change in between
+    then only costs one extra full check.
+    """
+    fresh = source_stamps(c, ids)
+    suspects = [vid for vid in ids if vid not in stamps or fresh.get(vid) != stamps[vid]]
+    if suspects:
+        eligible(c, suspects)
+        stamps.update(fresh)
+
+
 def enqueue(export_id):
     global _pool
     with _pool_lock:
@@ -306,10 +330,12 @@ def status(eid, actor):
             "errorMessage": row["error_message"],
             "downloadUrl": None,
         }
-        try:
-            eligible(c, json.loads(row["request_json"])["finalVersionIds"])
-        except ReviewError as e:
-            result.update(state="invalidated", errorCode=e.code, errorMessage=e.message)
+        # A running job is polled every second; run() itself stops when a source changes.
+        if row["state"] not in ("queued", "running"):
+            try:
+                eligible(c, json.loads(row["request_json"])["finalVersionIds"])
+            except ReviewError as e:
+                result.update(state="invalidated", errorCode=e.code, errorMessage=e.message)
         if result["state"] == "ready":
             result["downloadUrl"] = f"/api/datasets/exports/{eid}/download"
         return result
@@ -447,7 +473,7 @@ def split_samples(versions, ratio):
     }
 
 
-def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha):
+def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha, stamps):
     # Lazy import reuses the application's exact original-video resolver (never overlay/cached frames).
     from .main import find_video, media_dir
 
@@ -621,7 +647,7 @@ def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha)
                     )
                 if done % 20 == 0 or done == summary["frameCount"]:
                     with closing(connect()) as c, c:
-                        eligible(c, body["finalVersionIds"])
+                        recheck(c, body["finalVersionIds"], stamps)
                         c.execute(
                             "UPDATE training_exports SET completed_frames=?,updated_at=? WHERE id=?",
                             (done, now(), eid),
@@ -720,6 +746,7 @@ def run(eid):
             if not row or row["state"] != "queued":
                 return
             body = json.loads(row["request_json"])
+            stamps = source_stamps(c, body["finalVersionIds"])
             versions, summary = snapshots(c, body["finalVersionIds"])
             c.execute(
                 "UPDATE training_exports SET state='running',updated_at=? WHERE id=?",
@@ -746,23 +773,24 @@ def run(eid):
         if expected != recorded or body != audit_snapshot["dataset"]["settings"]:
             raise ReviewError("AUDIT_SNAPSHOT_MISMATCH", "审计快照与训练来源不一致")
         manifest = build_package(
-            eid, body, versions, summary, work, audit_snapshot, audit_sha
+            eid, body, versions, summary, work, audit_snapshot, audit_sha, stamps
         )
         with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(work.rglob("*")):
                 if path.is_file():
-                    # Videos are already compressed; storing them avoids a slow, useless deflate pass.
-                    stored = path.relative_to(work).parts[0] == "videos"
+                    # Videos and JPEGs are already compressed; deflating them only costs time.
+                    stored = path.relative_to(work).parts[0] == "videos" or path.suffix == ".jpg"
                     archive.write(
                         path,
                         path.relative_to(work),
                         zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED,
                     )
+        # Full check first: holding the write transaction through it would stall every save.
+        with closing(connect()) as c:
+            eligible(c, body["finalVersionIds"])  # Confirmation may have reopened while extracting.
         with closing(connect()) as c, c:
             c.execute("BEGIN IMMEDIATE")
-            eligible(
-                c, body["finalVersionIds"]
-            )  # Confirmation may have reopened while extracting.
+            recheck(c, body["finalVersionIds"], stamps)
             partial.replace(target)
             published = True
             c.execute(

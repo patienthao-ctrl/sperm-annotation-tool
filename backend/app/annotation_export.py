@@ -6,7 +6,7 @@ from contextlib import closing
 from . import annotation_completion as annotation
 from .db import connect
 from .review_workflow import ReviewError, digest, packed, now
-from .review_repository import compute_file_sha256
+from .media_reimport import source_sha
 
 log = logging.getLogger('review.dataset')
 
@@ -37,7 +37,21 @@ def replay(actor, key, media_id, body):
     return None
 
 
-def freeze(directory, video, media_id, actor, key, body, info):
+def source_stamp(media_id):
+    """Size and time of the files a snapshot's content is read from; equal stamps mean equal content."""
+    from .main import media_dir
+    directory, out = media_dir(media_id), []
+    for name in ('workspace_state.json', 'tracker_results.json'):
+        try:
+            stat = (directory / name).stat()
+            out.append((stat.st_size, stat.st_mtime_ns))
+        except OSError:
+            out.append(None)
+    return out
+
+
+def freeze(directory, video, media_id, actor, key, body, info, sha=None):
+    """``sha`` lets the caller hash a large video before taking the shared source lock."""
     request_hash = digest(['annotation-export', media_id, body])
     with closing(connect()) as c, c:
         c.execute('BEGIN IMMEDIATE')
@@ -69,7 +83,11 @@ def freeze(directory, video, media_id, actor, key, body, info):
             for obj in frame['objects']:
                 obj['annotationId'] = f"annotation:{media_id}:{frame['frameIndex']}:{obj['objectId']}"
                 obj['resolution'] = 'annotation-direct'
-        media = dict(id='annotation-source-'+media_id, media_id=media_id, sha256=compute_file_sha256(video), file_size=video.stat().st_size,
+        same = c.execute('SELECT id FROM annotation_export_snapshots WHERE actor_id=? AND media_id=? AND source_revision=? AND snapshot_hash=? ORDER BY rowid DESC LIMIT 1',
+                         (actor, media_id, revision, digest(frozen))).fetchone()
+        if same:  # Unchanged content: exporting it again needs no second snapshot.
+            return {'finalVersionId':same['id']}
+        media = dict(id='annotation-source-'+media_id, media_id=media_id, sha256=sha or source_sha(directory, video), file_size=video.stat().st_size,
                      width=info['width'], height=info['height'], fps=info['fps'], frame_count=info['frameCount'])
         if annotation.source(directory, actor, info, require_author=False)[0] != revision:
             raise ReviewError('SOURCE_REVISION_CONFLICT', '读取过程中标注来源变化，请重新预览')
