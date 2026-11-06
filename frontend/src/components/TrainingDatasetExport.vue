@@ -2,16 +2,16 @@
 import { createRequestId } from '../utils/browserCompat'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useAuth } from '../stores/auth'
-import { trainingExportApi as api, type AnnotationSnapshotItem, type DatasetSplit, type ExportJob, type ExportSettings, type ExportSummary, type SplitOptions } from '../api/trainingExportApi'
+import { trainingExportApi as api, type DatasetSplit, type ExportJob, type ExportSettings, type ExportSummary, type SplitOptions } from '../api/trainingExportApi'
 
-const props = defineProps<{ finalVersionId: string; mediaName: string; disabled?: boolean; hideTrigger?:boolean; annotationOnly?:boolean }>()
+const props = defineProps<{ finalVersionId: string; mediaName: string; disabled?: boolean; hideTrigger?:boolean; annotationOnly?:boolean; extraVersionIds?: string[]; names?: Record<string, string> }>()
 const emit = defineEmits<{ open: [value: boolean]; busy: [value: boolean] }>()
 const opened = ref(false), busy = ref(false), error = ref('')
 const summary = ref<ExportSummary | null>(null), job = ref<ExportJob | null>(null)
 const format = ref<ExportSettings['format']>('yolo'), splitRatio = ref(.7), testRatio = ref(.15)
 const splitMode = ref<'video' | 'frame'>('video'), includeVideos = ref(true)
-// Other videos' still-valid annotation snapshots that can join this package (annotation page only).
-const others = ref<AnnotationSnapshotItem[]>([]), extraIds = ref<string[]>([]), overrides = ref<Record<string, DatasetSplit>>({})
+// The other videos of this package, chosen before this dialog opens.
+const extraIds = ref<string[]>(props.extraVersionIds ?? []), overrides = ref<Record<string, DatasetSplit>>({})
 const planError = ref('')
 const splitNames: Record<DatasetSplit, string> = { train: '训练', val: '验证', test: '测试' }
 const presets = computed(() => splitMode.value === 'video' ? [[.7, .15], [.8, .1], [.8, 0]] : [[.7, 0], [.8, 0], [.9, 0]])
@@ -24,7 +24,7 @@ const ids = computed(() => [props.finalVersionId, ...extraIds.value])
 const splitOptions = computed<SplitOptions>(() => splitMode.value === 'frame'
   ? { splitRatio: splitRatio.value, splitMode: 'frame' }
   : { splitRatio: splitRatio.value, splitMode: 'video', testRatio: testRatio.value, videoSplits: Object.fromEntries(Object.entries(overrides.value).filter(([id]) => ids.value.includes(id))) })
-const videoName = (id: string) => id === props.finalVersionId ? props.mediaName : others.value.find(o => o.finalVersionId === id)?.name || id
+const videoName = (id: string) => props.names?.[id] || (id === props.finalVersionId ? props.mediaName : id)
 const videoCount = (split: DatasetSplit) => summary.value?.videos?.filter(v => v.split === split).length || 0
 const dialog = ref<HTMLElement | null>(null)
 const storageKey = computed(() => `training-export:${useAuth().user.value?.id}:${props.finalVersionId}`)
@@ -87,18 +87,15 @@ async function open() {
   try {
     try {
       const stored = JSON.parse(localStorage.getItem(storageKey.value) || 'null')
-      if (stored?.settings?.finalVersionIds?.[0] === props.finalVersionId) intent.value = stored
+      // Only the same set of videos continues an earlier job.
+      if ([...(stored?.settings?.finalVersionIds ?? [])].sort().join() === [...ids.value].sort().join()) intent.value = stored
     } catch (e) { console.warn('[dataset.restore_failed]', e) }
     if (intent.value) {
       const saved = intent.value.settings
       format.value = saved.format; splitMode.value = saved.splitMode || 'frame'
       splitRatio.value = saved.splitRatio; testRatio.value = saved.testRatio || 0
-      overrides.value = { ...(saved.videoSplits || {}) }; extraIds.value = saved.finalVersionIds.slice(1)
+      overrides.value = { ...(saved.videoSplits || {}) }
       includeVideos.value = !!saved.includeSourceVideos
-    }
-    if (props.annotationOnly) {
-      others.value = (await api.annotationSnapshots()).items.filter(o => o.finalVersionId !== props.finalVersionId)
-      extraIds.value = extraIds.value.filter(id => others.value.some(o => o.valid && o.finalVersionId === id))
     }
     summary.value = await api.preview(ids.value, splitOptions.value)
     if (intent.value) {
@@ -234,13 +231,6 @@ onUnmounted(() => { alive = false; stopPolling(); emit('open', false); emit('bus
                     {{ percent(train) }} / {{ percent(1 - train - test) }}{{ splitMode === 'video' ? ` / ${percent(test)}` : '' }}
                   </option>
                 </select>
-              </label>
-            </div>
-            <div v-if="annotationOnly && others.length" class="training-export-videos">
-              <strong title="你在标注页导出过、之后没有再修改的视频。标注有变化的视频需回到该视频重新导出。">一起导出其他视频</strong>
-              <label v-for="o in others" :key="o.finalVersionId" :title="o.reason || ''">
-                <input v-model="extraIds" type="checkbox" :value="o.finalVersionId" :disabled="busy || working || !!error || !o.valid" />
-                <span>{{ o.name }} · {{ o.frameCount }} 帧</span><em v-if="!o.valid">{{ o.reason }}</em>
               </label>
             </div>
             <div v-if="splitMode === 'video' && summary.videos && summary.videos.length > 1" class="training-export-videos">

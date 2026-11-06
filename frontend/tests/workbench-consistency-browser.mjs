@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { useLegacyBrowserAPIs } from './legacy-browser-profile.mjs'
 import { noticeChecks } from './notice-checks.mjs'
+import { stageMotionChecks } from './stage-motion-checks.mjs'
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
 // The media list is a drawer that stays closed while a video is open.
@@ -12,7 +13,7 @@ const openAsset=async(target,locator)=>{const toggle=target.getByTestId('toggle-
 const confirmation = JSON.parse(fs.readFileSync('work/confirmation-browser-fixture.json'))
 const origin = process.env.CONFIRMATION_ORIGIN || 'http://127.0.0.1:5373'
 const browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL || 'chrome', headless: true, ignoreDefaultArgs: ['--hide-scrollbars'] })
-const page = await browser.newPage({ viewport: { width: 1366, height: 768 } })
+const page = await browser.newPage({reducedMotion:'reduce',viewport: { width: 1366, height: 768 } })
 if (process.env.LEGACY_BROWSER === '1') await useLegacyBrowserAPIs(page)
 const logs = [], errors = [], libraryHits = []
 let checks = 0
@@ -212,7 +213,7 @@ async function collaborationChecks(){
   }
   try{
     for(const [token,id] of [[confirmation.token,'3'],[confirmation.authorToken,'1']]){
-      const context=await browser.newContext({viewport:{width:1366,height:900}});contexts.push(context)
+      const context=await browser.newContext({reducedMotion:'reduce',viewport:{width:1366,height:900}});contexts.push(context)
       await context.addInitScript(({token,id})=>{localStorage.setItem('rare-sperm-token',token);localStorage.setItem('rare-sperm-auth',JSON.stringify({id,name:'协作测试',role:'annotator'}))},{token,id})
       // Earlier suites may leave other media with the same file name; show only the shared video.
       await context.route('**/api/track/media',async route=>{const response=await route.fetch(),data=await response.json();data.items=data.items.filter(m=>m.mediaId===mid);await route.fulfill({response,json:data})})
@@ -431,6 +432,7 @@ try {
   await page.getByRole('button', { name: /退出专注/ }).click()
   await page.setViewportSize({ width: 1366, height: 768 })
   await noticeChecks(page, { origin, openStage, selectTheme })
+  await stageMotionChecks(page, { origin, openStage })
   await narrowWorkbenchChecks()
   await collaborationChecks()
   check(errors.length === 0, 'shared workbench paths have no uncaught browser exceptions')

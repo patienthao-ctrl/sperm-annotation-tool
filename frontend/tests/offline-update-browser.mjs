@@ -7,7 +7,7 @@ const port = process.env.COMPAT_PRODUCTION_PORT || '18087'
 assert(/^\d+$/.test(port))
 const origin = `http://hospital-test.local:${port}`, apiOrigin = `http://127.0.0.1:${port}`
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--host-resolver-rules=MAP hospital-test.local 127.0.0.1', '--no-proxy-server'] })
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+const page = await browser.newPage({reducedMotion:'reduce',viewport: { width: 1440, height: 900 } })
 const errors = []
 page.on('pageerror', e => errors.push(String(e)))
 try {

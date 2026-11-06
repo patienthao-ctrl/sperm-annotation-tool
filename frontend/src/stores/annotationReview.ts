@@ -1,12 +1,13 @@
 import { computed, ref } from 'vue'
 import { useAuth } from './auth'
-import { annotationReviewApi as api, type CheckResult, type Failure, type ReviewStage, type ReviewState, type ReviewStatus } from '../api/annotationReviewApi'
+import { annotationReviewApi as api, type CheckResult, type Failure, type ReviewPerson, type ReviewStage, type ReviewState, type ReviewStatus } from '../api/annotationReviewApi'
 
 // One review state for the selected server video, shared by the review panel, the
 // frame strip, the header status and the export gate.
 const state = ref<ReviewState | null>(null)
 const summary = ref<Record<string, ReviewStatus>>({})
 const stages = ref<Record<string, ReviewStage>>({})
+const people = ref<Record<string, ReviewPerson>>({})
 const busy = ref(false)
 const error = ref('')
 let loadSeq = 0
@@ -68,13 +69,13 @@ async function run(mediaId: string, reviewId: string | null, action: () => Promi
 }
 
 async function loadSummary() {
-  try { const next = await api.summary(); summary.value = next.items; stages.value = next.stages }
+  try { const next = await api.summary(); summary.value = next.items; stages.value = next.stages; people.value = next.people }
   catch (e) { console.warn('[annotation_review.summary_failed]', e) }
 }
 
 export function useAnnotationReview() {
   return {
-    state, summary, stages, busy, error, status, targetFrames, checkedFrames, nextUnchecked,
+    state, summary, stages, people, busy, error, status, targetFrames, checkedFrames, nextUnchecked,
     load, loadSummary, label,
     start: (mediaId: string) => run(mediaId, null, () => api.start(mediaId)),
     check: (mediaId: string, reviewId: string, frame: number, result: CheckResult) => run(mediaId, reviewId, () => api.check(mediaId, reviewId, frame, result)),
@@ -86,6 +87,17 @@ export const reviewStatusLabel: Record<ReviewStatus, string> = {
   none: '待审查', open: '审查中', passed: '审查通过', stale: '需重新审查',
 }
 const stageLabel: Record<ReviewStage, string> = { unstarted: '未开始', annotating: '标注中', ready: reviewStatusLabel.none }
+export type ReviewFilterKey = ReviewStage | 'open' | 'passed' | 'stale'
+export const reviewFilterOptions: { key: ReviewFilterKey; label: string }[] = [
+  { key: 'unstarted', label: '未开始' }, { key: 'annotating', label: '标注中' }, { key: 'ready', label: '待审查' },
+  { key: 'open', label: '审查中' }, { key: 'passed', label: '审查通过' }, { key: 'stale', label: '需重新审查' },
+]
+/** One key per video for filters and folder counts. */
+export function reviewFilterKey(mediaId: string): ReviewFilterKey | null {
+  const status = summary.value[mediaId]
+  if (!status) return null
+  return status === 'none' ? stages.value[mediaId] ?? 'ready' : status
+}
 /** What the list and headers show: a video nobody has worked on is not waiting for review. */
 function label(mediaId: string | null | undefined, status: ReviewStatus) {
   const stage = mediaId ? stages.value[mediaId] : undefined

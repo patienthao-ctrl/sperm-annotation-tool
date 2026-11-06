@@ -11,7 +11,7 @@ const openAsset=async(target,locator)=>{const toggle=target.getByTestId('toggle-
 const fixture=JSON.parse(fs.readFileSync('work/workflow-transitions-browser-fixture.json'))
 const origin=process.env.CONFIRMATION_ORIGIN||'http://127.0.0.1:5427'
 const browser=await chromium.launch({channel:process.env.CHROME_CHANNEL || 'chrome',headless:true})
-const page=await browser.newPage({viewport:{width:1366,height:768}})
+const page=await browser.newPage({reducedMotion:'reduce',viewport:{width:1366,height:768}})
 page.setDefaultTimeout(15000)
 const errors=[],checks=[]
 page.on('pageerror',e=>errors.push(String(e)))

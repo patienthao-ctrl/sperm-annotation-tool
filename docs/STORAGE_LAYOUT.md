@@ -6,7 +6,7 @@
 > - 写入依赖版本、幂等回执与原子发布；删除是持久过滤规则，不物理擦除追踪原始数据。
 > - 测试与夹具必须使用独立的 `APP_DATA_DIR` / `APP_DB_FILE` / `APP_STORAGE_DIR`。
 
-`annotation_review_checks` 兼容追加可空的 `frame_digest`（确认时这一帧的内容摘要），代码须按列名写入。`annotation_reviews` 兼容追加可空的 `evidence_policy`、`checklist_history_json`、`empty_frames_json`。当前清单策略为 `frame-review-v1`（逐帧清单）；未结束的旧策略轮次在同一SQLite事务内归档旧items/检查快照到 `checklist_history_json` 并改建为帧清单；原 `annotation_review_checks` 记录不删除。已通过历史轮次不重建，原Tracking诊断和几何文件不改写。新增列对旧数据兼容，不改变离线存储 contract。
+`media_folder(media_id, path)` 是素材的显示文件夹，没有记录即未分类，媒体目录结构不变；删除视频时保留，从 `_trash/` 移回后路径还在，同编号新上传会覆盖。`annotation_review_checks` 兼容追加可空的 `frame_digest`（确认时这一帧的内容摘要），代码须按列名写入。`annotation_reviews` 兼容追加可空的 `evidence_policy`、`checklist_history_json`、`empty_frames_json`。当前清单策略为 `frame-review-v1`（逐帧清单）；未结束的旧策略轮次在同一SQLite事务内归档旧items/检查快照到 `checklist_history_json` 并改建为帧清单；原 `annotation_review_checks` 记录不删除。已通过历史轮次不重建，原Tracking诊断和几何文件不改写。新增列对旧数据兼容，不改变离线存储 contract。
 
 ## 概览
 

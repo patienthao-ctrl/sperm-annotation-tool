@@ -8,9 +8,9 @@ import type { CheckResult } from '../api/annotationReviewApi'
 // Every frame of the round is checked by a person: look, fix in place, confirm, next.
 const props = defineProps<{
   mediaId: string | null; currentFrame: number; frameCount: number; objectCount: number; frameReady: boolean
-  blocked: boolean; trackingPending: boolean; flush: () => Promise<unknown>; lastEditor: string | null
+  blocked: boolean; trackingPending: boolean; flush: () => Promise<unknown>; lastEditor: string | null; nextVideo: string | null
 }>()
-const emit = defineEmits<{ seek: [frame: number] }>()
+const emit = defineEmits<{ seek: [frame: number]; nextVideo: [] }>()
 const review = useAnnotationReview()
 const auth = useAuth()
 const { state, busy, error, status, targetFrames, checkedFrames, nextUnchecked } = review
@@ -100,6 +100,7 @@ defineExpose({ confirm, next })
 
       <template v-else-if="status === 'passed' && state.review">
         <p class="review-note">已通过，可以导出训练数据集。之后再改标注需要重新审查。</p>
+        <button v-if="nextVideo" class="btn-primary review-wide" data-testid="review-next-video" :title="nextVideo" @click="emit('nextVideo')">下一段待审查</button>
         <p v-if="state.review.changes" class="review-changes" data-testid="review-changes">本轮修改：移动 {{ state.review.changes.moved }} · 新增 {{ state.review.changes.added }} · 删除 {{ state.review.changes.removed }}</p>
       </template>
 
@@ -141,13 +142,13 @@ defineExpose({ confirm, next })
 </template>
 
 <style scoped>
-.review-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1 1 0; overflow-y: auto; overscroll-behavior: contain; }
+.review-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1 1 0; overflow-y: auto; overscroll-behavior: contain; animation: slide-in-right var(--dur-base) var(--ease-out); }
 .review-status { margin-left: auto; font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 10px; background: var(--surface-subtle); color: var(--muted); }
 .review-status.open { background: var(--accent-soft); color: var(--accent); }
 .review-status.passed { background: var(--b-soft); color: var(--success); }
 .review-status.stale { background: var(--warning-soft); color: var(--warning); }
 .review-note { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
-.review-warning { margin: 0; background: var(--warning-soft); color: var(--warning); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+.review-warning { margin: 0; background: var(--warning-soft); color: var(--warning); border-radius: 6px; padding: 6px 8px; font-size: 12px; animation: rise-in var(--dur-base) var(--ease-out); }
 .review-changes { margin: 0; font-size: 12px; color: var(--text); }
 .review-wide { width: 100%; }
 .review-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }

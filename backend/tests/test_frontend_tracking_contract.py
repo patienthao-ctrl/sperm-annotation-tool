@@ -106,7 +106,7 @@ def test_media_deletion_requires_confirmation_and_retains_legacy_identity() -> N
     delete_block = store[store.index("const deleteMedia"):store.index("const openFilePicker")]
     assert "closeMedia" not in store
     assert "asset-close" not in page
-    assert "deleteMedia(media.id)" in page
+    assert "deleteMedia(row.media.id)" in (ROOT / "frontend/src/components/MediaLibrary.vue").read_text(encoding="utf-8")
     assert delete_block.index("window.confirm") < delete_block.index("trackApi.deleteMedia")
     assert delete_block.index("!result.deleted") < delete_block.index("mediaAssets.value =")
     assert "if (media.serverMediaId)" in delete_block

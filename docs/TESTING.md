@@ -1,16 +1,17 @@
 # 测试与日志排查
 
-> 要点：开发中只跑相关专项；提交前跑全部单元/构建/仓库检查，涉及保存、认证、公共 API、缓存或依赖时再跑一次完整七组浏览器回归；测试必须使用隔离的 `APP_DATA_DIR` / `APP_DB_FILE` / `APP_STORAGE_DIR`。细节按需读 `details/testing-*.md`。
+> 要点：开发和提交前只跑相关专项，全量单元/构建/仓库检查交给 CI；浏览器回归只在发布前或被明确要求时运行；测试必须使用隔离的 `APP_DATA_DIR` / `APP_DB_FILE` / `APP_STORAGE_DIR`。细节按需读 `details/testing-*.md`。
 
 ## 测试分层
 
 | 时机 | 必须运行 | 不能代替 |
 | --- | --- | --- |
-| 开发中每次修改 | “按修改选择测试”表中的专项 pytest / 前端单元测试；涉及页面时 `run_browser_regression.py --only <相关套件>` | 只是定位和快速反馈 |
-| 提交前（每批改动一次） | `backend/tests` 全部 pytest、`test:workbench` / `test:compatibility` / `test:annotation`、`npm run build`、`python3 scripts/check_repository.py`；改动涉及工作区加载、认证、保存/重试协议、公共 API、缓存或依赖/构建时，再跑一次不带筛选参数的完整七组浏览器回归 | 分批或筛选运行的结果 |
-| 推送 / CI | CI 重跑后端 pytest、前端单元测试、构建、仓库检查与 Docker 部署冒烟；不跑浏览器回归 | 本地通过记录；发布前的本机完整浏览器回归 |
+| 开发中和提交前 | “按修改选择测试”表中的专项 pytest / 前端单元测试；改了前端时加 `npm run build`。不跑全量测试和浏览器回归 | 只是快速反馈；全量结果看 CI |
+| 开 PR / 推送 main | CI 跑后端 pytest、前端单元测试、构建、仓库检查与 Docker 部署冒烟；不跑浏览器回归。只推功能分支且未开 PR 时不会触发 | 发布前的本机完整浏览器回归 |
+| 打版本标签发布前 | 不带筛选参数的完整七组浏览器回归 | 分批或筛选运行的结果 |
+| 用户明确要求或排查某流程时 | `run_browser_regression.py`，可用 `--only <相关套件>` | 只是定位，不算完整回归 |
 
-纯样式、文案或使用说明的小改动，提交前运行相关专项、构建，并对受影响页面做 `--only workbench-consistency`；不要求完整七组。汇报时分别列出实际通过、失败、未执行和模拟的范围。
+团队规模小，界面问题使用时就能发现，发现后再修。汇报时分别列出实际通过、失败、未执行和模拟的范围。
 
 ## 审查与导出专项
 
@@ -18,7 +19,7 @@
 
 ## 固定回归入口与发布门禁
 
-提交前，若本批改动涉及工作区加载、认证、持久化/重试、公共 API、缓存、依赖或构建，在专项测试之外运行一次下列固定入口（开发中只用 `--only` 定位，见“测试分层”）。它从新的隔离目录启动自己的服务，顺序生成各套夹具，执行全部七组浏览器回归，结束后只关闭自己启动的进程。不能手工挑掉失败的套件后宣称完整回归通过。
+打版本标签发布前，或用户明确要求时，运行下列固定入口（排查时可用 `--only` 定位，见“测试分层”）。它从新的隔离目录启动自己的服务，顺序生成各套夹具，执行全部七组浏览器回归，结束后只关闭自己启动的进程。不能手工挑掉失败的套件后宣称完整回归通过。
 
 ```bash
 npm ci --prefix frontend
@@ -29,6 +30,8 @@ python3 scripts/run_browser_regression.py --python work/review-venv/bin/python -
 也可用本机 Chrome：`--channel chrome`。也可用已构建的 Python 3.12 后端镜像运行：`python3 scripts/run_browser_regression.py --backend-image annotation-ci-backend:cpu --channel chromium`。镜像模式仍使用独立 `work/e2e-confirm-ux-regression-*` 数据和单后端进程。`--critical-only` 或可重复的 `--only <套件名>` 仅用于定位问题，不能同时使用，也不能用于完整验收。例如 `--only workbench-consistency --only independent-integrity` 只运行这两组；最终验收须去掉筛选参数重新运行全部七组。
 
 `run.json` 的 `requiredSuites` 始终列出七组固定范围，`selectedSuites` 记录本次实际选择，`scope` 区分完整与诊断运行。子集可记录本次 `status: passed`，但 `fullRegressionPassed` 仍为 `false`；只有未使用筛选参数的完整运行全部通过时才为 `true`。不能拼接分批通过记录代替同一批源码的一次完整回归。运行器在占用共享夹具锁前校验参数，初始化失败也清理自己取得的锁；其他进程持有的锁不得删除。
+
+浏览器用例的页面默认使用 `reducedMotion:'reduce'`：动效只影响观感，用例要读取面板和图像的最终几何，开着过渡会读到中间值。真实动效及其结束状态集中在 `stage-motion-checks.mjs`，其中按需切回 `no-preference`；新增用动效的交互时补到这里，不要在其他用例里靠等待时长。
 
 固定套件：`critical-workflows`、`workflow-transitions`、`annotation-ux`、`tracking-recovery`、`training-export`、`workbench-consistency`、`independent-integrity`。每组前按依赖重建夹具；不得并行消费或重置共享夹具。执行记录、版本/未提交文件清单、各组退出状态、耗时与日志保存在该次隔离目录；失败会非零退出并记录尚未执行的范围，不能把旧报告当成本次结果。CI 保留服务/套件日志及截图子目录；夹具 JSON 可能包含 token，禁止上传。
 
@@ -123,6 +126,8 @@ git branch -d feat/review-card
 | 逐帧审查/纠错/通过/失效 | `test_annotation_review.py`、`test_annotation_export.py`（首轮全部帧、重审只列改动帧、无目标确认沿用、旧清单改建、真实 ZIP） | `training-export-browser.mjs`、`critical-workflows-browser.mjs` |
 | 训练导出/门禁/版本 | `test_training_export.py`、`test_quality_audit.py`、`test_export_audit_script.py` | `training-export-browser.mjs`（审查门槛、按视频划分、附原视频、多视频合并、响应丢失重放、改动后失效、统计导出） |
 | 标注/审查工作台一致性 | 上述对应页面回归、构建 | `workbench-consistency-browser.mjs`：两种模式两尺寸浅深主题、同一画布与工具、审查隐藏追踪、清单定位与帧条、专注、760 px 窄窗口与使用说明隔离 |
+| 阶段切换与动效 | 上述一致性回归（内含） | `stage-motion-checks.mjs`：切换保持页面、帧与缩放且不重新下载，阶段配色与标签，保存失败时留在原阶段；抽屉、检查面板、专注、主题的真实过渡与结束状态，换帧无动效，减弱动效时立即完成 |
+| 审查记录 | `test_annotation_review_records.py` | `training-export-browser.mjs`：真实通过后的记录与明细，读取失败不显示为空、恢复后可用 |
 | 数据库查询/升级、Docker 发布 | `test_annotation_result_dedupe.py`、`test_deployment_preflight.py`、`test_docker_deployment_contract.py`、`test_model_distribution.py` | [容器验收](details/testing-delivery.md)；不是只运行前端构建 |
 | 完整离线包、旧版识别、备份升级与回滚 | `test_offline_update.py`、`test_offline_release.py`（Releases 分块、`--assemble`）、`test_offline_oneclick.py`（一键下载与服务器一键升级）、`scripts/test_build_offline.ps1` | [离线升级验收](details/testing-delivery.md#完整离线升级验收)；模拟 Docker 不代替真实导入和数据恢复 |
 

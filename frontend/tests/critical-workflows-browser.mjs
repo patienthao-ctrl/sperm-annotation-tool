@@ -10,7 +10,7 @@ const video = path.resolve(process.env.CRITICAL_VIDEO || 'work/critical-upload.a
 assert(video.startsWith(path.resolve('work')+path.sep), 'Disposable input required')
 const modelMode = process.env.CRITICAL_AI_MODE || 'disabled'
 const browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL || 'chrome', headless: true })
-const page = await browser.newPage({ viewport: { width: 1366, height: 768 }, acceptDownloads: true })
+const page = await browser.newPage({reducedMotion:'reduce',viewport: { width: 1366, height: 768 }, acceptDownloads: true })
 page.setDefaultTimeout(15000)
 if (process.env.LEGACY_BROWSER === '1') await useLegacyBrowserAPIs(page)
 const checks = [], errors = [], requests = []
@@ -191,12 +191,11 @@ try {
     if(lostSnapshot){lostSnapshot=false;await route.abort('failed')}else await route.fulfill({response})
   })
   await button('导出训练数据集').click()
-  // Wait for the export dialog's own error: in CPU mode the page already shows a tracking alert that mentions export.
-  await page.getByRole('dialog',{name:'导出需要处理'}).getByRole('alert').waitFor()
-  await page.reload();await page.getByTestId('annotation-hit').waitFor()
-  await button('恢复数据集导出').click()
+  await page.getByTestId('batch-export').waitFor()
+  await poll(()=>page.getByTestId('batch-export-next').isEnabled(),'the reviewed video is chosen')
+  await page.getByTestId('batch-export-next').click()
   await page.getByRole('dialog',{name:'导出训练数据集'}).waitFor()
-  check(snapshotRequests.length===2&&snapshotRequests[0].key===snapshotRequests[1].key&&JSON.stringify(snapshotRequests[0].body)===JSON.stringify(snapshotRequests[1].body),'snapshot response loss refresh replays original key and body')
+  check(snapshotRequests.length===2&&snapshotRequests[0].key===snapshotRequests[1].key&&JSON.stringify(snapshotRequests[0].body)===JSON.stringify(snapshotRequests[1].body),'snapshot response loss replays original key and body')
   await page.unroute('**/api/datasets/annotations/*/snapshot')
   await page.screenshot({path:'output/playwright/direct-annotation-export-settings.png'})
   const download=page.waitForEvent('download')

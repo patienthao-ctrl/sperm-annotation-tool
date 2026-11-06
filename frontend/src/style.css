@@ -17,6 +17,7 @@
   --radius-xs:4px;--radius-sm:6px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;
   --ease-out:cubic-bezier(.16,1,.3,1);
   --ease-standard:cubic-bezier(.2,0,0,1);
+  --ease-glide:cubic-bezier(.4,0,.2,1); /* Panels and other things that travel: the sharper curves look like a jump at this length. */
   --dur-fast:.12s;--dur-base:.2s;--dur-slow:.32s;
   --app-header-height:48px;
   --page-gutter:12px;
@@ -35,6 +36,12 @@
   --accent-soft:#e3f1ef;
   --accent-ring:#136d7033;
   --on-accent:#ffffff;
+  /* Review mode swaps these in for --accent*: see .app-shell.mode-review. */
+  --review-accent:#2456c4;
+  --review-accent-hover:#1c459f;
+  --review-accent-soft:#e2eafb;
+  --review-accent-ring:#2456c433;
+  --review-on-accent:#ffffff;
   --success:#1f7356;
   --success-soft:#e5f4eb;
   --warning:#965d14;
@@ -76,6 +83,11 @@
   --accent-soft:#1f3a3d;
   --accent-ring:#74c4c140;
   --on-accent:#0d2a2e;
+  --review-accent:#9db8ff;
+  --review-accent-hover:#bccfff;
+  --review-accent-soft:#1f2c4d;
+  --review-accent-ring:#9db8ff40;
+  --review-on-accent:#0e1c3d;
   --success:#85d4ad;
   --success-soft:#1d362c;
   --warning:#f0c575;
@@ -119,17 +131,31 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 input,select,textarea {transition:border-color var(--dur-fast) var(--ease-standard),box-shadow var(--dur-fast) var(--ease-standard),background-color var(--dur-fast)}
 kbd {font-family:var(--font-mono);font-size:10.5px;line-height:1.3;border:1px solid var(--line);border-bottom-width:2px;border-radius:var(--radius-xs);padding:1px 5px;white-space:nowrap;color:var(--muted);background:var(--surface-subtle)}
 .app-shell {min-height:100vh;background:var(--app-bg);color:var(--text)}
-.app-header {height:var(--app-header-height);display:flex;gap:14px;align-items:center;justify-content:space-between;padding:0 12px;background:var(--surface);border-bottom:1px solid var(--line);box-shadow:var(--shadow-sm);position:sticky;top:0;z-index:40}
+/* The two stages share one workbench, so the stage has to show in its colour: everything using the accent turns with it.
+   Registered so that one transition here cross-fades all of it, gradients included; a browser without @property just switches. */
+@property --accent {syntax:'<color>';inherits:true;initial-value:#136d70}
+@property --accent-hover {syntax:'<color>';inherits:true;initial-value:#0e5a5d}
+@property --accent-soft {syntax:'<color>';inherits:true;initial-value:#e3f1ef}
+@property --accent-ring {syntax:'<color>';inherits:true;initial-value:#136d7033}
+@property --on-accent {syntax:'<color>';inherits:true;initial-value:#ffffff}
+.app-shell {transition:--accent var(--dur-slow) var(--ease-standard),--accent-hover var(--dur-slow) var(--ease-standard),--accent-soft var(--dur-slow) var(--ease-standard),--accent-ring var(--dur-slow) var(--ease-standard),--on-accent var(--dur-slow) var(--ease-standard)}
+.app-shell.mode-review {--accent:var(--review-accent);--accent-hover:var(--review-accent-hover);--accent-soft:var(--review-accent-soft);--accent-ring:var(--review-accent-ring);--on-accent:var(--review-on-accent)}
+.app-header {height:var(--app-header-height);display:flex;gap:14px;align-items:center;justify-content:space-between;padding:0 12px;background:var(--surface);border-bottom:1px solid var(--line);box-shadow:var(--shadow-sm);position:sticky;top:0;z-index:40;transition:background-color var(--dur-slow) var(--ease-standard),border-color var(--dur-slow) var(--ease-standard),box-shadow var(--dur-slow) var(--ease-standard)}
+.mode-review .app-header {background:var(--accent-soft);border-bottom-color:var(--accent);box-shadow:inset 0 3px 0 var(--accent),var(--shadow-sm)}
 .app-brand {display:flex;align-items:center;gap:9px;flex-shrink:0;min-width:0}
 .brand-mark {display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:var(--on-accent);background:linear-gradient(140deg,var(--accent-hover),var(--accent));box-shadow:inset 0 1px 0 #ffffff2e,0 1px 2px #0002}
 .app-brand h1 {margin:0;font-size:var(--fs-md);line-height:1.4;font-weight:700;letter-spacing:.02em;white-space:nowrap}
 .app-brand small {display:block;margin-top:2px;font-size:var(--fs-2xs);line-height:1.4;color:var(--muted)}
-.workflow-nav {position:relative;display:flex;align-items:center;gap:2px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--surface-subtle);color:var(--muted);flex-shrink:0}
-.workflow-nav button {display:flex;gap:7px;align-items:center;padding:4px 12px 4px 6px;min-height:28px;border-radius:7px;white-space:nowrap;font-size:var(--fs-sm);font-weight:600;color:var(--muted)}
+.workflow-nav {position:relative;display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:2px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--surface-subtle);color:var(--muted);flex-shrink:0}
+.workflow-nav button {position:relative;display:flex;gap:7px;align-items:center;padding:4px 12px 4px 6px;min-height:28px;border-radius:7px;white-space:nowrap;font-size:var(--fs-sm);font-weight:600;color:var(--muted);transition:color var(--dur-base) var(--ease-standard),background-color var(--dur-fast) var(--ease-standard)}
+/* The pill itself slides between the two steps. Half the padding box minus padding and half the gap. */
+.workflow-thumb {position:absolute;left:3px;top:3px;bottom:3px;width:calc(50% - 4px);border-radius:7px;background:var(--accent);box-shadow:var(--shadow-md);opacity:0;transition:transform var(--dur-slow) var(--ease-glide),opacity var(--dur-fast) var(--ease-standard)}
+.workflow-nav[data-stage=annotate] .workflow-thumb {opacity:1}
+.workflow-nav[data-stage=review] .workflow-thumb {opacity:1;transform:translateX(calc(100% + 2px))}
 .workflow-nav button:hover {background:var(--surface-hover);color:var(--text)}
 .workflow-nav button span {display:grid;place-items:center;width:18px;height:18px;border-radius:50%;font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums;color:inherit;background:var(--surface-hover);transition:background-color var(--dur-fast),color var(--dur-fast)}
-.workflow-nav .active,.workflow-nav .active:hover {background:var(--surface);color:var(--accent);box-shadow:var(--shadow-md)}
-.workflow-nav .active span {background:var(--accent);color:var(--on-accent)}
+.workflow-nav .active,.workflow-nav .active:hover {background:transparent;color:var(--on-accent)}
+.workflow-nav .active span {background:var(--on-accent);color:var(--accent)}
 .workflow-nav>svg {width:12px;color:var(--muted)}
 .app-account {display:flex;align-items:center;gap:4px;min-width:0}
 .app-account-sep {width:1px;height:18px;margin:0 6px;background:var(--line);flex-shrink:0}
@@ -196,6 +222,13 @@ dialog::backdrop {background:var(--mask);backdrop-filter:blur(4px);animation:fad
 @keyframes slide-in-left {from {opacity:0;transform:translateX(-10px)}}
 @keyframes slide-in-right {from {opacity:0;transform:translateX(10px)}}
 @keyframes soft-pulse {50% {opacity:.35}}
+/* Every full-screen mask fades in; the dialog on it has its own entrance. */
+.fixed.inset-0 {animation:fade-in var(--dur-base) var(--ease-standard)}
+details[open]>:not(summary) {animation:rise-in var(--dur-base) var(--ease-out)}
+/* One theme change: every colour cross-fades together (utils/motion.ts sets the class for its duration). */
+@media(prefers-reduced-motion:no-preference) {
+  .theme-fading *,.theme-fading *::before,.theme-fading *::after {transition:background-color var(--dur-slow) var(--ease-standard),border-color var(--dur-slow) var(--ease-standard),color var(--dur-slow) var(--ease-standard),fill var(--dur-slow) var(--ease-standard),stroke var(--dur-slow) var(--ease-standard),box-shadow var(--dur-slow) var(--ease-standard)!important}
+}
 /* The avatar keeps the account visible (name in its tooltip) once the workbench context needs the room. */
 @media(max-width:1360px) {
   .user-name {display:none}

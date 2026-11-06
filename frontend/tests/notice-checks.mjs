@@ -36,10 +36,12 @@ export async function noticeChecks(page, { origin, openStage, selectTheme, out =
     const before = await stageBox()
 
     // Persistent failure: no silent expiry, can be collapsed, cannot be lost.
+    await page.emulateMedia({ reducedMotion: 'no-preference' }) // Only the entrance looks at the motion itself.
     await failTracking(MESSAGE); await notice.waitFor()
     check((await page.getByRole('alert').filter({ hasText: MESSAGE }).count()) === 1, `${stage}: failure is announced as an alert`)
     const opacity = await notice.evaluate(el => Number(getComputedStyle(el).opacity))
     check(opacity < 1, `${stage}: failure fades in rather than popping`)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.waitForTimeout(6500)
     check(await notice.isVisible(), `${stage}: unresolved failure does not expire by itself`)
     await page.screenshot({ path: `${out}/notices-${stage}-banner.png` })
@@ -107,7 +109,6 @@ export async function noticeChecks(page, { origin, openStage, selectTheme, out =
   check(await notice.evaluate(el => getComputedStyle(el).transitionDuration === '0s' && getComputedStyle(el).opacity === '1'), 'reduced motion: failure appears without animation')
   await clearTracking(); await page.waitForFunction(() => !document.querySelector('[data-testid=tracking-error]'), null, { timeout: 300 })
   check(true, 'reduced motion: failure leaves without delay')
-  await page.emulateMedia({ reducedMotion: 'no-preference' })
 
   // Records page shares the error style.
   await page.route('**/api/annotation/projects/*/results*', route => route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"读取失败（模拟）"}' }))

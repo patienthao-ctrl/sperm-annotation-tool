@@ -20,6 +20,9 @@ def register_review_routers(app) -> None:
     app.include_router(annotation_review_router)
     app.include_router(dataset_router)
     app.include_router(legacy_router)
+    from .media_library import router as library_router
+
+    app.include_router(library_router)
     from .db import _DB_LOCK
 
     with _DB_LOCK, connect() as conn:

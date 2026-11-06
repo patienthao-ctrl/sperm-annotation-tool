@@ -2,7 +2,7 @@
 
 ## 当前入口
 
-标注 → 审查 → 导出。审查是 `pages/AnnotatePage.vue` 的 `mode="review"`（`App.vue` 在 `/review` 渲染），右侧换成 `components/AnnotationReviewPanel.vue`，状态共享于 `stores/annotationReview.ts` → `api/annotationReviewApi.ts` → `backend/app/annotation_review_routes.py` / `annotation_review.py`。导出：`components/AnnotationDatasetExport.vue`（审查通过才可用）→ `annotation_export.py`（`require_passed` 门槛）→ `training_export` 队列。
+标注 → 审查 → 导出。审查是 `pages/AnnotatePage.vue` 的 `mode="review"`（`App.vue` 让 `/annotate` 与 `/review` 共用一个实例，切换不重载），右侧换成 `components/AnnotationReviewPanel.vue`，状态共享于 `stores/annotationReview.ts` → `api/annotationReviewApi.ts` → `backend/app/annotation_review_routes.py` / `annotation_review.py`。导出：`components/AnnotationDatasetExport.vue`（审查通过才可用）→ `annotation_export.py`（`require_passed` 门槛）→ `training_export` 队列。
 
 Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前端依赖见 [package.json](../frontend/package.json)，Python 依赖见 [requirements.txt](../backend/requirements.txt)，不在说明文档复制版本号。
 
@@ -27,6 +27,8 @@ Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前�
 | 人工标注 UI / 状态 | `pages/AnnotatePage.vue`、`stores/workspace/editing.ts`、`annotation/annotation.css` / `annotation-shell.css`；缩放小地图 `components/AnnotationMinimap.vue` |
 | 框绘制/坐标/缓存 | `components/AnnotationOverlay.vue`、`annotation/geometry.ts`、`annotation/frameCache.ts` |
 | 审查 | `pages/AnnotatePage.vue`（`mode="review"`）、`components/AnnotationReviewPanel.vue`（逐帧确认）、`stores/annotationReview.ts`、`api/annotationReviewApi.ts`；后端 `annotation_review.py`（帧清单、按帧确认、通过与修改记录、导出门槛）与 `annotation_review_routes.py`；共享请求与日志 `api_common.py` |
+| 素材文件夹与批量导入 | `components/MediaLibrary.vue`（抽屉、树、筛选、确认窗）、`components/FolderOrganizer.vue`、`stores/importQueue.ts`；后端 `backend/app/media_library.py` |
+| 批量选择导出 | `components/AnnotationDatasetExport.vue`（选视频、固定快照、任务列表）→ `components/TrainingDatasetExport.vue`（设置） |
 | 重复视频与覆盖重新标注 | `stores/workspace/media.ts`、`backend/app/media_reimport.py`、`main.py`；文件恢复日志与轮次保护见 STORAGE_LAYOUT |
 | 导入标注包 | `backend/app/package_import.py`（训练 ZIP → 新素材 + 人工工作区）、`main.py` 的 `/api/track/import-package`；前端 `stores/workspace/media.ts` 的 `importPackage` 与素材库“标注包”按钮 |
 | 追踪证据 | `backend/app/review_evidence.py`（身份风险/对象缺失）/ `endpoint_tracking.py` 写入Tracking行，供追踪自身使用，审查不读取；旧 `concentrated_review` 仅保留历史数据层 |
@@ -38,7 +40,8 @@ Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前�
 | 训练集导出 | `components/TrainingDatasetExport.vue`、`api/trainingExportApi.ts`、`backend/app/training_export.py` 与 `_routes.py` |
 | 自动质量审计与只读提取 | `backend/app/quality_audit.py` / `audit_export.py`、根 `export-audit.sh`；统计仓库单独检出到 `标注统计/`，不纳入主仓库或镜像 |
 | 全量流程统计 ZIP | `components/StatisticsDataExport.vue`、`api/statisticsExportApi.ts`、`backend/app/statistics_export.py`、`statistics_export_jobs.py` 与 `statistics_export_routes.py`；入口在标注记录页，兼容外部 export_statistics_data.py 的格式，生产代码不放 tests |
-| 记录查询 | `pages/ResultsPage.vue`、`backend/app/db.py` |
+| 记录查询 | `pages/ResultsPage.vue`：标注记录（`backend/app/db.py`）与审查记录（`components/ReviewRecordDetail.vue`、`backend/app/annotation_review_records.py`） |
+| 动效 | `style.css` 的 `--dur-*`/`--ease-*` 与阶段配色，`workbench/shell.css` 的面板过渡，`utils/motion.ts`（减弱动效开关、列表行滑动、主题渐变）；规则见 WORKFLOW |
 | 媒体/工作区/Tracking API | `api/trackApi.ts`、`api/httpAnnotationApi.ts`、`backend/app/main.py` |
 | Tracking 编排 / 模型 / 异常 | `backend/app/tracker.py`、`services/sam3_engine.py`、`services/anomaly_detector.py`、`services/annotation_seed.py` |
 | 异常后较早帧重建 | `pages/AnnotatePage.vue` 的确认窗口、`components/AnnotationTrackingFeedback.vue`、`stores/workspace/trackingActions.ts` / `api/trackApi.ts`、`backend/app/tracking_restart.py`；持久暂停在 `annotation_state.py`，版本/SQL 收据/跨文件恢复见 API 与 STORAGE_LAYOUT |

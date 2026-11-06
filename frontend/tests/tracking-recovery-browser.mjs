@@ -10,7 +10,7 @@ const fixture=JSON.parse(fs.readFileSync('work/tracking-recovery-fixture.json'))
 assert(fixture.directory.replaceAll('\\','/').includes('/work/e2e-confirm-ux-'))
 const origin=process.env.CONFIRMATION_ORIGIN||'http://127.0.0.1:5387'
 const browser=await chromium.launch({channel:process.env.CHROME_CHANNEL || 'chrome',headless:true})
-const page=await browser.newPage({viewport:{width:1366,height:768}})
+const page=await browser.newPage({reducedMotion:'reduce',viewport:{width:1366,height:768}})
 page.setDefaultTimeout(15000)
 const errors=[],checks=[],starts=[],saveAttempts=[],receipts=new Map(),taskStates=new Map(),logs=[]
 let rewindTimeout=false,pollTimeout=false,loseStart=false,loseSave=false,saveConflict=false,resultFailure=false,modelFailure=false,job=0

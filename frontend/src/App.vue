@@ -47,9 +47,9 @@ watch(isAuthenticated, syncRoute)
   </div>
   <LoginPage v-else-if="currentPath === '/login'" />
   <AppLayout v-else>
-    <AnnotatePage v-if="currentPath === '/annotate'" />
+    <!-- One instance for both stages: same canvas and frame, so switching does not reload the video. -->
+    <AnnotatePage v-if="currentPath === '/annotate' || currentPath === '/review'" :mode="currentPath === '/review' ? 'review' : 'annotate'" />
     <ResultsPage v-else-if="currentPath === '/results'" />
-    <AnnotatePage v-else-if="currentPath === '/review'" mode="review" />
   </AppLayout>
 </template>
 

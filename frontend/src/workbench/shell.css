@@ -1,7 +1,7 @@
 /* Shared canvas-first shell (WorkbenchShell.vue). Pages style only their own
    content; columns, drawers, focus and breakpoints live here. Chrome 93: no
    color-mix / :has / container queries. */
-.shell{height:calc(100vh - var(--app-header-height));min-height:520px;display:flex;min-width:0;position:relative;background:var(--app-bg);color:var(--text)}
+.shell{--shell-inspector-width:288px;height:calc(100vh - var(--app-header-height));min-height:520px;display:flex;min-width:0;position:relative;background:var(--app-bg);color:var(--text);animation:shell-settle var(--dur-base) var(--ease-standard)}
 .shell-context{display:flex;align-items:center;gap:12px;min-width:0;font-size:12px;color:var(--muted)}
 .shell-context>strong{font-size:13px;color:var(--text);font-weight:650;letter-spacing:.01em;min-width:0;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shell-context .shell-meta{white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -18,7 +18,11 @@
 .shell-rail-btn.busy::after{content:'';position:absolute;right:3px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--surface);animation:rail-ping 1.6s var(--ease-out) infinite}
 @keyframes rail-ping{0%{box-shadow:0 0 0 2px var(--surface),0 0 0 2px var(--accent-ring)}100%{box-shadow:0 0 0 2px var(--surface),0 0 0 9px transparent}}
 
-.shell-drawer{width:248px;flex-shrink:0;display:flex;flex-direction:column;min-height:0;background:var(--surface);border-right:1px solid var(--line);animation:slide-in-left var(--dur-base) var(--ease-out)}
+.shell-drawer{width:248px;flex-shrink:0;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:var(--surface);border-right:1px solid var(--line)}
+/* Contents keep their width while the panel's width glides, so nothing inside reflows frame by frame. */
+.shell-drawer>*{width:247px}
+.drawer-glide-enter-active,.drawer-glide-leave-active{transition:width var(--dur-slow) var(--ease-glide),opacity var(--dur-slow) var(--ease-glide)}
+.drawer-glide-enter-from,.drawer-glide-leave-to{width:0;opacity:0}
 .shell-drawer-head{display:flex;align-items:center;gap:8px;padding:8px 8px 4px 14px;font-size:13px;flex-shrink:0}
 .shell-drawer-head>strong{font-weight:650;letter-spacing:.02em}
 .shell-drawer-head .icon-button{margin-left:auto}
@@ -29,7 +33,10 @@
 .shell-canvas{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
 .shell-bottom{flex-shrink:0;display:flex;align-items:center;gap:6px;min-height:46px;padding:0 10px;background:var(--surface);border-top:1px solid var(--line)}
 
-.shell-inspector{position:relative;width:288px;flex-shrink:0;display:flex;flex-direction:column;min-height:0;overflow:auto;background:var(--surface);border-left:1px solid var(--line);overscroll-behavior:contain;animation:fade-in var(--dur-base) var(--ease-standard)}
+.shell-inspector{position:relative;width:var(--shell-inspector-width);flex-shrink:0;display:flex;flex-direction:column;min-height:0;overflow:auto;background:var(--surface);border-left:1px solid var(--line);overscroll-behavior:contain}
+.inspector-glide-enter-active,.inspector-glide-leave-active{overflow:hidden;transition:width var(--dur-slow) var(--ease-glide),opacity var(--dur-slow) var(--ease-glide)}
+.inspector-glide-enter-from,.inspector-glide-leave-to{width:0;opacity:0}
+.inspector-glide-enter-active>:not(.shell-collapse),.inspector-glide-leave-active>:not(.shell-collapse){width:calc(var(--shell-inspector-width) - 1px)}
 .shell-collapse{position:absolute;right:6px;top:6px;z-index:2;width:26px;height:26px;min-height:26px}
 .shell-inspector-open{position:absolute;right:12px;bottom:100px;z-index:35;display:flex;align-items:center;gap:6px;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--muted);font-size:12px;box-shadow:var(--shadow-md);animation:rise-in var(--dur-base) var(--ease-out)}
 .shell-inspector-open:hover{color:var(--text);border-color:var(--accent)}
@@ -70,13 +77,16 @@
 .shell-progress progress::-moz-progress-bar{background:var(--accent);border-radius:3px}
 
 /* Focus: the whole window becomes the workbench; context moves to a slim bar. */
-.shell.is-focus{position:fixed;inset:0;z-index:45;height:100vh;min-height:0}
+.shell.is-focus{position:fixed;inset:0;z-index:45;height:100vh;min-height:0;animation:focus-rise var(--dur-slow) var(--ease-glide)}
+/* Entering focus, the canvas rises over the header; leaving, it settles back. Opacity and offset only: the layout is already final. */
+@keyframes focus-rise{from{opacity:.75;transform:translateY(var(--app-header-height))}}
+@keyframes shell-settle{from{opacity:.75}}
 .shell-focusbar{flex-shrink:0;display:flex;align-items:center;height:44px;padding:0 10px 0 14px;background:var(--surface);border-bottom:1px solid var(--line);box-shadow:var(--shadow-sm);animation:fade-in var(--dur-base) var(--ease-standard)}
 .shell-focusbar .shell-context{flex:1;justify-content:flex-end}
 .shell-focusbar .shell-context>strong{margin-right:auto}
 
 @media(max-width:1200px){
-  .shell-inspector{width:264px}
+  .shell{--shell-inspector-width:264px}
   .shell-context>strong{max-width:170px}
   /* The frame position is repeated in the bottom bar; drop it before the header overflows. */
   .shell-context .shell-meta{display:none}
@@ -92,6 +102,9 @@
   .shell-drawer{position:absolute;left:46px;top:0;bottom:0;z-index:38;box-shadow:var(--shadow-lg)}
   .shell-center{flex:1 1 calc(100% - 46px);height:calc(100vh - var(--app-header-height));min-height:480px}
   .shell-inspector{width:100%;border-left:0;border-top:1px solid var(--line)}
+  /* Stacked under the canvas here: the panel only fades. */
+  .inspector-glide-enter-from,.inspector-glide-leave-to{width:100%}
+  .inspector-glide-enter-active>:not(.shell-collapse),.inspector-glide-leave-active>:not(.shell-collapse){width:auto}
 }
 @media(max-width:700px){
   .shell-context{flex-wrap:wrap;row-gap:6px}

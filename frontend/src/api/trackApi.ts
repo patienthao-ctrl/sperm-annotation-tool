@@ -208,6 +208,8 @@ export interface TrackResultFile {
 
 export interface TrackMediaItem {
   mediaId: string
+  folderPath?: string
+  sizeBytes?: number
   directoryName: string
   sourceVideoName: string
   videoName: string
@@ -432,6 +434,35 @@ export const trackApi = {
 
   async deleteMedia(mediaId: string) {
     return jsonRequest<{ deleted: boolean; mediaId: string }>(`/track/media/${encodeURIComponent(mediaId)}`, { method: 'DELETE' })
+  },
+
+  /** XHR, because fetch cannot report upload progress. Resolves with any HTTP answer; rejects only when none came. */
+  uploadWithProgress(url: string, file: File, folderPath: string, onProgress: (fraction: number) => void) {
+    return new Promise<{ status: number; data: any }>((resolve, reject) => {
+      const form = new FormData(), xhr = new XMLHttpRequest()
+      form.append('file', file, file.name)
+      form.append('folderPath', folderPath)
+      xhr.open('POST', url)
+      if (tokenStore.get()) xhr.setRequestHeader('Authorization', `Bearer ${tokenStore.get()}`)
+      xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress(event.loaded / event.total) }
+      xhr.onerror = () => reject(new Error('连接中断，上传没有完成'))
+      xhr.onabort = () => reject(new Error('上传被中断'))
+      xhr.onload = () => {
+        if (xhr.status === 401) notifyAuthExpired()
+        let data: any = null
+        try { data = JSON.parse(xhr.responseText) } catch { /* A proxy error page is not JSON; the status still tells. */ }
+        resolve({ status: xhr.status, data })
+      }
+      xhr.send(form)
+    })
+  },
+
+  moveToFolder(mediaIds: string[], path: string) {
+    return jsonRequest<{ moved: number; path: string }>('/library/folder', { method: 'PUT', body: JSON.stringify({ mediaIds, path }) })
+  },
+
+  renameFolder(oldPath: string, newPath: string) {
+    return jsonRequest<{ moved: number; path: string }>('/library/folder/rename', { method: 'POST', body: JSON.stringify({ oldPath, newPath }) })
   },
 
   async listMedia() {

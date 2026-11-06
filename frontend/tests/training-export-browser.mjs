@@ -9,7 +9,7 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const fixture = JSON.parse(fs.readFileSync('work/confirmation-browser-fixture.json'))
 const origin = process.env.CONFIRMATION_ORIGIN || 'http://127.0.0.1:5373'
 const browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL || 'chrome', headless: true })
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+const page = await browser.newPage({reducedMotion:'reduce',viewport: { width: 1440, height: 900 } })
 page.setDefaultTimeout(15000)
 if (process.env.LEGACY_BROWSER === '1') await useLegacyBrowserAPIs(page)
 const errors = [], logs = []
@@ -48,8 +48,12 @@ async function moveFirstBox(dx = 14, dy = 6, frameOne = true) {
   await poll(async () => await page.evaluate(() => JSON.stringify(window.ws.currentObjects.value[0].bbox))!==beforeGeometry,'actual drag changes the box geometry')
 }
 const exportButton = () => page.getByTestId('annotation-export')
-async function openExport() {
+async function openPicker() {
   await poll(() => exportButton().isEnabled(), 'export enabled'); await exportButton().click()
+  await page.getByTestId('batch-export').waitFor()
+}
+async function pickerNext() {
+  await poll(() => page.getByTestId('batch-export-next').isEnabled(), 'a video is chosen'); await page.getByTestId('batch-export-next').click()
   await page.getByRole('dialog').getByRole('heading', { name: '导出训练数据集' }).waitFor()
   await page.waitForFunction(() => !!document.querySelector('.training-export-summary'))
 }
@@ -143,6 +147,38 @@ try {
   const passed = await reviewState(VIDEO.mid)
   check(passed.status === 'passed' && passed.review.changes.moved >= 1, 'review pass records the in-place correction as a moved box')
   check((await page.getByTestId('header-review-status').innerText()) === '审查通过', 'header reflects the passed review')
+
+  // The round just passed is on the records page; a failed read is not an empty list.
+  await button('标注记录').click(); await page.locator('.records-page').waitFor()
+  await page.route('**/api/annotation-review/records', route => route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"读取失败（模拟）"}' }))
+  await button('刷新记录').click()
+  await page.getByTestId('records-tab-review').click(); await page.getByTestId('review-records-error').waitFor()
+  check(!(await page.getByTestId('review-records').innerText()).includes('还没有审查记录'), 'a failed read of the review records does not look like an empty list')
+  await page.getByTestId('records-tab-annotation').click()
+  check(await page.locator('.records-page .error-banner').count() === 0, 'the annotation list stays usable when the review records fail')
+  await page.unroute('**/api/annotation-review/records')
+  await button('刷新记录').click()
+  await page.getByTestId('records-tab-review').click()
+  const recordRow = page.getByTestId('review-records').locator('tbody tr').filter({ hasText: VIDEO.name }).first()
+  await recordRow.waitFor()
+  const recordText = await recordRow.innerText()
+  check(recordText.includes('第 1 轮') && recordText.includes('审查通过') && recordText.includes('当前有效') && recordText.includes('60 / 60 帧') && recordText.includes('移动'), 'the passed round is listed with its result, frames and changes')
+  check((await page.getByTestId('records-tab-review').getAttribute('aria-selected')) === 'true' && await page.getByRole('textbox', { name: '搜索审查记录' }).isVisible(), 'the review list has its own search')
+  await page.route('**/api/annotation-review/records/*', route => route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"读取失败（模拟）"}' }))
+  await recordRow.getByTestId('review-record-toggle').click()
+  const recordDetail = page.getByTestId('review-record-detail')
+  await recordDetail.getByRole('alert').waitFor()
+  await page.unroute('**/api/annotation-review/records/*')
+  await recordDetail.getByRole('button', { name: '重试' }).click()
+  await recordDetail.getByText('逐帧确认').waitFor()
+  const detailText = await recordDetail.innerText()
+  check(detailText.includes('60 帧') || detailText.includes('确认 '), 'the detail names who confirmed the frames')
+  check(detailText.includes('移动对象'), 'the detail names the objects the round moved')
+  await page.screenshot({ path: 'output/playwright/records-review.png' })
+  await page.getByRole('textbox', { name: '搜索审查记录' }).fill('没有这个视频')
+  check((await page.getByTestId('review-records').innerText()).includes('没有匹配的记录'), 'searching the review records can come up empty')
+  await button('审查模式').click(); await page.getByTestId('review-panel').waitFor(); await attach(); await ready()
+
   for (const [width, height] of [[1366, 768], [1180, 760], [760, 760]]) {
     await page.setViewportSize({ width, height })
     for (const theme of ['light', 'dark']) {
@@ -153,7 +189,7 @@ try {
   }
   await page.setViewportSize({ width: 1440, height: 900 })
 
-  await openExport()
+  await openPicker(); await pickerNext()
   check(await page.getByRole('combobox', { name: '划分方式' }).inputValue() === 'video', 'export defaults to video-level split')
   await page.screenshot({ path: 'output/playwright/training-export-dialog.png' })
   await downloadFrom('生成并下载 ZIP', 'output/playwright/training-yolo.zip')
@@ -169,13 +205,15 @@ with zipfile.ZipFile(sys.argv[1]) as z:
 `, 'output/playwright/training-yolo.zip')
   check(single.frames === 60 && single.objects === 118, 'single-video ZIP keeps the whole video in one split and includes the original video')
 
-  // A second reviewed video exported earlier can be merged into one package.
+  // A second reviewed video needs no earlier export: the picker offers it directly.
   await passReview(page, fixture.token, PORTRAIT.mid)
-  const preview = await json('/datasets/annotations/'+PORTRAIT.mid+'/preview')
-  await json('/datasets/annotations/'+PORTRAIT.mid+'/snapshot', 'POST', { expectedSourceRevision: preview.sourceRevision, confirmComplete: true, explicitEmptyFrameRanges: [] })
-  await button('关闭').click(); await openExport()
-  const other = page.locator('.training-export-videos label').filter({ hasText: PORTRAIT.name })
+  await button('关闭').click(); await openPicker()
+  const other = page.getByTestId('batch-export-list').locator('label').filter({ hasText: PORTRAIT.name })
+  await other.waitFor()
+  check(await other.getByRole('checkbox').isChecked() === false, 'only the open video starts chosen')
   await other.getByRole('checkbox').check()
+  await pickerNext()
+  await page.waitForFunction(() => !!document.querySelector('.training-export-summary'))
   await poll(async () => (await page.locator('.training-export-videos').last().locator('label').count()) === 2, 'plan lists both videos')
   await page.getByRole('combobox', { name: `${PORTRAIT.name} 的划分` }).selectOption('val')
   await page.getByRole('combobox', { name: `${VIDEO.name} 的划分` }).selectOption('train')
@@ -200,6 +238,69 @@ with zipfile.ZipFile(sys.argv[1]) as z:
 `, 'output/playwright/training-merged.zip')
   check(merged.frames === 120 && merged.videos === 2 && merged.whole && merged.splits.join() === 'train,val', 'merged package keeps each video whole in its chosen split')
 
+  // The job list finds the package again after the dialog closed, and filters hide what was exported.
+  await button('关闭').click()
+  await page.screenshot({ path: 'output/playwright/library-before-picker.png' }); await openPicker()
+  await page.screenshot({ path: 'output/playwright/batch-export-picker.png' })
+  await poll(async () => await page.getByTestId('batch-export-jobs').locator('li').count() >= 2, 'jobs listed')
+  const [again1] = await Promise.all([page.waitForEvent('download'), page.getByTestId('batch-job-download').first().click()])
+  check((await again1.suggestedFilename()).includes('等2段'), 'the job list downloads a finished package with a readable name')
+  await poll(async () => await page.getByTestId('batch-export-list').locator('label').filter({ hasText: PORTRAIT.name }).count() === 0, 'exported video hidden')
+  await page.getByTestId('batch-export-new').uncheck()
+  check(await page.getByTestId('batch-export-list').locator('label').filter({ hasText: PORTRAIT.name }).count() === 1, 'unticking the filter shows exported videos again')
+  await page.getByTestId('batch-export-close').click()
+
+  // A folder with subfolders, a duplicate, a broken video and unrelated files.
+  const batchDir = 'output/playwright/batch-folder/第一批'
+  fs.rmSync('output/playwright/batch-folder', { recursive: true, force: true }); fs.mkdirSync(batchDir + '/样本A', { recursive: true })
+  python(`
+import cv2,numpy as np,sys
+for name,shade in (('a-001.avi',30),('b-001.avi',200)):
+  w=cv2.VideoWriter(sys.argv[1]+'/'+name,cv2.VideoWriter_fourcc(*'MJPG'),10,(64,48))
+  for i in range(3): w.write(np.full((48,64,3),shade+i,dtype=np.uint8))
+  w.release()
+print('{}')
+`, batchDir)
+  fs.renameSync(batchDir + '/a-001.avi', batchDir + '/样本A/a-001.avi')
+  fs.writeFileSync(batchDir + '/坏视频.avi', 'not a video'); fs.writeFileSync(batchDir + '/说明.txt', 'x'); fs.writeFileSync(batchDir + '/.DS_Store', 'x')
+  await page.goto(origin+'/annotate'); await attach(); await openVideo(VIDEO.name, VIDEO.mid); await ready()
+  await page.getByTestId('toggle-workbench-library').click()
+  await page.getByTestId('folder-input').setInputFiles(batchDir)
+  await page.getByTestId('import-confirm').waitFor()
+  check((await page.getByTestId('import-summary').innerText()).includes('视频 3 段') && (await page.getByTestId('import-summary').innerText()).includes('跳过其他文件 2'), 'the folder is sorted into videos and skipped files before anything uploads')
+  check(await page.getByTestId('import-folder-name').inputValue() === '第一批', 'the folder name defaults to the chosen directory')
+  const selectedBefore = await page.evaluate(() => window.ws.selectedMediaId.value)
+  await page.getByTestId('import-start').click()
+  await poll(async () => (await page.getByTestId('import-progress').innerText()).includes('导入完成'), 'batch import finished')
+  const progressText = await page.getByTestId('import-progress').innerText()
+  check(progressText.includes('成功 2') && progressText.includes('失败 1'), 'a broken file does not stop the others')
+  check(await page.evaluate(() => window.ws.selectedMediaId.value) === selectedBefore, 'importing does not switch the open video')
+  await page.getByTestId('import-report-toggle').click()
+  check((await page.getByTestId('import-report').innerText()).includes('坏视频.avi'), 'the report names the failed file')
+  const folders = async () => Object.fromEntries((await json('/track/media')).items.filter(i => /^(a|b)-001/.test(i.sourceVideoName)).map(i => [i.sourceVideoName, i.folderPath]))
+  check(JSON.stringify(await folders()) === JSON.stringify({ 'a-001.avi': '第一批/样本A', 'b-001.avi': '第一批' }), 'videos land in folders that follow the directory tree')
+  check(await page.getByTestId('library-folder').filter({ hasText: '样本A' }).count() === 1, 'the library shows the folder tree')
+  await page.screenshot({ path: 'output/playwright/library-folders.png' })
+  // Picking the same folder again uploads nothing new (the broken file aside).
+  await page.getByTestId('folder-input').setInputFiles(batchDir)
+  await page.getByTestId('import-confirm').waitFor()
+  check(await page.getByTestId('import-upload-existing').isVisible() && !(await page.getByTestId('import-upload-existing').isChecked()), 'already imported videos are skipped by default')
+  await page.getByRole('dialog', { name: '确认导入' }).getByRole('button', { name: '取消' }).click()
+  // Renaming moves everything below the folder; the status filter narrows the list.
+  await page.getByTestId('library-organize').click()
+  await page.getByTestId('organizer-rename-from').selectOption('第一批')
+  await page.getByTestId('organizer-rename-to').fill('十月第一批')
+  await page.getByTestId('organizer-rename').click()
+  await poll(async () => (await folders())['a-001.avi'] === '十月第一批/样本A', 'folder renamed')
+  await page.getByRole('dialog', { name: '整理文件夹' }).getByRole('button', { name: '关闭' }).click()
+  await page.getByTestId('library-status').selectOption('passed')
+  check(await page.locator('.asset-card').filter({ hasText: 'a-001.avi' }).count() === 0, 'the status filter hides videos that have not passed')
+  await page.getByTestId('library-status').selectOption('')
+  for (const item of (await json('/track/media')).items.filter(i => /^(a|b)-001/.test(i.sourceVideoName))) check((await api('/track/media/'+item.mediaId, 'DELETE')).ok(), 'batch test video removed')
+  await page.reload(); await attach(); await ready()
+
+  // The statistics checks start by closing an open dialog.
+  await openPicker()
   await statisticsExportChecks(page, fixture, origin)
 
   // Any later edit makes the pass stale: export locks and old archives stop downloading.
@@ -212,7 +313,11 @@ with zipfile.ZipFile(sys.argv[1]) as z:
   await poll(async () => (await json('/track/workspace/'+VIDEO.mid)).revision > rev, 'edit saved')
   await poll(async () => (await reviewState(VIDEO.mid)).status === 'stale', 'review stale')
   await poll(async () => (await page.getByTestId('header-review-status').innerText()) === '需重新审查', 'header stale')
-  check(await exportButton().isDisabled(), 'an edit after passing locks export until re-review')
+  check((await json('/annotation-review/records')).items.find(row => row.mediaId === VIDEO.mid)?.standing === 'stale', 'the record of the pass says later edits no longer leave it covering the content')
+  await openPicker()
+  check(await page.getByTestId('batch-export-list').locator('label').filter({ hasText: VIDEO.name }).count() === 0, 'an edit after passing removes the video from export until re-review')
+  check(/\d+ 段需重新审查/.test(await page.getByTestId('batch-export-stale').innerText()), 'the picker says how many videos need re-review')
+  await page.getByTestId('batch-export-close').click()
   check((await api(`/datasets/exports/${firstJob}/download`)).status() === 409, 'archives from the old snapshot stop downloading')
   await page.getByTestId('go-review').click(); await page.waitForURL('**/review'); await attach(); await ready()
   await page.getByTestId('review-start').click(); await page.getByTestId('review-progress').waitFor()

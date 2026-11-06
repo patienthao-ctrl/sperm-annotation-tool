@@ -22,15 +22,6 @@ export interface ExportSummary {
   splitFrames?: Record<DatasetSplit, number>
   videos?: { finalVersionId: string; frameCount: number; objectCount: number; split: DatasetSplit | null }[]
 }
-export interface AnnotationSnapshotItem {
-  finalVersionId: string
-  mediaId: string
-  name: string
-  frameCount: number
-  createdAt: string
-  valid: boolean
-  reason: string | null
-}
 export interface ExportJob {
   exportId: string
   state: 'queued' | 'running' | 'ready' | 'failed' | 'invalidated'
@@ -72,10 +63,16 @@ async function request<T>(path: string, method = 'GET', body?: unknown, key?: st
   }
 }
 
+export interface ExportListItem {
+  exportId: string; state: ExportJob['state'] | string; completedFrames: number; totalFrames: number
+  errorMessage: string | null; createdAt: string; updatedAt: string; videoCount: number; mediaIds: string[]
+}
+
 export const trainingExportApi = {
+  list: () => request<{ items: ExportListItem[]; exported: Record<string, string> }>('/exports'),
+  remove: (id: string) => request<{ deleted: boolean }>(`/exports/${id}`, 'DELETE'),
   annotationSnapshot: (mediaId:string, body:unknown, key:string) => request<{finalVersionId:string}>(`/annotations/${mediaId}/snapshot`, 'POST', body, key),
   preview: (ids: string[], split?: SplitOptions) => request<ExportSummary>('/exports/preview', 'POST', { finalVersionIds: ids, ...split }),
-  annotationSnapshots: () => request<{ items: AnnotationSnapshotItem[] }>('/annotations/snapshots'),
   create: (settings: ExportSettings, key: string) => request<ExportJob>('/exports', 'POST', settings, key),
   status: (id: string) => request<ExportJob>(`/exports/${id}`),
 }
