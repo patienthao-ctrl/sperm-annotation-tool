@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright')
 const f=JSON.parse(fs.readFileSync('work/confirmation-browser-fixture.json'))
-const b=await chromium.launch({channel:'chrome',headless:true}),p=await b.newPage({viewport:{width:1440,height:900}})
+const b=await chromium.launch({channel:'chrome',headless:true}),p=await b.newPage({reducedMotion:'reduce',viewport:{width:1440,height:900}})
 const errors=[];p.on('pageerror',e=>errors.push(String(e)));let checks=0
 const check=(ok,msg)=>{assert(ok,msg);console.log('PASS',++checks,msg)}
 const origin=process.env.CONFIRMATION_ORIGIN||'http://127.0.0.1:5373'

@@ -9,7 +9,7 @@ const openAsset=async(target,locator)=>{const toggle=target.getByTestId('toggle-
 const fixture = JSON.parse(fs.readFileSync(process.env.ANNOTATION_CONTROLS_FIXTURE || 'work/annotation-controls-browser-fixture.json', 'utf8'))
 const origin = process.env.ANNOTATION_ORIGIN || process.env.CONFIRMATION_ORIGIN || 'http://127.0.0.1:5373'
 const browser = await chromium.launch({ channel: 'chrome', headless: true })
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+const page = await browser.newPage({reducedMotion:'reduce',viewport: { width: 1440, height: 900 } })
 page.setDefaultTimeout(15000)
 const errors = [], consoleLog = [], checks = [], trackStarts = [], feedbackAttempts = [], deleteAttempts = []
 let loseFeedbackResponse = false, loseDeletionResponse = false

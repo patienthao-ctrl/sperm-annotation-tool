@@ -59,7 +59,7 @@ async function draw(mid, count=1, dense=false) {
   await poll(async()=>(await api('/track/workspace/'+mid)).manualAnnotations?.length===count,'durable manual count '+count)
 }
 async function caseRun(name, run) {
-  context=await browser.newContext({viewport:{width:1366,height:768},acceptDownloads:true})
+  context=await browser.newContext({reducedMotion:'reduce',viewport:{width:1366,height:768},acceptDownloads:true})
   page=await context.newPage();page.setDefaultTimeout(15000);page.on('dialog',d=>d.accept())
   observations={};const errors=[];page.on('pageerror',e=>errors.push(String(e)))
   const started=Date.now()

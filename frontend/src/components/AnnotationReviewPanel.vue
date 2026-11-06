@@ -142,13 +142,13 @@ defineExpose({ confirm, next })
 </template>
 
 <style scoped>
-.review-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1 1 0; overflow-y: auto; overscroll-behavior: contain; }
+.review-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1 1 0; overflow-y: auto; overscroll-behavior: contain; animation: slide-in-right var(--dur-base) var(--ease-out); }
 .review-status { margin-left: auto; font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 10px; background: var(--surface-subtle); color: var(--muted); }
 .review-status.open { background: var(--accent-soft); color: var(--accent); }
 .review-status.passed { background: var(--b-soft); color: var(--success); }
 .review-status.stale { background: var(--warning-soft); color: var(--warning); }
 .review-note { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
-.review-warning { margin: 0; background: var(--warning-soft); color: var(--warning); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+.review-warning { margin: 0; background: var(--warning-soft); color: var(--warning); border-radius: 6px; padding: 6px 8px; font-size: 12px; animation: rise-in var(--dur-base) var(--ease-out); }
 .review-changes { margin: 0; font-size: 12px; color: var(--text); }
 .review-wide { width: 100%; }
 .review-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }

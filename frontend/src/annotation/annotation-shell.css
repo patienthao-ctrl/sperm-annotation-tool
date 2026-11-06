@@ -9,7 +9,22 @@
 .shell-annotate .canvas-status{top:auto;bottom:14px}
 /* Toolbar and enhancement popover are rows above the image, in normal flow. */
 .shell-annotate .annotation-canvas>.shell-tools{order:-2;position:relative;left:auto;top:auto;margin:0;width:100%;flex:none;flex-wrap:wrap;border:0;border-bottom:1px solid var(--line);border-radius:0;box-shadow:none;padding:4px 8px}
-.annot-enhance{order:-1;position:relative;left:auto;top:auto;margin:6px 12px 12px;width:fit-content;max-width:calc(100% - 24px);min-height:48px;max-height:160px;flex:0 1 auto;overflow:auto;overscroll-behavior:contain;z-index:34;border:1px solid var(--line);border-radius:var(--radius-md);box-shadow:var(--shadow-lg);background:var(--surface);animation:rise-in var(--dur-base) var(--ease-out)}
+.annot-enhance{order:-1;position:relative;left:auto;top:auto;margin:6px 12px 12px;width:fit-content;max-width:calc(100% - 24px);min-height:48px;max-height:160px;flex:0 1 auto;overflow:auto;overscroll-behavior:contain;z-index:34;border:1px solid var(--line);border-radius:var(--radius-md);box-shadow:var(--shadow-lg);background:var(--surface);animation:none}
+/* The current stage, right above the image and still there in focus mode. */
+.mode-tag{animation:rise-in var(--dur-base) var(--ease-out);flex:none;display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px 0 8px;margin-right:2px;border-radius:var(--radius-sm);background:var(--accent);color:var(--on-accent);font-size:var(--fs-xs);font-weight:650;letter-spacing:.04em;white-space:nowrap}
+/* Review also tints the toolbar and rims the whole canvas, so the stage shows from the corner of the eye. */
+.shell-annotate .annotation-canvas>.shell-tools{transition:background-color var(--dur-slow) var(--ease-standard),border-color var(--dur-slow) var(--ease-standard)}
+.review-mode .shell-annotate .annotation-canvas>.shell-tools{background:var(--accent-soft);border-bottom-color:var(--accent)}
+.annotation-canvas::after{content:'';position:absolute;inset:0;z-index:34;border:3px solid var(--accent);pointer-events:none;opacity:0;transition:opacity var(--dur-slow) var(--ease-standard)}
+.review-mode .annotation-canvas::after{opacity:1}
+/* The picture fades in when a video or image opens. Stepping frames keeps the element, and stopping playback swaps in the same picture: no fade there. */
+.picture-enter{animation:fade-in var(--dur-base) var(--ease-standard)}
+.annot-ai{animation:slide-in-right var(--dur-base) var(--ease-out)}
+.shell-annotate .canvas-status{animation:fade-in var(--dur-base) var(--ease-standard)}
+.annot-objects .object-selection>*{animation:fade-in var(--dur-fast) var(--ease-standard)}
+.collaboration-card{animation:rise-in var(--dur-base) var(--ease-out)}
+.annot-enhance.enhance-glide-enter-active,.annot-enhance.enhance-glide-leave-active{overflow:hidden;transition:max-height var(--dur-slow) var(--ease-glide),min-height var(--dur-slow) var(--ease-glide),margin var(--dur-slow) var(--ease-glide),padding var(--dur-slow) var(--ease-glide),opacity var(--dur-slow) var(--ease-glide)}
+.annot-enhance.enhance-glide-enter-from,.annot-enhance.enhance-glide-leave-to{max-height:0;min-height:0;margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0;opacity:0}
 .annot-coords{padding:0 8px;font-size:11px;color:#b9cad8;font-variant-numeric:tabular-nums;white-space:nowrap}
 .annot-time{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 
@@ -77,8 +92,10 @@
 .annotation-page .edge-discovery-option { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; margin-block: 6px; }
 
 /* Review status in the header and media list; dashed box for a candidate head without a label. */
-.review-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:2px 10px 2px 8px;border-radius:10px;background:var(--surface-subtle);color:var(--muted);white-space:nowrap}.review-chip::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+.review-chip{transition:background-color var(--dur-slow) var(--ease-standard),color var(--dur-slow) var(--ease-standard);display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:2px 10px 2px 8px;border-radius:10px;background:var(--surface-subtle);color:var(--muted);white-space:nowrap}.review-chip::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+.review-chip small{font-size:var(--fs-2xs);font-weight:500;opacity:.8}
 .review-chip.open{background:var(--accent-soft);color:var(--accent)}
+.mode-review .app-header .review-chip{background:var(--surface)}
 .review-chip.passed{background:var(--b-soft);color:var(--success)}
 .review-chip.stale{background:var(--warning-soft);color:var(--warning)}
 .asset-review{display:inline-block;margin-left:6px;font-weight:500;color:var(--muted)}

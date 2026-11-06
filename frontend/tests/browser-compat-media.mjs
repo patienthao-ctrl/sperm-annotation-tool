@@ -9,7 +9,7 @@ const videoFile = process.env.COMPAT_VIDEO || 'work/e2e-confirm-ux-compat-storag
 assert(videoFile.includes('work/'), 'Only generated fixture videos may be uploaded by this test')
 const origin = process.env.COMPAT_ORIGIN || 'http://hospital-test.local:5377'
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--host-resolver-rules=MAP hospital-test.local 127.0.0.1', '--no-proxy-server'] })
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+const page = await browser.newPage({reducedMotion:'reduce',viewport: { width: 1440, height: 900 } })
 const errors = [], logs = [], deletes = []
 page.on('pageerror', e => errors.push(String(e)))
 page.on('console', m => logs.push({ type: m.type(), text: m.text() }))

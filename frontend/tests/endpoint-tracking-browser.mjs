@@ -7,7 +7,7 @@ if(process.env.CRITICAL_AI_MODE==='simulated'){
   const origin=process.env.CRITICAL_ORIGIN
   assert(['localhost','127.0.0.1'].includes(new URL(origin).hostname))
   const browser=await chromium.launch({channel:process.env.CHROME_CHANNEL||'chrome',headless:true})
-  const page=await browser.newPage({viewport:{width:1366,height:768}})
+  const page=await browser.newPage({reducedMotion:'reduce',viewport:{width:1366,height:768}})
   page.setDefaultTimeout(15000)
   page.on('dialog',d=>d.accept())
   const errors=[];page.on('pageerror',e=>errors.push(String(e)))

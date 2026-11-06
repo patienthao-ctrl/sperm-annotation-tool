@@ -9,6 +9,7 @@ import AnnotationReviewPanel from '../components/AnnotationReviewPanel.vue'
 import AppNotice from '../components/AppNotice.vue'
 import { useNoticeCollapse } from '../annotation/useNoticeCollapse'
 import { TOAST_DURATION } from '../annotation/notices'
+import { motionAllowed } from '../utils/motion'
 import ReviewZoomPreview from '../components/ReviewZoomPreview.vue'
 import AnnotationMinimap from '../components/AnnotationMinimap.vue'
 import WorkbenchShell from '../components/WorkbenchShell.vue'
@@ -94,6 +95,17 @@ function seekReviewFrame(frame: number) {
   void seekFrame(frame)
 }
 watch(reviewMediaId, id => { void review.load(id) }, { immediate: true })
+const pictureEnters = ref(true)
+watch(selectedMediaId, () => { pictureEnters.value = true })
+watch(isPlaying, playing => { if (playing) pictureEnters.value = false })
+// App.vue keeps this page mounted across the two stages. The leave guard has already saved and cancelled gestures;
+// what a remount used to do is limited to this. The frame, zoom, selection and caches deliberately stay.
+watch(reviewing, () => {
+  help.value = false; hiddenBoxes.value = false // A reviewer has to see the boxes being confirmed.
+  cancelTrackingRestartRequest(); closeRestartDialog()
+  if (deleteDialog.value?.open) deleteDialog.value.close()
+  void syncWorkspace(); void review.load(reviewMediaId.value); void review.loadSummary()
+})
 // The minimap covers part of the image, so it is shown only on request.
 const minimapOn = ref((() => { try { return localStorage.getItem('annotation-minimap') === '1' } catch { return false } })())
 watch(minimapOn, value => { try { localStorage.setItem('annotation-minimap', value ? '1' : '0') } catch {} })
@@ -675,7 +687,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <!-- The AI card already shows the full bar; the header carries it only when that card is off screen. -->
         <TrackingProgress v-if="!inspectorVisible || reviewing" variant="compact" :view="currentTrackingProgress" :finished="currentTrackingFinished" />
         <button class="icon-button" title="快捷键 (?)" aria-label="快捷键" @click="help=true"><AppIcon name="keyboard" :size="17" /></button>
-        <span v-if="reviewMediaId && review.status.value" class="review-chip" :class="review.status.value" data-testid="header-review-status">{{ review.label(reviewMediaId,review.status.value) }}</span>
+        <span v-if="reviewMediaId && review.status.value" class="review-chip" :class="review.status.value" title="这段视频的审查进度，不是当前页面的模式"><small>本视频</small><span data-testid="header-review-status">{{ review.label(reviewMediaId,review.status.value) }}</span></span>
         <button v-if="!reviewing && reviewMediaId && review.status.value!=='passed'" class="btn-secondary" data-testid="go-review" @click="router.push('/review')">去审查</button>
         <button v-if="reviewing" class="quiet-button" @click="router.push('/annotate')">回到标注</button>
         <AnnotationDatasetExport />
@@ -701,14 +713,16 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             <div ref="stageRef" class="annotation-stage" :style="stageStyle">
               <template v-if="selectedMedia"><template v-if="isVideo">
                 <video :key="selectedMedia.id" ref="videoRef" :src="selectedMedia.url" class="stage-media" :class="{'hidden-video':videoPlaybackFallback||(exactFrameUrl&&!isPlaying)}" :style="{filter}" preload="metadata" playsinline @loadedmetadata="onVideoLoaded" @timeupdate="onVideoTimeUpdate" @ended="onVideoEnded" @error="onVideoError" />
-                <img v-if="exactFrameUrl&&(!isPlaying||videoPlaybackFallback)" ref="exactFrameImageRef" :src="exactFrameUrl" :alt="`${selectedMedia.name} 第 ${currentFrame+1} 帧`" class="stage-media exact-media" :style="{filter}" />
-              </template><img v-else :key="selectedMedia.id" ref="imageRef" :src="selectedMedia.url" :alt="selectedMedia.name" class="stage-media" :style="{filter}" @load="onImageLoaded" /></template>
-              <div v-else class="canvas-empty"><AppIcon name="upload" :size="36" /><h3>把注意力留给画面</h3><p>导入一段视频，开始精细标注。</p><button class="btn-primary" @click="openFilePicker('video')">导入视频</button></div>
+                <img v-if="exactFrameUrl&&(!isPlaying||videoPlaybackFallback)" ref="exactFrameImageRef" :src="exactFrameUrl" :alt="`${selectedMedia.name} 第 ${currentFrame+1} 帧`" class="stage-media exact-media" :class="{'picture-enter':pictureEnters}" :style="{filter}" />
+              </template><img v-else :key="selectedMedia.id" ref="imageRef" :src="selectedMedia.url" :alt="selectedMedia.name" class="stage-media picture-enter" :style="{filter}" @load="onImageLoaded" /></template>
+              <div v-else-if="reviewing" class="canvas-empty"><AppIcon name="folder" :size="36" /><h3>选择一段视频开始审查</h3><p>在左侧素材库里选择要审查的视频。</p></div><div v-else class="canvas-empty"><AppIcon name="upload" :size="36" /><h3>把注意力留给画面</h3><p>导入一段视频，开始精细标注。</p><button class="btn-primary" @click="openFilePicker('video')">导入视频</button></div>
               <div ref="annotationHitRef" data-testid="annotation-hit" class="annotation-hit" :class="{panning:spaceHeld||pan,selecting:activeTool==='select',locked:editingBlocked}" @click="stageClick" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="cancelPointer" @lostpointercapture="cancelPointer" @pointerleave="mousePixel=null" />
               <AnnotationOverlay :objects="displayObjects" :selected="selectedObjectId" :width="stageSize.w" :height="stageSize.h" :draft="tempBbox" :labels="labels" :hidden="hiddenBoxes || (!!frameError && !exactFrameUrl)" />
             </div>
           </div>
           <div class="shell-tools" aria-label="标注工具">
+            <span :key="mode" class="mode-tag" data-testid="workbench-mode"><AppIcon :name="reviewing?'check':'box'" :size="14" />{{ reviewing?'审查模式':'标注模式' }}</span>
+            <i class="shell-tools-sep" />
             <button v-for="tool in ([['select','cursor','选择','V'],['bbox','box','画框','B']] as const)" :key="tool[0]" class="shell-tool" :class="{active:activeTool===tool[0]}" :aria-pressed="activeTool===tool[0]" :disabled="editingBlocked" :title="`${tool[2]} (${tool[3]})`" :aria-label="tool[2]" @click="selectTool(tool[0])"><AppIcon :name="tool[1]" :size="17" /></button>
             <button class="shell-tool" :class="{active:activeTool==='head'}" :aria-pressed="activeTool==='head'" :disabled="editingBlocked||!isVideo" title="点击头部自动生成框，生成后可微调" aria-label="点选头部" @click="selectTool('head')"><AppIcon name="box" :size="17" /><span>点选头部</span></button>
             <i class="shell-tools-sep" />
@@ -729,7 +743,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             <span>{{ headBoxBusy?'正在识别点击处的头部…':headBoxError }}</span>
             <button class="quiet-button" @click="headBoxBusy?cancelHeadBox():headBoxError=''">{{ headBoxBusy?'取消':'关闭' }}</button>
           </div></Transition>
-          <div v-if="enhancing" class="annot-enhance enhancement-bar"><button v-for="p in ['原图','暗场','低对比']" :key="p" class="quiet-button" @click="enhancement(p)">{{ p }}</button><label>亮度 <input v-model.number="brightness" aria-label="亮度" type="range" min="50" max="200" /></label><label>对比 <input v-model.number="contrast" aria-label="对比度" type="range" min="50" max="220" /></label><label><input v-model="inverted" type="checkbox" />反相</label><span>只影响显示</span></div>
+          <Transition name="enhance-glide" :css="motionAllowed"><div v-if="enhancing" class="annot-enhance enhancement-bar"><button v-for="p in ['原图','暗场','低对比']" :key="p" class="quiet-button" @click="enhancement(p)">{{ p }}</button><label>亮度 <input v-model.number="brightness" aria-label="亮度" type="range" min="50" max="200" /></label><label>对比 <input v-model.number="contrast" aria-label="对比度" type="range" min="50" max="220" /></label><label><input v-model="inverted" type="checkbox" />反相</label><span>只影响显示</span></div></Transition>
           <AnnotationMinimap v-if="selectedMedia && minimapOn" :source="minimapSource" :scroller="scrollContainerRef" :stage="stageRef" :media-width="selectedMedia.width||4" :media-height="selectedMedia.height||3" :redraw-key="`${currentMediaId}:${currentFrame}:${exactFrameUrl}:${stageSize.w}`" />
           <div v-if="exactFrameLoading||workspaceRestoring||isAiBusy||currentRemoteTracking" class="canvas-status" data-testid="canvas-status">{{ isAiBusy?'AI 正在追踪本视频 · 可切换到其他视频继续标注':currentRemoteTracking?`${currentRemoteTracking.userName||'其他人'}正在追踪本视频 · 完成后自动刷新，可先标注其他视频`:workspaceRestoring?'正在恢复工作区…':'正在读取帧…' }}</div>
           <div v-if="frameError" class="canvas-error" role="alert">{{ frameError }}<button class="btn-secondary" @click="retryExactFrame">重试读取</button></div>

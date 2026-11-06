@@ -2,7 +2,7 @@
 
 ## 当前入口
 
-标注 → 审查 → 导出。审查是 `pages/AnnotatePage.vue` 的 `mode="review"`（`App.vue` 在 `/review` 渲染），右侧换成 `components/AnnotationReviewPanel.vue`，状态共享于 `stores/annotationReview.ts` → `api/annotationReviewApi.ts` → `backend/app/annotation_review_routes.py` / `annotation_review.py`。导出：`components/AnnotationDatasetExport.vue`（审查通过才可用）→ `annotation_export.py`（`require_passed` 门槛）→ `training_export` 队列。
+标注 → 审查 → 导出。审查是 `pages/AnnotatePage.vue` 的 `mode="review"`（`App.vue` 让 `/annotate` 与 `/review` 共用一个实例，切换不重载），右侧换成 `components/AnnotationReviewPanel.vue`，状态共享于 `stores/annotationReview.ts` → `api/annotationReviewApi.ts` → `backend/app/annotation_review_routes.py` / `annotation_review.py`。导出：`components/AnnotationDatasetExport.vue`（审查通过才可用）→ `annotation_export.py`（`require_passed` 门槛）→ `training_export` 队列。
 
 Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前端依赖见 [package.json](../frontend/package.json)，Python 依赖见 [requirements.txt](../backend/requirements.txt)，不在说明文档复制版本号。
 
@@ -40,7 +40,8 @@ Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前�
 | 训练集导出 | `components/TrainingDatasetExport.vue`、`api/trainingExportApi.ts`、`backend/app/training_export.py` 与 `_routes.py` |
 | 自动质量审计与只读提取 | `backend/app/quality_audit.py` / `audit_export.py`、根 `export-audit.sh`；统计仓库单独检出到 `标注统计/`，不纳入主仓库或镜像 |
 | 全量流程统计 ZIP | `components/StatisticsDataExport.vue`、`api/statisticsExportApi.ts`、`backend/app/statistics_export.py`、`statistics_export_jobs.py` 与 `statistics_export_routes.py`；入口在标注记录页，兼容外部 export_statistics_data.py 的格式，生产代码不放 tests |
-| 记录查询 | `pages/ResultsPage.vue`、`backend/app/db.py` |
+| 记录查询 | `pages/ResultsPage.vue`：标注记录（`backend/app/db.py`）与审查记录（`components/ReviewRecordDetail.vue`、`backend/app/annotation_review_records.py`） |
+| 动效 | `style.css` 的 `--dur-*`/`--ease-*` 与阶段配色，`workbench/shell.css` 的面板过渡，`utils/motion.ts`（减弱动效开关、列表行滑动、主题渐变）；规则见 WORKFLOW |
 | 媒体/工作区/Tracking API | `api/trackApi.ts`、`api/httpAnnotationApi.ts`、`backend/app/main.py` |
 | Tracking 编排 / 模型 / 异常 | `backend/app/tracker.py`、`services/sam3_engine.py`、`services/anomaly_detector.py`、`services/annotation_seed.py` |
 | 异常后较早帧重建 | `pages/AnnotatePage.vue` 的确认窗口、`components/AnnotationTrackingFeedback.vue`、`stores/workspace/trackingActions.ts` / `api/trackApi.ts`、`backend/app/tracking_restart.py`；持久暂停在 `annotation_state.py`，版本/SQL 收据/跨文件恢复见 API 与 STORAGE_LAYOUT |

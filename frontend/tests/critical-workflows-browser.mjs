@@ -10,7 +10,7 @@ const video = path.resolve(process.env.CRITICAL_VIDEO || 'work/critical-upload.a
 assert(video.startsWith(path.resolve('work')+path.sep), 'Disposable input required')
 const modelMode = process.env.CRITICAL_AI_MODE || 'disabled'
 const browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL || 'chrome', headless: true })
-const page = await browser.newPage({ viewport: { width: 1366, height: 768 }, acceptDownloads: true })
+const page = await browser.newPage({reducedMotion:'reduce',viewport: { width: 1366, height: 768 }, acceptDownloads: true })
 page.setDefaultTimeout(15000)
 if (process.env.LEGACY_BROWSER === '1') await useLegacyBrowserAPIs(page)
 const checks = [], errors = [], requests = []

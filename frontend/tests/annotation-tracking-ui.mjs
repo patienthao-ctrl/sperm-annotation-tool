@@ -5,7 +5,7 @@ const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright')
 // The media list is a drawer that stays closed while a video is open.
 const openAsset=async(target,locator)=>{const toggle=target.getByTestId('toggle-workbench-library');for(let i=0;i<40;i++){if(await locator.isVisible()){try{await locator.click({timeout:1500});return}catch{}}else if(await toggle.isVisible())await toggle.click();await target.waitForTimeout(250)}await locator.click()}
 const f=JSON.parse(fs.readFileSync('work/confirmation-browser-fixture.json'))
-const b=await chromium.launch({channel:'chrome',headless:true}),p=await b.newPage({viewport:{width:1440,height:900}})
+const b=await chromium.launch({channel:'chrome',headless:true}),p=await b.newPage({reducedMotion:'reduce',viewport:{width:1440,height:900}})
 const origin=process.env.CONFIRMATION_ORIGIN||'http://127.0.0.1:5373'
 const errors=[],logs=[];p.on('pageerror',e=>errors.push(String(e)));p.on('console',m=>logs.push({type:m.type(),text:m.text()}));let n=0,mode='success',release,started,seeds=[]
 const check=(ok,msg)=>{assert(ok,msg);console.log('PASS',++n,msg)}

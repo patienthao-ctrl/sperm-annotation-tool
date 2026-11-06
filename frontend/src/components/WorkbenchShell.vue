@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
+import { motionAllowed } from '../utils/motion'
 import '../workbench/shell.css'
 
 // Canvas-first shell shared by annotation, review and confirmation. Pages fill
@@ -29,6 +30,11 @@ onMounted(() => { headerReady.value = !!document.getElementById('app-header-cont
 const drawerVisible = computed(() => !props.focused && (drawerOpen.value || props.drawerForced))
 const inspectorVisible = computed(() => (!props.focused || props.focusKeepsInspector) && (!inspectorCollapsed.value || props.inspectorForced))
 defineExpose({ collapseInspector: () => { inspectorCollapsed.value = true } })
+// Panels glide only when toggled on their own. Focus mode and a forced pause panel change the layout in one step,
+// and the view anchoring in AnnotatePage needs the final size at once.
+const focusSwitching = ref(false)
+watch(() => props.focused, () => { focusSwitching.value = true; void nextTick(() => { focusSwitching.value = false }) }, { flush: 'sync' })
+const panelsGlide = computed(() => motionAllowed.value && !focusSwitching.value)
 </script>
 
 <template>
@@ -38,19 +44,19 @@ defineExpose({ collapseInspector: () => { inspectorCollapsed.value = true } })
       <button class="shell-rail-btn" :class="{ active: drawerVisible, busy: drawerBusy && !drawerVisible }" data-testid="toggle-workbench-library" :aria-expanded="drawerVisible" :title="drawerVisible ? `收起${drawerLabel} (M)` : `展开${drawerLabel} (M)`" :aria-label="drawerLabel" @click="drawerOpen = !drawerVisible"><AppIcon name="folder" :size="18" /><small v-if="drawerCount">{{ drawerCount }}</small></button>
       <slot name="rail" />
     </nav>
-    <aside v-show="drawerVisible" class="shell-drawer" :aria-label="drawerLabel" data-workbench-region="library">
+    <Transition name="drawer-glide" :css="panelsGlide"><aside v-show="drawerVisible" class="shell-drawer" :aria-label="drawerLabel" data-workbench-region="library">
       <div class="shell-drawer-head"><strong>{{ drawerLabel }}</strong><span v-if="drawerCount" class="badge">{{ drawerCount }}</span><button class="icon-button" :aria-label="`收起${drawerLabel}`" @click="drawerOpen = false"><AppIcon name="close" :size="15" /></button></div>
       <div class="shell-drawer-body"><slot name="drawer" /></div>
-    </aside>
+    </aside></Transition>
     <section class="shell-center" data-workbench-region="canvas">
       <div v-if="focused" class="shell-focusbar"><div class="shell-context"><slot name="context" :inspector-visible="inspectorVisible" /></div></div>
       <div class="shell-canvas"><slot name="canvas" /></div>
       <div v-if="$slots.bottom" class="shell-bottom"><slot name="bottom" /></div>
     </section>
-    <aside v-show="inspectorVisible" class="shell-inspector" data-workbench-region="inspector">
+    <Transition name="inspector-glide" :css="panelsGlide && !inspectorForced"><aside v-show="inspectorVisible" class="shell-inspector" data-workbench-region="inspector">
       <button v-if="!inspectorForced" class="icon-button shell-collapse" title="收起面板" aria-label="收起检查面板" @click="inspectorCollapsed = true"><AppIcon name="panel" :size="15" /></button>
       <slot name="inspector" />
-    </aside>
+    </aside></Transition>
     <button v-if="!inspectorVisible && (!focused || focusKeepsInspector)" class="shell-inspector-open" title="展开检查面板" aria-label="展开检查面板" @click="inspectorCollapsed = false"><AppIcon name="panel" :size="16" /><span v-if="inspectorBadge !== ''">{{ inspectorBadge }}</span></button>
   </div>
 </template>

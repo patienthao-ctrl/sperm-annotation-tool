@@ -19,6 +19,8 @@
 | `PUT /api/library/folder` | `{mediaIds,path}` 移动视频，`path` 为空表示未分类；路径最多 8 层、每层 100 字，无效 422，素材不存在 404 |
 | `POST /api/library/folder/rename` | `{oldPath,newPath}` 重命名文件夹及其下全部，同名即合并；不能移到自身之内 |
 | `GET /api/annotation-review/summary` | `{items:{mediaId: status}, stages:{mediaId: unstarted/annotating/ready}, people:{mediaId:{actorId,actorName,passedBy,passedAt}}}`，列表用，不读追踪文件；`stages` 只含 `status=none` 的视频 |
+| `GET /api/annotation-review/records` | `{items,total}`，每轮一行，最近操作在前：`reviewId/mediaId/mediaName/mediaDeleted/round/state/startedBy/startedAt/passedBy/passedAt/lastActivityAt/checked/total/emptyFrames/reviewers[{id,name,frames}]/changes{added,removed,moved,frames}`；`standing` 为通过轮次的现状：`current`（仍覆盖当前内容）、`stale`（之后有改动，判断方式同 `/summary`）、`superseded`（已有后续轮次），进行中或视频已删除时为 `null`；`legacy=true` 的旧清单轮次 `checked/total` 按检查项计。不读追踪文件，也不读逐帧快照列 |
+| `GET /api/annotation-review/records/{reviewId}` | 一轮的明细：`confirmations[{actor,result,frames,spans,lastAt}]`（按人和结果汇总，`spans` 为帧区间）、`changes[{start,end,added,removed,moved,checkedBy}]`（相邻帧内容相同则合并）；不存在 404 `REVIEW_NOT_FOUND` |
 | `POST /api/annotation-review/media/{id}/reset-annotations` | 原 `/api/review/media/{id}/reset-annotations` 迁移至此，正文与幂等语义不变；不再因历史送审拒绝 |
 | `GET /api/datasets/annotations/{id}/preview` | 导出弹窗预览（取代 `completion-preview`）：`sourceRevision`、有框/空/未知帧，审查确认无目标的帧计为空 |
 | `POST /api/datasets/annotations/{id}/snapshot` | 同前；另要求最近一次审查通过且内容未变，否则 409 `REVIEW_REQUIRED` |

@@ -56,7 +56,7 @@ work/review-venv/bin/python scripts/replay_tracking_pause_cases.py work/replay-i
 work/review-venv/bin/python scripts/replay_tracking_pause_cases.py work/replay-input.json --policy-source work/frozen-code/anomaly_detector.py --output work/replay-before.json
 ```
 
-原图光核可在CPU单独重算并对照日志点位和BBox核覆盖，旧Mask覆盖摘要必须标明沿用记录；这不能代替重新计算原Mask。若已保存真实模型的逐帧二值Mask/框/分数，则直接用原视频和生产 `NativeImageEvidence → tracker → 结果发布` 在隔离目录重放，无需加载模型；记录真实输出与最终源码SHA。若只有BBox/摘要、缺中间帧或Mask，明确报告缺口，不能把矩形填充Mask、重复同一帧或补填核验标志冒充真实连续推理。现场视频/Mask/工作区和私有manifest放work中，不纳入Git。真实短窗口补采需保留原视频、对象数量、prompt和逐帧Mask校验和，写明局部重新初始化与原首帧长程状态不同；只接纳完整写出的帧，采样进程错误或内存预算中止不得改记为计划全部完成。已有有效帧可独立核验并回放，原错误日志保留。完整浏览器回归仍需执行，快速回放不能替代保存、确认与续追流程验证。
+原图光核可在CPU单独重算并对照日志点位和BBox核覆盖，旧Mask覆盖摘要必须标明沿用记录；这不能代替重新计算原Mask。若已保存真实模型的逐帧二值Mask/框/分数，则直接用原视频和生产 `NativeImageEvidence → tracker → 结果发布` 在隔离目录重放，无需加载模型；记录真实输出与最终源码SHA。若只有BBox/摘要、缺中间帧或Mask，明确报告缺口，不能把矩形填充Mask、重复同一帧或补填核验标志冒充真实连续推理。现场视频/Mask/工作区和私有manifest放work中，不纳入Git。真实短窗口补采需保留原视频、对象数量、prompt和逐帧Mask校验和，写明局部重新初始化与原首帧长程状态不同；只接纳完整写出的帧，采样进程错误或内存预算中止不得改记为计划全部完成。已有有效帧可独立核验并回放，原错误日志保留。快速回放不能替代保存、确认与续追流程验证。
 
 主体关联专项 `test_tracking_identity_association.py` 验证较暗的自己不会被更亮的邻居替换、两个框共同包含多个头时不按 ID 顺序强行分配、粘连期间冻结可靠参考而分离后恢复，以及两个对象真正共用单一主体和自己的主体丢失仍报风险。`test_tracking_identity_reference_lifecycle.py` 使用真实编码小视频检查压缩噪声、历史人工来源恢复、确认后的紧凑身份恢复及读取释放。v2 身份证据的原始主体来源与最新几何检查点分别绑定，旧 v1、错误帧/框/源签名、非有限值不能授予新的几何豁免；普通掩膜污染与少量尾部遗漏不能冒充明确的大段框外遗漏，极端坍缩和真实丢失仍须暂停。`test_tracking_evidence.py` 的重大覆盖用例成对检查：同样的大段自身框外遗漏不能因增加邻居光核而漏停；完整自身目标加邻居仍提示；经过邻居光核的续段不归给自己，但到达邻居前已经明确遗漏的自身支路仍保留风险。
 
@@ -92,7 +92,7 @@ interop 夹具生成真实 YOLO/COCO/双格式、多视频及重新确认前后�
 
 ### 边缘入画发现
 
-`backend/tests/test_edge_entry.py` 覆盖连续向内运动、初始/内部目标、静止/相机平移/低置信度/已有对象/向外运动/歧义/坏输入拒绝、跨轮候选恢复、SAM3提示接续不重复帧、稳定ID避开删除墓碑、实际JSONL补帧和推理失败保留旧结果。局部模型输出为模拟；真实模型仅在训练服务器独立目录核验，不能据这些测试宣称运动能准确识别精子。固定annotation-ux组检查开关及刷新保存，tracking-recovery组验证开关随原任务/重试正文传递；仍须完整七组浏览器回归。
+`backend/tests/test_edge_entry.py` 覆盖连续向内运动、初始/内部目标、静止/相机平移/低置信度/已有对象/向外运动/歧义/坏输入拒绝、跨轮候选恢复、SAM3提示接续不重复帧、稳定ID避开删除墓碑、实际JSONL补帧和推理失败保留旧结果。局部模型输出为模拟；真实模型仅在训练服务器独立目录核验，不能据这些测试宣称运动能准确识别精子。固定annotation-ux组检查开关及刷新保存，tracking-recovery组验证开关随原任务/重试正文传递。
 
 ### 集中审查兼容路径与其他专项
 

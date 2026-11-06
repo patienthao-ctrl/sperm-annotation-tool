@@ -1,11 +1,12 @@
 """Annotation review frame checklist, pass and media reset routes."""
 
+import json
 from typing import Literal
 
 from fastapi import APIRouter
 from pydantic import Field
 
-from . import annotation_review as review
+from . import annotation_review as review, annotation_review_records as records_view
 from .api_common import Key, LoggedRoute, Model, User, media_context
 from .review_source_lock import source_read
 from .review_workflow import ReviewError
@@ -33,6 +34,31 @@ def summary(user: User):
     items = review.summary(list(directories.items()))
     return {"items": items, "stages": {m: review.stage(directories[m]) for m, s in items.items() if s == "none"},
             "people": review.people(list(directories.items()), items)}
+
+
+def _existing_media(media_id):
+    """(folder, display name) of a video that still exists; its review history outlives it."""
+    from .main import find_video, media_dir
+    directory = media_dir(media_id)
+    video = find_video(directory)
+    if video is None:
+        return None
+    try:
+        name = json.loads((directory / "media.json").read_text(encoding="utf-8")).get("videoName")
+    except (OSError, ValueError):
+        name = None  # Older media may lack media.json; the file name still identifies it.
+    return directory, name or video.name
+
+
+@router.get("/records")
+def records(user: User):
+    items = records_view.rounds(_existing_media)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/records/{review_id}")
+def record(review_id: str, user: User):
+    return records_view.detail(review_id)
 
 
 @router.get("/media/{media_id}")

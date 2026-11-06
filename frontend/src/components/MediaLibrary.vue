@@ -8,6 +8,7 @@ import { useAuth } from '../stores/auth'
 import { useAnnotationReview, reviewFilterKey, reviewFilterOptions, type ReviewFilterKey } from '../stores/annotationReview'
 import { clearImportReport, importCounts, importCurrent, importItems, importPlan, importRunning, prepareImport, retryFailedImports, startImport } from '../stores/importQueue'
 import type { MediaAsset } from '../types/annotation'
+import { glideRows } from '../utils/motion'
 
 // Finding and switching videos only; editing state is never changed here.
 const props = defineProps<{ busy: boolean; reviewing: boolean }>()
@@ -24,10 +25,11 @@ function pickedFolder(event: Event) { const input = event.target as HTMLInputEle
 const COLLAPSED_KEY = 'media-library-collapsed'
 const readCollapsed = () => { try { return new Set<string>(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')) } catch { return new Set<string>() } }
 const collapsed = ref(readCollapsed())
+const tree = ref<HTMLElement | null>(null)
 function toggle(path: string) {
   const next = new Set(collapsed.value)
   if (next.has(path)) next.delete(path); else next.add(path)
-  collapsed.value = next
+  void glideRows(tree.value, () => { collapsed.value = next })
   try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next])) } catch (error) { console.warn('[ui.preference_save_failed]', { preference: COLLAPSED_KEY, error }) }
 }
 
@@ -105,13 +107,13 @@ const stateLabel: Record<string, string> = { waiting: '等待', uploading: '上�
       <label title="我点了“审查通过”的，以及我正在审查的"><input v-model="mine" type="checkbox" data-testid="library-mine" />我审查的</label>
       <button class="quiet-button" data-testid="library-organize" @click="organizing = true">整理</button>
     </div>
-    <div class="asset-list" data-testid="library-tree">
+    <div ref="tree" class="asset-list" data-testid="library-tree">
       <template v-for="row in rows" :key="row.kind === 'folder' ? `f:${row.path}` : row.media.id">
-        <button v-if="row.kind === 'folder'" class="library-folder" data-testid="library-folder" :style="{ paddingLeft: `${6 + row.depth * 12}px` }" :aria-expanded="filtering || !collapsed.has(row.path)" @click="toggle(row.path)">
-          <span class="library-caret">{{ filtering || !collapsed.has(row.path) ? '▾' : '▸' }}</span><strong :title="row.name">{{ row.name }}</strong>
+        <button v-if="row.kind === 'folder'" class="library-folder" data-testid="library-folder" :data-row-key="`f:${row.path}`" :style="{ paddingLeft: `${6 + row.depth * 12}px` }" :aria-expanded="filtering || !collapsed.has(row.path)" @click="toggle(row.path)">
+          <span class="library-caret" :class="{ open: filtering || !collapsed.has(row.path) }">▸</span><strong :title="row.name">{{ row.name }}</strong>
           <small>{{ row.total }} 段<template v-if="row.passed"> · 通过 {{ row.passed }}</template><template v-if="row.ready"> · 待审查 {{ row.ready }}</template></small>
         </button>
-        <div v-else class="asset-card" :class="{ selected: selectedMediaId === row.media.id }" :style="row.depth ? { marginLeft: `${row.depth * 12}px` } : undefined" role="button" :tabindex="busy ? -1 : 0" :aria-disabled="busy" @click="select(row.media)" @keydown.enter="select(row.media)" @keydown.space.prevent.stop="select(row.media)">
+        <div v-else class="asset-card" :data-row-key="row.media.id" :class="{ selected: selectedMediaId === row.media.id }" :style="row.depth ? { marginLeft: `${row.depth * 12}px` } : undefined" role="button" :tabindex="busy ? -1 : 0" :aria-disabled="busy" @click="select(row.media)" @keydown.enter="select(row.media)" @keydown.space.prevent.stop="select(row.media)">
           <span class="asset-type">{{ row.media.type === 'video' ? 'VID' : 'IMG' }}</span>
           <div>
             <strong :title="row.media.name">{{ row.media.name }}</strong>
@@ -151,8 +153,9 @@ const stateLabel: Record<string, string> = { waiting: '等待', uploading: '上�
 .library-folder:hover { background: var(--surface-subtle); }
 .library-folder strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .library-folder small { color: var(--muted); font-size: 11px; }
-.library-caret { color: var(--muted); width: 12px; flex: none; }
-.library-import { margin: 0 12px 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: var(--radius-sm, 5px); font-size: 12px; }
+.library-caret { color: var(--muted); width: 12px; flex: none; text-align: center; transition: transform var(--dur-base) var(--ease-out); }
+.library-caret.open { transform: rotate(90deg); }
+.library-import { animation: rise-in var(--dur-base) var(--ease-out); margin: 0 12px 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: var(--radius-sm, 5px); font-size: 12px; }
 .library-import-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; }
 .library-import-head span, .library-import-file { color: var(--muted); }
 .library-import-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
