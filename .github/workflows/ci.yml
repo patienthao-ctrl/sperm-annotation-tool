@@ -6,8 +6,8 @@ on:
   workflow_call:
 permissions:
   contents: read
-# Browser regression (scripts/run_browser_regression.py) is run locally before a
-# release, not here: its timed waits fail intermittently on hosted runners.
+# Browser regression (scripts/run_browser_regression.py) is not run here and is not
+# a release gate: its timed waits fail intermittently on hosted runners.
 jobs:
   validate:
     runs-on: ubuntu-latest
