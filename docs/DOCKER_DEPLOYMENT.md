@@ -170,7 +170,7 @@ Windows：`.\deploy.ps1 -Mode gpu -Pull`。等价命令是 `docker compose pull`
 
 #### A. 取得更新包
 
-**默认：GitHub Releases 自动发布。** 维护者确认要发布的提交已在 main、通过 CI，并已在本机跑过完整浏览器回归（CI 不跑浏览器回归，见 [TESTING.md](TESTING.md)）后，创建并推送版本标签：
+**默认：GitHub Releases 自动发布。** 维护者确认要发布的提交已在 main、通过 CI 后（发布不要求浏览器回归，见 [TESTING.md](TESTING.md)），创建并推送版本标签：
 
 ```bash
 git tag -a v1.3.0 -m "v1.3.0"
