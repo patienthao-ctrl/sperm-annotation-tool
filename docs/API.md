@@ -12,10 +12,12 @@
 
 | 方法与路径 | 作用 |
 | --- | --- |
-| `GET /api/annotation-review/media/{id}` | `status: none/open/passed/stale`、`currentRevision`（逐帧内容摘要）、`unknownFrames`、`stage`（`status=none` 时为 `unstarted/annotating/ready`）、当前或最近一轮 `review{reviewId,round,state,lastActorId,lastActorName,lastActivityAt,changedFrames:[[start,end]],frames:[[start,end]],checkedFrames:[[start,end,'ok'|'empty']],checked,total,passedBy,passedAt,changes}`、`lastPassed`。`frames` 是本轮要检查的帧（首轮全部帧，重新审查只含改动帧，闭区间、原始帧号从 0 开始）；旧版清单的已通过轮次返回空 `frames`。`lastActorId` 取最近确认人，无确认时为开始人；`lastActivityAt` 同理。从未保存工作区时返回 `none` 与 `notReady` 说明，不报错。Tracking 运行中也可读取 |
+| `GET /api/annotation-review/media/{id}` | `status: none/open/passed/stale`、`currentRevision`（逐帧内容摘要）、`unknownFrames`（个数）、`stage`（`status=none` 时为 `unstarted/annotating/ready`）、当前或最近一轮 `review`、`lastPassed`。目标轮次（`policy:'target-review-v1'`）的 `review` 为 `{reviewId,round,state,policy,targets:[objectId],results:{objectId:'tail'|'head'|'unsure'|'no'},changedTargets,checked,total,unknownFrames:[[start,end]],emptyFrames:[[start,end]],playthroughBy,playthroughAt,repeats,consistency:{pairs,same},lastActorId,lastActorName,lastActivityAt,passedBy,passedAt,changes}`；`targets` 是本轮要回答的目标（首轮全部，重审只含与上次通过相比有变化的目标及审查中新出现的目标），`changedTargets` 是答过后又被改动、需要重答的目标。旧帧字段 `frames/checkedFrames/changedFrames` 在目标轮次为空。读取时，进行中的旧逐帧轮次归档后改建为目标轮次。从未保存工作区时返回 `none` 与 `notReady` 说明，不报错。Tracking 运行中也可读取 |
 | `POST /api/annotation-review/media/{id}/start` | 已有进行中的轮次则原样返回；已通过且内容未变返回 409 `REVIEW_ALREADY_PASSED`；Tracking 运行中 409 `SOURCE_BUSY` |
-| `PUT /api/annotation-review/media/{id}/frames/{frameIndex}` | `{reviewId, result:'ok'|'empty'}`，确认一帧，可重复确认（以最后一次为准）。服务端按当前工作区校验：有框的帧只能 `ok`；未知帧（无任何标注行）只能 `empty`，提交 `ok` 返回 422；已知空帧提交 `empty` 记为 `ok`。帧不在本轮或超出视频 404 `ITEM_NOT_FOUND`，非当前轮 409 `REVIEW_NOT_CURRENT`，已结束 409 `REVIEW_CLOSED`。旧 `/items/{itemId}` 已删除 |
-| `POST /api/annotation-review/media/{id}/pass` | `{reviewId}`；有帧在确认后被改动 409 `REVIEW_FRAME_CHANGED`，有未确认帧 409 `REVIEW_INCOMPLETE`，仍有未确认无目标的未知帧 409 `UNKNOWN_FRAMES`；成功固定 `passed_revision`、确认无目标的帧和修改记录 |
+| `PUT /api/annotation-review/media/{id}/targets/{objectId}` | `{reviewId,result:'tail'|'head'|'unsure'|'no',repeat?:boolean}`，回答一个目标，可重答（以最后一次为准）。答案绑定该目标当前全部帧的框摘要；`no` 之后页面整条删除该目标。`repeat:true` 是复判卡片，只计一致率，不影响通过。目标不在本轮 404 `ITEM_NOT_FOUND`，轮次已结束 409 `REVIEW_CLOSED`，不是当前轮次 409 `REVIEW_NOT_CURRENT` |
+| `PUT /api/annotation-review/media/{id}/frames/{frameIndex}` | `{reviewId,result:'empty'}`：目标轮次只用于确认没有任何标注的未知帧无目标 |
+| `POST /api/annotation-review/media/{id}/playthrough` | `{reviewId}`，记录本轮已快速浏览全片（页面播到最后一帧才发送），返回最新状态 |
+| `POST /api/annotation-review/media/{id}/pass` | `{reviewId}`；答过的目标又被改动 409 `REVIEW_TARGET_CHANGED`，有未回答目标 409 `REVIEW_INCOMPLETE`（答“不是”却未删除的目标同此），预标视频仍有查漏帧没看 409 `REVIEW_SCAN_INCOMPLETE`，未快速浏览 409 `REVIEW_PLAYTHROUGH_REQUIRED`，仍有未确认无目标的未知帧 409 `UNKNOWN_FRAMES`；通过后 `changes` 含 `targets`（各目标答案）与 `reviewers` |
 | `PUT /api/library/folder` | `{mediaIds,path}` 移动视频，`path` 为空表示未分类；路径最多 8 层、每层 100 字，无效 422，素材不存在 404 |
 | `POST /api/library/folder/rename` | `{oldPath,newPath}` 重命名文件夹及其下全部，同名即合并；不能移到自身之内 |
 | `GET /api/annotation-review/summary` | `{items:{mediaId: status}, stages:{mediaId: unstarted/annotating/ready}, people:{mediaId:{actorId,actorName,passedBy,passedAt}}}`，列表用，不读追踪文件；`stages` 只含 `status=none` 的视频 |
@@ -27,7 +29,7 @@
 
 本页是 API 地图与不变量，不复制全部类型定义。精确请求验证以已注册路由的 Pydantic 模型为准；开发时可读本地 FastAPI `/openapi.json`。旧原型中的示例接口不是活动接口。
 
-记录帧确认的请求显式绑定开始时的 mediaId/reviewId 与帧号，切换视频或轮次后不发送旧操作的确认。旧审查采用的工作区人工框仍保留 `origin=review_adopted` / `reviewAdoptionKey`，只作历史来源，不再产生。
+记录目标判定与帧确认的请求显式绑定开始时的 mediaId/reviewId 与目标号或帧号，切换视频或轮次后不发送旧操作的确认。旧审查采用的工作区人工框仍保留 `origin=review_adopted` / `reviewAdoptionKey`，只作历史来源，不再产生。
 
 客户端多人协作仍使用现有工作区 GET/PUT 写入，不增加绕过版本检查的入口。`GET /api/track/workspace/{mediaId}/stamp` 是只读轮询：`{revision,generationId,updatedBy,updatedByName,trackingStamp:[mtimeNs,size]|null,tracking:{userId,userName,status}|null}`；不持全局来源锁、不执行恢复日志，按文件 mtime/大小缓存已解析版本，文件正在替换时返回 503。权威内容仍以完整 GET 为准。新版普通保存仅提交人工框、人工基准、删除规则和 generation；观看状态在本机独立保存。工作区版本 409 的自动合并只基于独立读取基准及最新 GET；每次重算正文后使用新幂等键。反馈/回退等专用接口仍原键恢复，不自动重写。详见 WORKFLOW 的多人协作保存。
 
@@ -72,7 +74,7 @@
 | `POST /api/track/upload`；`GET /api/track/media` | 原视频上传、可用媒体 |
 | `POST /api/track/import-package` | multipart `file`，可选 `folderPath`（`/api/track/upload` 同样可选，`/api/track/media` 返回 `folderPath`、`sizeBytes`）：含原视频的训练数据集 ZIP。201 `{imported:[{mediaId,videoName,…,objects,emptyFrames}],skipped:[{videoName,reason,mediaId?}]}`；非 ZIP 或非本工具 manifest v2 返回 422，超过 `MAX_PACKAGE_BYTES`（默认 8 GiB）返回 413。规则见 WORKFLOW“导入标注包” |
 | `DELETE /api/track/media/{mediaId}` | 把视频目录移入回收目录 `_trash/`；需要登录。成功返回 `deleted: true, mediaId`；AI 运行、基准引用、新旧存储同名目录返回 409；文件系统失败返回 500 并记录日志，不能伪报成功 |
-| `GET /api/track/video/{mediaId}`、`/api/track/frame/{mediaId}/{fi}` | 原视频、真实指定帧 |
+| `GET /api/track/video/{mediaId}`、`/api/track/frame/{mediaId}/{fi}` | 原视频、真实指定帧；`?enhance=true` 返回训练复核用的增强灰度图（中值背景相减、增益 8），缓存于 `.frame_cache` |
 | `GET / PUT /api/track/workspace/{mediaId}` | 可恢复工作区 |
 | `GET /api/track/deletion-preview/{mediaId}/{objectId}` | 整视频删除预览，按稳定 ID 合并人工和 AI 同帧框，返回真实有效数量 |
 | `POST /api/track/feedback/{mediaId}` | 显式正常/已修正/重置判断；版本校验和原键重试 |
@@ -82,6 +84,10 @@
 | `POST /api/track/restart-branch/{mediaId}` | 异常暂停后，从更早帧修正并显式重建分支；版本与原键恢复，成功后才续追 |
 | `GET /api/track/status/{taskId}`、`/api/track/result/{mediaId}` | 追踪状态与对象 |
 | `GET /api/track/result-file/{mediaId}`、`/api/track/overlay/{mediaId}` | JSONL 与按需生成的完整带框视频；预览缓存以当前视频/追踪/删除规则校验，生成时输入变化返回 409，失败 503 不影响已保存 JSONL |
+| `POST /api/prelabel/{mediaId}` | 自动预标：202 `{taskId,status,frameCount}`，状态用 `/api/track/status/{taskId}`（`stage: queued/detecting/linking/completed/failed`）。`Idempotency-Key` 同键返回原任务、用于其他请求 409；已有 AI 结果 409 `PRELABEL_EXISTS`（重新预标须先清空标注）；不需要 SAM3 |
+| `GET /api/prelabel/{mediaId}` | 无预标为 `{state:'none'}`；否则 `{state:'available',…摘要,checkFrames:[{frame,reason,scannedBy?,scannedByName?,scannedAt?}]}`，摘要含模型、阈值、轨迹数与轨迹标记 |
+| `PUT /api/prelabel/{mediaId}/scans/{frameIndex}` | 记录“这张查漏帧看完了”，只接受 `checkFrames` 中的帧，无预标 409；返回同上的摘要 |
+| `POST /api/prelabel/{mediaId}/extend` | `{frameIndex,x,y}`（原图像素）：点击处的头加上其他帧里同一个头，返回 `{frameIndex,width,height,confidence,boxes:[{frameIndex,bbox:[x1,y1,x2,y2],kind}]}`；不写数据，页面作为同一个新目标的人工框保存。点击处已有框 409 `ALREADY_BOXED`，找不到头 422，模型不可用 503 |
 
 `AnnotationObject` 定义在 [annotation.ts](../frontend/src/types/annotation.ts)：界面 `id` 与稳定 `objectId` 不等价，`frameIndex` 为实际 0 起帧号；工作区 bbox 为百分比 `{x,y,width,height}`。seed / Tracking / B/C 使用原图像素 xyxy，转换不能重复进行。追踪结果文件虽后缀 `.json`，实际逐行 JSONL。
 
@@ -166,7 +172,7 @@ ZIP 包含 15 个必需 CSV/JSONL、2 个可选历史表（存在时）和 manif
 
 ## 审计传输契约
 
-现有创建 API 和按钮不增加请求字段；任务与不可变审计同事务落库。训练 `manifest.json` 的 `schemaVersion` 为 **2**：顶层 `sourceSystemId`、`exportId`、`auditReference {auditId,sha256,schemaVersion:1,capturedAtUtc}`；`sources` 固定 mediaRevisionId/mediaId/sourceSha256/宽高/帧数/A/B/C/F/snapshotHash；`samples` 增加 sampleId、mediaRevisionId、imageSha256、objects[]。objects 项将稳定 objectId 对应到 1 基 yoloLine 或 cocoAnnotationId，空帧保留空列表。文件名包含 exportId；标签仍是标准格式。
+`samples[].objects[].tail` 是审查员按目标的判定（true 有尾、false 无尾，都属“精子”一类）；`samples[].ignore[{objectId,bbox}]` 是判为“看不清”的框，不写入标签，训练时应遮盖。现有创建 API 和按钮不增加请求字段；任务与不可变审计同事务落库。训练 `manifest.json` 的 `schemaVersion` 为 **2**：顶层 `sourceSystemId`、`exportId`、`auditReference {auditId,sha256,schemaVersion:1,capturedAtUtc}`；`sources` 固定 mediaRevisionId/mediaId/sourceSha256/宽高/帧数/A/B/C/F/snapshotHash；`samples` 增加 sampleId、mediaRevisionId、imageSha256、objects[]。objects 项将稳定 objectId 对应到 1 基 yoloLine 或 cocoAnnotationId，空帧保留空列表。文件名包含 exportId；标签仍是标准格式。
 
 完整证据通过服务端 `python -m app.audit_export` 只读提取，或使用根 `export-audit.sh`。运维 ZIP 顶层 `format:'annotation-quality-audit',schemaVersion:1,extractedAtUtc,datasetCount,files[{name,sha256,size}]`；`datasets.jsonl` 含生成状态、创建时间、提取时 currentFinalAtRead、auditReference、snapshotFile、manifestFile。snapshots schemaVersion:1 保存 sourceSystemId/exportId/auditId/capturedAtUtc/sourceAppRevision、dataset 设置、sources、tables、completeness、坐标/责任约定。该 ZIP 的版本与训练 manifest 版本分别维护。
 
@@ -176,10 +182,10 @@ ZIP 包含 15 个必需 CSV/JSONL、2 个可选历史表（存在时）和 manif
 
 ### 点选头部
 
-`POST /api/track/head-box/{media_id}`（需登录）：`{frameIndex,x,y}` 为原始帧号和原图像素点击坐标；返回 `{frameIndex,width,height,bbox:[x1,y1,x2,y2],confidence}`。只提供候选，不写工作区或建立对象 ID。422 表示坐标/候选无效或歧义，404 表示素材/帧不存在，503 表示模型不可用，或排队约 20 秒仍未轮到。日志 `annotation.head_click` 记录素材、帧、框、耗时与失败原因。
+新页面的点选补框用上文 `POST /api/prelabel/{mediaId}/extend`。`POST /api/track/head-box/{media_id}`（需登录，兼容保留）：`{frameIndex,x,y}` 为原始帧号和原图像素点击坐标；返回 `{frameIndex,width,height,bbox:[x1,y1,x2,y2],confidence}`。只提供候选，不写工作区或建立对象 ID。422 表示坐标/候选无效或歧义，404 表示素材/帧不存在，503 表示模型不可用，或排队约 20 秒仍未轮到。日志 `annotation.head_click` 记录素材、帧、框、耗时与失败原因。
 
 
-检测器与固定权重随仓库及后端镜像提供；`HEAD_DETECTOR_MODEL` 可指定自定义权重。`HEAD_DETECTOR_DEVICE` 默认 `cuda:0`（`compose.gpu.yaml` 同值，CPU 部署 `compose.yaml` 显式设为 `cpu`）；GPU 不可用时请求失败，不静默切换 CPU。惰性加载、单请求推理，不自动下载模型。
+检测器与固定权重随仓库及后端镜像提供；`HEAD_DETECTOR_MODEL` 可指定自定义权重。`HEAD_DETECTOR_DEVICE` 默认 `cuda:0`（`compose.gpu.yaml` 同值，CPU 部署 `compose.yaml` 显式设为 `cpu`）；GPU 不可用时请求失败，不静默切换 CPU。惰性加载，所有调用方共用一个先进先出队列，不自动下载模型。推理一律整帧灰度转三通道、长边缩到 1024（`INTER_AREA`）、`imgsz=1024, iou=0.7, max_det=500`，坐标乘回原图；`HEAD_DETECTOR_CONF`（默认 0.30）用于起轨与边缘入画，`HEAD_DETECTOR_LOW_CONF`（默认 0.10，不高于前者）用于延续轨迹和点选。
 
 `POST /api/track` 可选 `edgeDiscovery:boolean`（兼容接口默认 false，新前端固定 true），包含在启动幂等正文中。开启使用与点选头部共用的检测器和设备配置。任务推理阶段发现边缘新对象后仍以既有 Tracking objects 返回，不改变frame/objectId坐标契约；检测器不可用时任务failed，不静默降级为识别成功。头部检测权重随应用镜像提供，与单独保留的 SAM3 模型不同。
 

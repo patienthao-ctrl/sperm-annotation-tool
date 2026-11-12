@@ -123,7 +123,8 @@ git branch -d feat/review-card
 | 帧解码、追踪内存、大量修改项性能 | `test_video_frames.py`（逐帧身份/随机访问/失败 seek/缓存限量与原子失败/真实 processor 输入一致/掩码几何一致/首次模型 dtype）、`test_confirmation_performance.py`（5,000 项/紧凑回执/升级前重放/精确进度） | `performance-browser.mjs`（27；外部真实 4K 副本、50,000 AI 对象、初次读取失败/坏 JPEG 原位重试、C 同帧图像复用/增量回复/并发版本跳变） |
 | Chrome 93 / HTTP、素材删除 | `test:compatibility`、`test_media_deletion.py` | `browser-compat-media.mjs`；[Chrome 93 专项回归](details/testing-browser-suites.md#chrome-93--http-专项回归) |
 | 重复视频覆盖、旧历史不锁定 | `test_workflow_transitions.py`、`test_media_reimport.py` | `workflow-transitions-browser.mjs`（重复导入/覆盖/响应丢失重放/旧审查历史不再阻止覆盖） |
-| 逐帧审查/纠错/通过/失效 | `test_annotation_review.py`、`test_annotation_export.py`（首轮全部帧、重审只列改动帧、无目标确认沿用、旧清单改建、真实 ZIP） | `training-export-browser.mjs`、`critical-workflows-browser.mjs` |
+| 自动预标、查漏、补整条、增强 | `test_detector_tracks.py`、`test_prelabel_api.py`、`test_frame_enhance.py`、`test_head_click.py`、`test_head_detector_queue.py`、`test_bundled_head_detector.py`；前端 `test:annotation`（含 `target-queue.test.mjs`） | 无专门浏览器套件；用预览服务人工走查 |
+| 按目标审查/纠错/通过/失效 | `test_annotation_review.py`、`test_annotation_review_records.py`、`test_annotation_export.py`（首轮全部目标、重审只列改动目标、答案随改动失效、“不是”须删除、查漏与快速浏览门槛、旧轮次改建、看不清导出为 ignore、真实 ZIP） | `training-export-browser.mjs`、`critical-workflows-browser.mjs` |
 | 训练导出/门禁/版本 | `test_training_export.py`、`test_quality_audit.py`、`test_export_audit_script.py` | `training-export-browser.mjs`（审查门槛、按视频划分、附原视频、多视频合并、响应丢失重放、改动后失效、统计导出） |
 | 标注/审查工作台一致性 | 上述对应页面回归、构建 | `workbench-consistency-browser.mjs`：两种模式两尺寸浅深主题、同一画布与工具、审查隐藏追踪、清单定位与帧条、专注、760 px 窄窗口与使用说明隔离 |
 | 阶段切换与动效 | 上述一致性回归（内含） | `stage-motion-checks.mjs`：切换保持页面、帧与缩放且不重新下载，阶段配色与标签，保存失败时留在原阶段；抽屉、检查面板、专注、主题的真实过渡与结束状态，换帧无动效，减弱动效时立即完成 |

@@ -2,11 +2,12 @@
 
 > 要点
 > - 每个视频的工作区、追踪结果和恢复日志在媒体目录下；业务库为单个 SQLite（`APP_DB_FILE`）。
-> - 审查数据：`annotation_reviews` / `annotation_review_checks` / `annotation_review_exclusions`；历史 A/B/C/F 表只读。
+> - 审查数据：`annotation_reviews` / `annotation_review_checks` / `annotation_review_exclusions`，查漏记录 `annotation_frame_scans`；历史 A/B/C/F 表只读。
+> - 自动预标在媒体目录写 `detections.json`（逐帧原始检测）与 `detector_tracks.json`（摘要、查漏帧），框本身写入 `tracker_results.json`（`source=detector_track`）。
 > - 写入依赖版本、幂等回执与原子发布；删除是持久过滤规则，不物理擦除追踪原始数据。
 > - 测试与夹具必须使用独立的 `APP_DATA_DIR` / `APP_DB_FILE` / `APP_STORAGE_DIR`。
 
-`media_folder(media_id, path)` 是素材的显示文件夹，没有记录即未分类，媒体目录结构不变；删除视频时保留，从 `_trash/` 移回后路径还在，同编号新上传会覆盖。`annotation_review_checks` 兼容追加可空的 `frame_digest`（确认时这一帧的内容摘要），代码须按列名写入。`annotation_reviews` 兼容追加可空的 `evidence_policy`、`checklist_history_json`、`empty_frames_json`。当前清单策略为 `frame-review-v1`（逐帧清单）；未结束的旧策略轮次在同一SQLite事务内归档旧items/检查快照到 `checklist_history_json` 并改建为帧清单；原 `annotation_review_checks` 记录不删除。已通过历史轮次不重建，原Tracking诊断和几何文件不改写。新增列对旧数据兼容，不改变离线存储 contract。
+`media_folder(media_id, path)` 是素材的显示文件夹，没有记录即未分类，媒体目录结构不变；删除视频时保留，从 `_trash/` 移回后路径还在，同编号新上传会覆盖。`annotation_review_checks` 兼容追加可空的 `frame_digest`（确认时这一帧的内容摘要），代码须按列名写入。`annotation_reviews` 兼容追加可空的 `evidence_policy`、`checklist_history_json`、`empty_frames_json`、`playthrough_by`（INTEGER）、`playthrough_at`。当前清单策略为 `target-review-v1`（按目标）；未结束的旧策略轮次（包括 `frame-review-v1` 逐帧清单）读取时在同一SQLite事务内归档旧items/检查快照到 `checklist_history_json`，删除其检查记录并改建为目标清单；原 `annotation_review_checks` 记录不删除。已通过历史轮次不重建，原Tracking诊断和几何文件不改写。新增列对旧数据兼容，不改变离线存储 contract。
 
 ## 概览
 
@@ -43,12 +44,14 @@ storage/
     原视频（上传时不转码）
     media.json                   # 原始宽高、FPS、帧数等
     annotations_frame_*.json     # 每次 Tracking seed
-    tracker_results.json         # JSONL：逐行原始视频帧
+    tracker_results.json         # JSONL：逐行原始视频帧（SAM3 追踪或自动预标）
+    detections.json              # 自动预标的逐帧原始检测（低阈值，原图像素），点选补框复用
+    detector_tracks.json         # 预标摘要：策略、模型、阈值、轨迹标记、查漏帧
     tracker_results.meta.json    # 已生成结果的持久标记；文件丢失不能变成未追踪
     tracker_overlay.mp4          # 按需生成的带框预览，不属于追踪完成条件
     tracker_overlay.meta.json    # 派生预览的输入签名，可重新生成
     workspace_state.json         # 可恢复人工/删除/基准/异常/当前位置与设置
-    .frame_cache/                # 逐帧 JPEG 缓存，128 帧/128 MiB 上限
+    .frame_cache/                # 逐帧 JPEG 缓存，128 帧/128 MiB 上限；增强图为 frame_XXXXXXXX_enh.jpg
       source.json               # 源文件路径/大小/mtime/文件身份，失效后重建 JPEG
   media/_annotation_resets/<id>/ # 覆盖事务的临时文件及 journal.json；重启按 DB 回执恢复/清理
   media/_trash/                  # 回收目录：<mediaId>-<时间>-<随机串>/ 是删除的视频目录，<mediaId>-overwritten-…/ 是覆盖重标替换下的文件。不自动清理
@@ -120,7 +123,7 @@ seed 的临时写入或替换失败保留旧文件，临时文件清理后可重
 | 游标 | `review_bookmarks`、`confirmation_bookmarks`，按用户与任务隔离、版本独立 |
 | 幂等 | `review_write_receipts` 与业务变化同一事务；`training_exports` 有操作者+请求键唯一约束 |
 | 导出 | `training_exports` 存任务设置、进度、manifest、错误、完成状态 |
-| 审查 | `annotation_reviews` 每视频每轮一行：轮次、状态 open/passed、开始人/时间、开始时逐帧内容（`start_frames_json`）、清单（`items_json`：当前为要检查的帧区间 `[{kind:'frames',startFrame,endFrame}]`，旧轮次为疑点/抽检等项）、是否加严（旧轮次字段，新轮次恒为 0）；通过时记录通过人/时间、内容摘要 `passed_revision`、通过时逐帧内容、列表用的工作区/追踪文件标记 `passed_stamp`、修改记录 `changes_json`、确认无目标的帧 `empty_frames_json`（旧轮次为空，从其未知帧项推出）。`annotation_review_checks` 每帧一行（`item_id=frame-<帧号>`，旧轮次为项编号）：结果 ok/empty（旧轮次还有 fixed/not_target）、检查人、时间。只追加轮次，不改写旧轮。`annotation_review_exclusions` 是旧“不是精子”排除位置的只读历史，当前不再写入或使用：`id/media_id/review_id/item_id/source/frames_json/actor_id/created_at/revoked_at/revoked_by`；`frames_json` 为原图像素 `[{frameIndex,bbox:[x1,y1,x2,y2]}]`，只追加和撤销，不物理删除。静止排除写 `source=static`，其他来源只在 ±5 帧范围生效；旧静止记录从对应清单及归档恢复类型 |
+| 审查 | `annotation_reviews` 每视频每轮一行：轮次、状态 open/passed、开始人/时间、开始时逐帧内容（`start_frames_json`）、清单（`items_json`：当前为要回答的目标 `[{kind:'target',objectId}]`，审查中新出现的目标读取时并入；旧轮次为帧区间或疑点/抽检等项）、是否加严（旧轮次字段，新轮次恒为 0）；通过时记录通过人/时间、内容摘要 `passed_revision`、通过时逐帧内容、列表用的工作区/追踪文件标记 `passed_stamp`、修改记录 `changes_json`、确认无目标的帧 `empty_frames_json`（旧轮次为空，从其未知帧项推出）。`annotation_review_checks` 每个目标一行（`item_id=obj-<objectId>`，复判卡片为 `repeat-obj-<objectId>`）：结果 tail/head/unsure/no，`frame_digest` 存回答时该目标全部帧的框摘要，改动后答案失效；未知帧确认无目标仍为 `frame-<帧号>` 的 empty（旧轮次还有 ok/fixed/not_target）、检查人、时间。快速浏览记在 `playthrough_by/at`。`annotation_frame_scans(media_id, frame_index, actor_id, scanned_at)` 每个查漏帧一行，清空标注时一并删除。只追加轮次，不改写旧轮。`annotation_review_exclusions` 是旧“不是精子”排除位置的只读历史，当前不再写入或使用：`id/media_id/review_id/item_id/source/frames_json/actor_id/created_at/revoked_at/revoked_by`；`frames_json` 为原图像素 `[{frameIndex,bbox:[x1,y1,x2,y2]}]`，只追加和撤销，不物理删除。静止排除写 `source=static`，其他来源只在 ±5 帧范围生效；旧静止记录从对应清单及归档恢复类型 |
 | 审计身份/证据 | `audit_source_identity` 保存部署身份；`training_export_audits` 按 export_id 唯一保存规范 JSON、采集时间和 SHA；触发器禁止更新/删除 |
 
 A/B/F 不随浏览、缩放、草稿、重新确认或退回重审而改写。F 的对象集合和类别继承 A，只选择几何来源。当前帧重审使用上述事件表；旧问题标记表不作为这一流程的状态来源。
