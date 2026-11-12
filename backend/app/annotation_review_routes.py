@@ -1,4 +1,4 @@
-"""Annotation review frame checklist, pass and media reset routes."""
+"""Annotation review target checklist, unknown-frame confirmations, pass and media reset routes."""
 
 import json
 from typing import Literal
@@ -20,6 +20,11 @@ class RoundRef(Model):
 
 class Check(RoundRef):
     result: Literal["ok", "empty"]
+
+
+class TargetCheck(RoundRef):
+    result: Literal["tail", "head", "unsure", "no"]
+    repeat: bool = False
 
 
 class ResetAnnotations(Model):
@@ -84,6 +89,28 @@ def check(media_id: str, frame_index: int, body: Check, user: User):
     if not 0 <= frame_index < len(current):
         raise ReviewError("ITEM_NOT_FOUND", "帧号超出视频范围", 404)
     review.check(media_id, body.reviewId, frame_index, body.result, user["uid"], current)
+    with source_read():
+        directory, _, info = media_context(media_id, allow_tracking=True)
+        return review.status(media_id, directory, info)
+
+
+@router.put("/media/{media_id}/targets/{object_id}")
+def check_target(media_id: str, object_id: int, body: TargetCheck, user: User):
+    with source_read():
+        directory, _, info = media_context(media_id, allow_tracking=True)
+        current = review.load(directory, info)  # Fresh: the answer vouches for this exact track.
+    review.check_target(media_id, body.reviewId, object_id, body.result, user["uid"], current, repeat=body.repeat)
+    with source_read():
+        directory, _, info = media_context(media_id, allow_tracking=True)
+        return review.status(media_id, directory, info)
+
+
+@router.post("/media/{media_id}/playthrough")
+def playthrough(media_id: str, body: RoundRef, user: User):
+    with source_read():
+        directory, _, info = media_context(media_id, allow_tracking=True)
+        current = review.load_cached(media_id, directory, info)
+    review.record_playthrough(media_id, body.reviewId, user["uid"], current)
     with source_read():
         directory, _, info = media_context(media_id, allow_tracking=True)
         return review.status(media_id, directory, info)

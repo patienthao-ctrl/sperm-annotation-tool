@@ -25,10 +25,10 @@ def test_refresh_failure_does_not_discard_saved_items_and_recovers(source,monkey
     with db.connect() as c:
         c.execute('UPDATE annotation_reviews SET evidence_policy=NULL WHERE id=?',(state['reviewId'],))
         before=dict(review.latest(c,'complete-media'))
-    build=review.build_items
+    build=review.build_target_items
     def fail(*a,**kw):raise RuntimeError('injected checklist rebuild failure')
-    monkeypatch.setattr(review,'build_items',fail)
+    monkeypatch.setattr(review,'build_target_items',fail)
     with pytest.raises(RuntimeError):review.status('complete-media',source,INFO)
     with db.connect() as c:assert dict(review.latest(c,'complete-media'))==before
-    monkeypatch.setattr(review,'build_items',build)
+    monkeypatch.setattr(review,'build_target_items',build)
     assert review.status('complete-media',source,INFO)['status']=='open'

@@ -567,10 +567,12 @@ def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha,
                 "SOURCE_VIDEO_CHANGED", "原始视频已变化，与审查时的视频不一致"
             )
         edited = None
+        answers = {}
         if "directFrames" in v:
-            from .annotation_review import review_edited
+            from .annotation_review import review_edited, verdicts
             with closing(connect()) as c:
                 edited = review_edited(c, m["media_id"])
+                answers = verdicts(c, m["media_id"])  # Per-target review answers (decision 0006).
         manifest["sources"].append(
             {
                 "finalVersionId": v["final"]["id"],
@@ -638,8 +640,18 @@ def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha,
                     "label": f"labels/{split}/{stem}.txt"
                     if body["format"] != "coco"
                     else None,
-                    "objectCount": len(frame["objects"]),
+                    "objectCount": 0,
+                    # Targets the reviewer could not judge: neither sperm nor background. Mask them out
+                    # (e.g. inpaint) when training; they carry no label line and no COCO annotation.
+                    "ignore": [],
                 }
+                kept = []
+                for obj in frame["objects"]:
+                    if answers.get(obj["objectId"]) == "unsure":
+                        sample["ignore"].append({"objectId": obj["objectId"], "bbox": obj["bbox"]})
+                    else:
+                        kept.append(obj)
+                sample["objectCount"] = len(kept)
                 manifest["samples"].append(sample)
                 coco[split]["images"].append(
                     {
@@ -652,11 +664,13 @@ def build_package(eid, body, versions, summary, work, audit_snapshot, audit_sha,
                     }
                 )
                 lines = []
-                for line_no, obj in enumerate(frame["objects"], 1):
+                for line_no, obj in enumerate(kept, 1):
                     sample["objects"].append(
                         {
                             "objectId": obj["objectId"],
                             "yoloLine": line_no if body["format"] != "coco" else None,
+                            # Reviewer's answer for the whole target: true = tail seen, false = head without tail.
+                            "tail": {"tail": True, "head": False}.get(answers.get(obj["objectId"])),
                             # True when a reviewer added or changed this box; None for legacy A/B/F sources.
                             "reviewEdited": None if edited is None else obj["objectId"] in edited.get(fi, ()),
                             "cocoAnnotationId": ann_id + 1
@@ -769,6 +783,8 @@ YOLO 标签为 class_id cx cy w h，坐标按实际图像尺寸归一化，类�
 manifest.json 记录逐图片 sampleId、原始帧、视频、最终版本及 auditReference；文件名包含数据集身份。
 provenance/ 保留完整 A/B/最终框。完整人员与操作历史固定在服务端，通过运维审计导出命令获取。
 manifest.json 的 samples[].objects[].reviewEdited 为 true 表示该框由审查员新增或修改过（追踪原结果有误），可用于加权训练或误差分析。
+samples[].objects[].tail 是审查员按目标给出的判定：true 为看得到尾巴，false 为无尾头；两者都属于“精子”一类。
+samples[].ignore 列出审查员判为“看不清”的框：既不写入标签，也不应当作背景，训练时请遮盖（如 inpaint 成背景）。
 """,
         encoding="utf-8",
     )

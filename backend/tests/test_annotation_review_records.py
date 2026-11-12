@@ -5,11 +5,16 @@ import json
 import pytest
 from app import annotation_review as review, annotation_review_records as records, db
 from app.review_workflow import ReviewError
-from .test_annotation_review import MID, check_all, edit_manual, frames_of
+from .test_annotation_review import MID, answer_all, edit_manual, finish
 from .test_review_completion import INFO, source
 from .test_review_workflow import task
 
 B, C = 2, 3
+
+
+def check_all(source, state, uid=1):
+    """Answer every target and finish the round's other conditions."""
+    return finish(source, answer_all(source, state, uid=uid), uid=uid)
 
 
 def known(source):
@@ -33,17 +38,17 @@ def test_open_round_records_who_started_and_who_confirmed_what(source):
     assert row["reviewId"] == state["reviewId"] and row["mediaId"] == MID and row["mediaName"] == "样本.avi"
     assert (row["round"], row["state"], row["standing"]) == (1, "open", None)
     assert row["startedBy"] == {"id": B, "name": "B"} and row["passedBy"] is None and row["passedAt"] is None
-    assert (row["checked"], row["total"], row["emptyFrames"]) == (0, 3, 0)
+    assert (row["checked"], row["total"], row["emptyFrames"], row["unit"]) == (0, state["total"], 0, "targets")
     assert row["reviewers"] == [] and row["changes"] is None
     assert row["lastActivityAt"] == row["startedAt"]
 
     current = review.load(source, INFO)
-    review.check(MID, state["reviewId"], 0, "ok", B, current)
-    review.check(MID, state["reviewId"], 1, "ok", C, current)
+    review.check_target(MID, state["reviewId"], state["targets"][0], "tail", B, current)
     review.check(MID, state["reviewId"], 2, "empty", C, current)
     row = only_row(source)
-    assert (row["checked"], row["total"], row["emptyFrames"]) == (3, 3, 1)
-    assert row["reviewers"] == [{"id": B, "name": "B", "frames": 1}, {"id": C, "name": "C", "frames": 2}]
+    assert (row["checked"], row["emptyFrames"]) == (1, 1)
+    assert row["verdicts"] == {"tail": 1, "head": 0, "unsure": 0, "no": 0}
+    assert row["reviewers"] == [{"id": B, "name": "B", "frames": 1}, {"id": C, "name": "C", "frames": 0}]
     assert row["lastActivityAt"] >= row["startedAt"] and row["state"] == "open"
 
 
@@ -117,22 +122,23 @@ def test_rounds_are_ordered_by_latest_activity_across_videos(source):
 def test_a_person_removed_from_the_accounts_is_still_named_by_id(source):
     state = review.start(MID, source, INFO, 99)
     current = review.load(source, INFO)
-    review.check(MID, state["reviewId"], 0, "ok", 99, current)
+    review.check_target(MID, state["reviewId"], state["targets"][0], "tail", 99, current)
     row = only_row(source)
     assert row["startedBy"] == {"id": 99, "name": "用户 #99"}
     assert row["reviewers"] == [{"id": 99, "name": "用户 #99", "frames": 1}]
 
 
-def test_detail_shows_each_persons_frames_as_spans(source):
+def test_detail_shows_each_persons_targets_and_empty_frames(source):
     state = review.start(MID, source, INFO, B)
     current = review.load(source, INFO)
-    review.check(MID, state["reviewId"], 0, "ok", B, current)
-    review.check(MID, state["reviewId"], 1, "ok", C, current)
-    review.check(MID, state["reviewId"], 2, "empty", B, current)
+    first = state["targets"][0]
+    review.check_target(MID, state["reviewId"], first, "tail", B, current)
+    review.check_target(MID, state["reviewId"], first, "tail", C, current, repeat=True)  # Hidden second look: not listed.
+    review.check(MID, state["reviewId"], 2, "empty", C, current)
     detail = records.detail(state["reviewId"])
-    assert detail["reviewId"] == state["reviewId"] and detail["legacy"] is False and detail["changes"] == []
-    by_person = [(c["actor"]["name"], c["result"], c["frames"], c["spans"]) for c in detail["confirmations"]]
-    assert by_person == [("B", "ok", 1, [[0, 0]]), ("C", "ok", 1, [[1, 1]]), ("B", "empty", 1, [[2, 2]])]
+    assert detail["reviewId"] == state["reviewId"] and detail["legacy"] is False and detail["unit"] == "targets" and detail["changes"] == []
+    by_person = [(c["actor"]["name"], c["result"], c["frames"], c["spans"], c["targets"]) for c in detail["confirmations"]]
+    assert by_person == [("B", "tail", 1, [], [first]), ("C", "empty", 1, [[2, 2]], [])]
     assert all(c["lastAt"] for c in detail["confirmations"])
 
 
@@ -141,8 +147,9 @@ def test_detail_after_pass_names_what_changed_and_who_confirmed_it(source):
     edit_manual(source, 30)
     state = check_all(source, state, uid=C)
     review.pass_review(MID, source, INFO, state["reviewId"], C)
+    # Answers are per target, so a changed frame names no single confirmer.
     assert records.detail(state["reviewId"])["changes"] == [
-        {"start": 0, "end": 0, "added": [], "removed": [], "moved": [1], "checkedBy": {"id": C, "name": "C"}},
+        {"start": 0, "end": 0, "added": [], "removed": [], "moved": [1], "checkedBy": None},
     ]
 
 

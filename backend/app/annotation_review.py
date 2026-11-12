@@ -1,11 +1,15 @@
-"""Annotation review: every frame checked by a person, a pass record, and the export gate.
+"""Annotation review: every target (a whole track) judged by a person, a pass record, and the export gate.
 
 Reviewers correct boxes in the same workspace the annotator uses; there is no second
-copy to compare and no automatic doubt finding. A first round lists every frame of
-the video; a re-review after a pass lists only the frames whose content changed.
-The reviewer looks at each listed frame, fixes it in place, and confirms it (frames
-with no annotation at all are confirmed as empty). Passing records what changed since
-the round started, and export requires a pass on the current content.
+copy to compare. A first round lists every target of the video; a re-review after a
+pass lists only the targets whose track changed. The reviewer answers once per target
+(tail / head / unsure, or "no", after which the page deletes the track); the answer
+vouches for the track as it was then, so a later change of that track asks again.
+Frames with no annotation at all are still confirmed empty one by one. Passing also
+needs the annotation-stage check frames scanned and one playthrough of the video.
+Passing records what changed since the round started, and export requires a pass on
+the current content. Decision 0006; rounds of the older frame checklist (0003) stay
+readable and an open one is rebuilt as a target list.
 """
 
 import json
@@ -23,8 +27,12 @@ log = logging.getLogger("review.annotation_review")
 
 RESULTS = {"ok", "empty"}
 # Stored in annotation_reviews.evidence_policy. Open rounds built by an older policy
-# (the doubt/sampling checklist) are rebuilt as a frame checklist when next read.
+# (the frame checklist, or before it the doubt/sampling checklist) are rebuilt as a
+# target list when next read.
 CHECKLIST_POLICY = "frame-review-v1"
+TARGET_POLICY = "target-review-v1"
+TARGET_RESULTS = {"tail", "head", "unsure", "no"}
+KEPT_RESULTS = {"tail", "head", "unsure"}
 
 
 def migrate(c):
@@ -57,6 +65,9 @@ def migrate(c):
     columns={r[1] for r in c.execute('PRAGMA table_info(annotation_reviews)')}
     for name in ('evidence_policy','checklist_history_json','empty_frames_json'):
         if name not in columns:c.execute(f'ALTER TABLE annotation_reviews ADD COLUMN {name} TEXT')
+    columns={r[1] for r in c.execute('PRAGMA table_info(annotation_reviews)')}
+    for name, kind in (('playthrough_by','INTEGER'),('playthrough_at','TEXT')):
+        if name not in columns:c.execute(f'ALTER TABLE annotation_reviews ADD COLUMN {name} {kind}')
     if 'frame_digest' not in {r[1] for r in c.execute('PRAGMA table_info(annotation_review_checks)')}:
         c.execute('ALTER TABLE annotation_review_checks ADD COLUMN frame_digest TEXT')
     # Annotation stage: the annotator scanned these whole frames for heads the detector missed.
@@ -174,6 +185,34 @@ def frame_digest(frame):
     return digest(frame)
 
 
+def target_tracks(frames_list):
+    """{objectId: [[frameIndex, bbox, classKey], ...]} over the known frames."""
+    out = {}
+    for i, frame in enumerate(frames_list):
+        for obj in frame or []:
+            out.setdefault(obj["objectId"], []).append([i, obj["bbox"], obj.get("classKey")])
+    return out
+
+
+def changed_targets(old, new):
+    before, after = target_tracks(old), target_tracks(new)
+    return sorted(k for k in after if before.get(k) != after[k])
+
+
+def build_target_items(frames_list, previous):
+    """Every target on a first round; only targets whose track changed after a pass."""
+    ids = sorted(target_tracks(frames_list)) if previous is None else changed_targets(previous, frames_list)
+    return [dict(kind="target", objectId=k) for k in ids]
+
+
+def item_targets(items):
+    return [item["objectId"] for item in items if item.get("kind") == "target"]
+
+
+def target_key(object_id, repeat=False):
+    return f"{'repeat-' if repeat else ''}obj-{object_id}"
+
+
 # ---------------------------------------------------------------- state
 
 
@@ -223,6 +262,48 @@ def current_checks(c, review_id, frames_list):
     return valid, changed
 
 
+def round_targets(c, row, frames_list):
+    """Targets to judge: the round's list plus targets changed since the last pass, while
+    they still exist (a deleted track needs no answer)."""
+    tracks = target_tracks(frames_list)
+    listed = set(item_targets(json.loads(row["items_json"])))
+    passed = last_passed(c, row["media_id"])
+    if row["state"] == "open" and passed is not None and passed["passed_frames_json"]:
+        listed |= set(changed_targets(json.loads(passed["passed_frames_json"]), frames_list))
+    return sorted(k for k in listed if k in tracks)
+
+
+def target_checks(c, review_id, repeat=False):
+    prefix = "repeat-obj-" if repeat else "obj-"
+    return {int(k[len(prefix):]): v for k, v in checks(c, review_id).items() if k.startswith(prefix)}
+
+
+def current_target_checks(c, review_id, frames_list):
+    """(answers still matching the track, targets changed after being answered)."""
+    tracks, valid, changed = target_tracks(frames_list), {}, []
+    for oid, check_ in target_checks(c, review_id).items():
+        if oid not in tracks:
+            if check_["result"] == "no":
+                valid[oid] = check_  # Judged not a sperm and deleted, as intended.
+            continue
+        if check_["digest"] == digest(tracks[oid]):
+            valid[oid] = check_
+        else:
+            changed.append(oid)
+    return valid, changed
+
+
+def verdicts(c, media_id):
+    """{objectId: tail|head|unsure} from every passed target round, the latest answer winning."""
+    out = {}
+    for row in c.execute("SELECT id FROM annotation_reviews WHERE media_id=? AND state='passed' AND evidence_policy=? ORDER BY round",
+                         (media_id, TARGET_POLICY)):
+        for oid, check_ in target_checks(c, row["id"]).items():
+            if check_["result"] in KEPT_RESULTS:
+                out[oid] = check_["result"]
+    return out
+
+
 def review_edited(c, media_id):
     """Objects a reviewer added or changed in any passed round: {frameIndex: {objectId}}.
 
@@ -242,22 +323,25 @@ def upgrade(c, row, frames_list):
     The old items and their checks are archived; none of them counts for the new
     list. Completed rounds are history and never rewritten.
     """
-    if row is None or row['state']!='open' or row['evidence_policy']==CHECKLIST_POLICY:return row
+    if row is None or row['state']!='open' or row['evidence_policy']==TARGET_POLICY:return row
     passed=last_passed(c,row['media_id'])
     previous=json.loads(passed['passed_frames_json']) if passed else None
     history=json.loads(row['checklist_history_json'] or '[]')
     history.append(dict(at=now(),policy=row['evidence_policy'],items=json.loads(row['items_json']),checks=checks(c,row['id'])))
-    items=build_items(frames_list,previous)
+    items=build_target_items(frames_list,previous)
+    c.execute('DELETE FROM annotation_review_checks WHERE review_id=?',(row['id'],))  # Archived above; none counts for the new list.
     c.execute('UPDATE annotation_reviews SET items_json=?,evidence_policy=?,checklist_history_json=? WHERE id=?',
-              (packed(items),CHECKLIST_POLICY,packed(history),row['id']))
-    log.info('annotation_review.checklist_rebuilt media=%s review=%s old_policy=%s frames=%s',
-             row['media_id'],row['id'],row['evidence_policy'],len(item_frames(items)))
+              (packed(items),TARGET_POLICY,packed(history),row['id']))
+    log.info('annotation_review.checklist_rebuilt media=%s review=%s old_policy=%s targets=%s',
+             row['media_id'],row['id'],row['evidence_policy'],len(items))
     return latest(c,row['media_id'])
 
 
 def round_data(c, row, frames_list):
     if row is None:
         return None
+    if row["evidence_policy"] == TARGET_POLICY:
+        return target_round_data(c, row, frames_list)
     changed = []
     if row["evidence_policy"] != CHECKLIST_POLICY:  # A passed round of the old checklist: only its record is shown.
         targets, done = [], {}
@@ -287,6 +371,39 @@ def round_data(c, row, frames_list):
                 checked=sum(1 for i in targets if i in done), total=len(targets),
                 passedBy=row["passed_by"], passedAt=row["passed_at"],
                 changes=json.loads(row["changes_json"]) if row["changes_json"] else None)
+
+
+def target_round_data(c, row, frames_list):
+    open_ = row["state"] == "open"
+    if open_:
+        targets = round_targets(c, row, frames_list)
+        done, changed = current_target_checks(c, row["id"], frames_list)
+    else:  # What was answered then is the record, whatever the content is now.
+        targets = item_targets(json.loads(row["items_json"]))
+        done, changed = target_checks(c, row["id"]), []
+    repeats = target_checks(c, row["id"], repeat=True)
+    pairs = [(done[k]["result"], v["result"]) for k, v in repeats.items() if k in done]
+    frame_done = frame_checks(c, row["id"])
+    unknown = [i for i, f in enumerate(frames_list) if f is None] if open_ else []
+    latest_check = c.execute("SELECT actor_id,checked_at FROM annotation_review_checks WHERE review_id=? ORDER BY checked_at DESC,rowid DESC LIMIT 1",
+                             (row["id"],)).fetchone()
+    last_actor = latest_check["actor_id"] if latest_check else row["started_by"]
+    return dict(reviewId=row["id"], round=row["round"], state=row["state"], policy=TARGET_POLICY,
+                startedBy=row["started_by"], startedAt=row["started_at"],
+                targets=targets, results={str(k): v["result"] for k, v in done.items() if k in targets or v["result"] == "no"},
+                changedTargets=[k for k in changed if k in targets],
+                checked=sum(1 for k in targets if k in done), total=len(targets),
+                unknownFrames=spans(unknown), emptyFrames=spans(i for i, v in frame_done.items() if v["result"] == "empty"),
+                playthroughBy=row["playthrough_by"], playthroughAt=row["playthrough_at"],
+                repeats={str(k): v["result"] for k, v in repeats.items()},
+                consistency=dict(pairs=len(pairs), same=sum(a == b for a, b in pairs)),
+                lastActorId=last_actor,
+                lastActorName=(c.execute("SELECT username FROM users WHERE id=?", (last_actor,)).fetchone() or [None])[0],
+                lastActivityAt=latest_check["checked_at"] if latest_check else row["started_at"],
+                passedBy=row["passed_by"], passedAt=row["passed_at"],
+                changes=json.loads(row["changes_json"]) if row["changes_json"] else None,
+                # Legacy fields of the frame checklist, empty for target rounds.
+                frames=[], checkedFrames=[], changedFrames=[])
 
 
 def status(media_id, directory, info):
@@ -395,12 +512,12 @@ def start(media_id, directory, info, actor):
         if passed and passed["passed_revision"] == revision(frames_list):
             raise ReviewError("REVIEW_ALREADY_PASSED", "当前标注已经审查通过，没有需要重新审查的改动", 409)
         rid = "arev_" + uuid.uuid4().hex
-        items = build_items(frames_list, previous)
+        items = build_target_items(frames_list, previous)
         c.execute(
             "INSERT INTO annotation_reviews(id,media_id,round,state,started_by,started_at,start_revision,start_frames_json,items_json,evidence_policy) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (rid, media_id, (row["round"] + 1) if row else 1, "open", actor, now(), revision(frames_list), packed(frames_list), packed(items), CHECKLIST_POLICY),
+            (rid, media_id, (row["round"] + 1) if row else 1, "open", actor, now(), revision(frames_list), packed(frames_list), packed(items), TARGET_POLICY),
         )
-        log.info("annotation_review.started media=%s review=%s actor=%s frames=%s rereview=%s", media_id, rid, actor, len(item_frames(items)), previous is not None)
+        log.info("annotation_review.started media=%s review=%s actor=%s targets=%s rereview=%s", media_id, rid, actor, len(items), previous is not None)
         return round_data(c, latest(c, media_id), frames_list)
 
 
@@ -421,7 +538,11 @@ def check(media_id, review_id, frame, result, actor, current_frames):
     with closing(connect()) as c, c:
         c.execute("BEGIN IMMEDIATE")
         row = upgrade(c, open_round(c, media_id, review_id), current_frames)
-        if frame not in set(round_frames(c, row, current_frames)):
+        if row["evidence_policy"] == TARGET_POLICY:
+            # Target rounds confirm frames only where nothing at all is annotated.
+            if current_frames[frame] is not None or result != "empty":
+                raise ReviewError("ITEM_NOT_FOUND", f"第 {frame + 1} 帧已有标注结果，不需要单独确认", 404)
+        elif frame not in set(round_frames(c, row, current_frames)):
             raise ReviewError("ITEM_NOT_FOUND", f"第 {frame + 1} 帧不在本轮审查范围内", 404)
         unknown = current_frames[frame] is None
         if result == "empty" and not unknown:
@@ -435,6 +556,44 @@ def check(media_id, review_id, frame, result, actor, current_frames):
             (review_id, frame_key(frame), result, actor, now(), frame_digest(current_frames[frame])),
         )
         return round_data(c, latest(c, media_id), current_frames)
+
+
+def check_target(media_id, review_id, object_id, result, actor, current_frames, repeat=False):
+    """One answer for one whole track. ``repeat`` records the hidden second look used
+    to measure consistency; it never counts toward passing."""
+    if result not in TARGET_RESULTS:
+        raise ReviewError("INVALID_RESULT", "判定结果无效", 422)
+    with closing(connect()) as c, c:
+        c.execute("BEGIN IMMEDIATE")
+        row = upgrade(c, open_round(c, media_id, review_id), current_frames)
+        tracks = target_tracks(current_frames)
+        if object_id not in set(round_targets(c, row, current_frames)):
+            raise ReviewError("ITEM_NOT_FOUND", f"目标 {object_id} 不在本轮审查范围内", 404)
+        c.execute(
+            "INSERT INTO annotation_review_checks(review_id,item_id,result,actor_id,checked_at,frame_digest) VALUES (?,?,?,?,?,?) ON CONFLICT(review_id,item_id) DO UPDATE SET result=excluded.result,actor_id=excluded.actor_id,checked_at=excluded.checked_at,frame_digest=excluded.frame_digest",
+            (review_id, target_key(object_id, repeat), result, actor, now(), digest(tracks[object_id])),
+        )
+        log.info("annotation_review.target_checked media=%s review=%s object=%s result=%s repeat=%s actor=%s", media_id, review_id, object_id, result, repeat, actor)
+        return round_data(c, latest(c, media_id), current_frames)
+
+
+def record_playthrough(media_id, review_id, actor, current_frames):
+    with closing(connect()) as c, c:
+        c.execute("BEGIN IMMEDIATE")
+        upgrade(c, open_round(c, media_id, review_id), current_frames)
+        c.execute("UPDATE annotation_reviews SET playthrough_by=?, playthrough_at=? WHERE id=?", (actor, now(), review_id))
+        log.info("annotation_review.playthrough media=%s review=%s actor=%s", media_id, review_id, actor)
+        return round_data(c, latest(c, media_id), current_frames)
+
+
+def scan_gaps(media_id, directory):
+    """Check frames of the detector prelabel nobody scanned yet (none for older videos)."""
+    from .detector_tracks import read_summary
+    summary = read_summary(directory)
+    if not summary:
+        return []
+    done = scanned_frames(media_id)
+    return [item["frame"] for item in summary.get("checkFrames", []) if item["frame"] not in done]
 
 
 def diff(old, new):
@@ -469,9 +628,12 @@ def confirmed_empty(c, review_id):
 
 def pass_review(media_id, directory, info, review_id, actor):
     frames_list = load(directory, info)
+    gaps = scan_gaps(media_id, directory)
     with closing(connect()) as c, c:
         c.execute("BEGIN IMMEDIATE")
         row = upgrade(c, open_round(c, media_id, review_id), frames_list)
+        if row["evidence_policy"] == TARGET_POLICY:
+            return _pass_targets(c, row, media_id, directory, review_id, actor, frames_list, gaps)
         targets = round_frames(c, row, frames_list)
         done, changed = current_checks(c, review_id, frames_list)
         changed = [i for i in changed if i in targets]
@@ -499,6 +661,41 @@ def pass_review(media_id, directory, info, review_id, actor):
         )
         log.info("annotation_review.passed media=%s review=%s actor=%s frames=%s added=%s removed=%s moved=%s", media_id, review_id, actor, len(targets), changes["added"], changes["removed"], changes["moved"])
         return round_data(c, latest(c, media_id), frames_list)
+
+
+def _pass_targets(c, row, media_id, directory, review_id, actor, frames_list, gaps):
+    targets = round_targets(c, row, frames_list)
+    done, changed = current_target_checks(c, review_id, frames_list)
+    changed = [k for k in changed if k in targets]
+    if changed:
+        raise ReviewError("REVIEW_TARGET_CHANGED", f"有 {len(changed)} 个目标在确认后又被改动（目标 {changed[0]} 等），请重新确认", 409)
+    missing = [k for k in targets if k not in done]
+    if missing:
+        raise ReviewError("REVIEW_INCOMPLETE", f"还有 {len(missing)} 个目标没有确认", 409)
+    kept_no = [k for k in targets if done[k]["result"] == "no"]
+    if kept_no:
+        raise ReviewError("REVIEW_INCOMPLETE", f"目标 {kept_no[0]} 判为不是精子，但还没有删除，请重新判定", 409)
+    if gaps:
+        raise ReviewError("REVIEW_SCAN_INCOMPLETE", f"标注阶段还有 {len(gaps)} 张查漏帧没看（第 {gaps[0] + 1} 帧起）", 409)
+    if not row["playthrough_at"]:
+        raise ReviewError("REVIEW_PLAYTHROUGH_REQUIRED", "还没有快速浏览一遍全片", 409)
+    passed = last_passed(c, media_id)
+    carried = confirmed_empty(c, passed["id"]) if passed else set()
+    frame_done = frame_checks(c, review_id)
+    empty = {i for i, f in enumerate(frames_list) if f is None and (frame_done.get(i, {}).get("result") == "empty" or i in carried)}
+    unknown = [i for i, f in enumerate(frames_list) if f is None and i not in empty]
+    if unknown:
+        raise ReviewError("UNKNOWN_FRAMES", f"还有 {len(unknown)} 帧没有标注，也没有确认为无目标（第 {unknown[0] + 1} 帧起）", 409)
+    changes = diff(json.loads(row["start_frames_json"]), frames_list)
+    changes["targets"] = {str(k): v["result"] for k, v in done.items()}
+    changes["reviewers"] = sorted({v["actorId"] for v in done.values()})
+    c.execute(
+        "UPDATE annotation_reviews SET state='passed',passed_by=?,passed_at=?,passed_revision=?,passed_frames_json=?,passed_stamp=?,changes_json=?,empty_frames_json=? WHERE id=?",
+        (actor, now(), revision(frames_list), packed(frames_list), stamp(directory), packed(changes), packed(sorted(empty)), review_id),
+    )
+    log.info("annotation_review.passed media=%s review=%s actor=%s targets=%s added=%s removed=%s moved=%s",
+             media_id, review_id, actor, len(targets), changes["added"], changes["removed"], changes["moved"])
+    return round_data(c, latest(c, media_id), frames_list)
 
 
 def require_passed(c, media_id, frames, frame_count):

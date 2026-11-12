@@ -5,14 +5,17 @@ from .test_review_completion import source, body, INFO
 from .test_review_workflow import task
 
 
-def review_pass(source, uid=1):
-    """Pass an annotation review: every frame checked, frames without annotations confirmed empty."""
+def review_pass(source, uid=1, result='tail'):
+    """Pass an annotation review: every target answered, frames without annotations confirmed empty, one playthrough."""
     from app import annotation_review as review
     state = review.start('complete-media', source, INFO, uid)
     frames = review.load(source, INFO)
-    for start, end in state['frames']:
+    for oid in state['targets']:
+        review.check_target('complete-media', state['reviewId'], oid, result, uid, frames)
+    for start, end in state['unknownFrames']:
         for i in range(start, end + 1):
-            review.check('complete-media', state['reviewId'], i, 'ok' if frames[i] else 'empty', uid, frames)
+            review.check('complete-media', state['reviewId'], i, 'empty', uid, frames)
+    review.record_playthrough('complete-media', state['reviewId'], uid, frames)
     return review.pass_review('complete-media', source, INFO, state['reviewId'], uid)
 
 
@@ -74,6 +77,8 @@ def test_real_direct_export_zip_and_invalidation(source, monkeypatch, tmp_path):
         manifest=json.loads(z.read('manifest.json'))
         assert manifest['sources'][0]['annotationOnly'] is True
         assert 'reviewDecisions' not in manifest
+        assert [o['tail'] for s in manifest['samples'] for o in s['objects']] == [True]  # review_pass answers "tail".
+        assert all(s['ignore']==[] for s in manifest['samples'])
         assert not any(n.startswith('review/') for n in z.namelist())
     # Replaying the original request is stable; changing the current source revokes downloads.
     assert export.create(1,'export',settings)['exportId']==job['exportId']
@@ -81,6 +86,30 @@ def test_real_direct_export_zip_and_invalidation(source, monkeypatch, tmp_path):
     (source/'workspace_state.json').write_text(json.dumps(state))
     assert export.status(job['exportId'],1)['state']=='invalidated'
     with pytest.raises(Exception): export.download(job['exportId'],1)
+
+def test_unsure_targets_are_ignored_regions_and_answers_mark_tails(source, monkeypatch, tmp_path):
+    import zipfile
+    from app import main, api_common as routes, confirmation_workflow as confirmation
+    from .test_training_export import video_file
+    video=video_file(source, n=3)
+    with db.connect() as c:
+        confirmation.migrate(c)
+        export.migrate(c)
+    monkeypatch.setattr(routes,'completion_context',lambda mid:(source,video,INFO))
+    monkeypatch.setattr(main,'media_dir',lambda mid:source)
+    monkeypatch.setattr(export,'DATASET_EXPORT_DIR',tmp_path/'packages')
+    monkeypatch.setattr(export,'enqueue',lambda eid:None)
+    review_pass(source, result='unsure')
+    result=direct.freeze(source,video,'complete-media',1,'snapshot',body(source),INFO)
+    job=export.create(1,'export',dict(finalVersionIds=[result['finalVersionId']],format='yolo',splitRatio=.8))
+    export.run(job['exportId'])
+    with zipfile.ZipFile(export.download(job['exportId'],1)) as z:
+        labels=[z.read(n).decode() for n in z.namelist() if n.startswith('labels/') and n.endswith('.txt')]
+        manifest=json.loads(z.read('manifest.json'))
+    assert not any(x.strip() for x in labels)  # Not a positive and not a negative: no label line.
+    ignored=[(s['frameIndex'],i['objectId']) for s in manifest['samples'] for i in s['ignore']]
+    assert ignored and all(s['objectCount']==0 for s in manifest['samples'])
+
 
 def test_api_authorization_and_original_snapshot_replay(source, monkeypatch):
     from fastapi import FastAPI
@@ -158,8 +187,11 @@ def test_export_marks_boxes_the_reviewer_changed(source, monkeypatch, tmp_path):
     workspace=json.loads((source/'workspace_state.json').read_text());workspace['updatedBy']=1
     (source/'workspace_state.json').write_text(json.dumps(workspace))
     current=review.load(source,INFO)
-    for i in range(INFO['frameCount']):
-        review.check('complete-media',state['reviewId'],i,'ok' if current[i] else 'empty',2,current)
+    for oid in review.status('complete-media',source,INFO)['review']['targets']:
+        review.check_target('complete-media',state['reviewId'],oid,'tail',2,current)
+    for i,frame in enumerate(current):
+        if frame is None:review.check('complete-media',state['reviewId'],i,'empty',2,current)
+    review.record_playthrough('complete-media',state['reviewId'],2,current)
     passed=review.pass_review('complete-media',source,INFO,state['reviewId'],2)
     moved={(f['frameIndex'],oid) for f in passed['changes']['frames'] for oid in f['moved']}
     assert moved

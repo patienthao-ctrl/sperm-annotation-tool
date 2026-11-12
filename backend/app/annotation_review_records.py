@@ -31,11 +31,17 @@ def _person(names, uid):
 
 
 def _is_legacy(row):
-    return row["evidence_policy"] != review.CHECKLIST_POLICY
+    return row["evidence_policy"] not in (review.CHECKLIST_POLICY, review.TARGET_POLICY)
+
+
+def _by_target(row):
+    return row["evidence_policy"] == review.TARGET_POLICY
 
 
 def _total(row):
     items = json.loads(row["items_json"])
+    if _by_target(row):
+        return len(review.item_targets(items))
     return len(items) if _is_legacy(row) else len(review.item_frames(items))
 
 
@@ -72,7 +78,10 @@ def rounds(find_media):
         names = _names(c)
         tally = {}
         for r in c.execute(
-            "SELECT review_id,actor_id,COUNT(*) AS frames,SUM(result='empty') AS empty,MAX(checked_at) AS last_at "
+            "SELECT review_id,actor_id,COUNT(*) AS frames,SUM(result='empty') AS empty,MAX(checked_at) AS last_at,"
+            "SUM(item_id LIKE 'obj-%') AS targets,SUM(item_id LIKE 'obj-%' AND result='tail') AS tail,"
+            "SUM(item_id LIKE 'obj-%' AND result='head') AS head,SUM(item_id LIKE 'obj-%' AND result='unsure') AS unsure,"
+            "SUM(item_id LIKE 'obj-%' AND result='no') AS no "
             "FROM annotation_review_checks GROUP BY review_id,actor_id ORDER BY review_id,MIN(checked_at),actor_id"
         ):
             tally.setdefault(r["review_id"], []).append(r)
@@ -83,7 +92,9 @@ def rounds(find_media):
     out = []
     for row in rows:
         found, people = media[row["media_id"]], tally.get(row["id"], [])
-        checked = sum(p["frames"] for p in people)
+        by_target = _by_target(row)
+        unit = "targets" if by_target else "frames"
+        checked = sum(p[unit] for p in people)
         last_check = max((p["last_at"] for p in people), default=row["started_at"])
         out.append(dict(
             reviewId=row["id"], mediaId=row["media_id"], mediaName=found[1] if found else row["media_id"], mediaDeleted=not found,
@@ -92,8 +103,11 @@ def rounds(find_media):
             passedBy=_person(names, row["passed_by"]), passedAt=row["passed_at"],
             lastActivityAt=max(last_check, row["passed_at"] or ""),
             # A frame a colleague changed mid-round joins the list without being in items_json.
-            checked=checked, total=max(_total(row), checked), emptyFrames=sum(p["empty"] for p in people),
-            reviewers=[dict(_person(names, p["actor_id"]), frames=p["frames"]) for p in people],
+            # The unit: whole targets for rounds since decision 0006, frames before.
+            unit=unit, checked=checked, total=max(_total(row), checked), emptyFrames=sum(p["empty"] for p in people),
+            verdicts=dict(tail=sum(p["tail"] for p in people), head=sum(p["head"] for p in people),
+                          unsure=sum(p["unsure"] for p in people), no=sum(p["no"] for p in people)) if by_target else None,
+            reviewers=[dict(_person(names, p["actor_id"]), frames=p[unit]) for p in people],
             changes=_change_totals(row),
         ))
     out.sort(key=lambda r: r["lastActivityAt"], reverse=True)
@@ -119,12 +133,17 @@ def change_spans(frames, names):
 def _confirmations(rows, legacy, names):
     groups = {}
     for r in rows:
-        group = groups.setdefault((r["actor_id"], r["result"]), dict(frames=[], items=0, lastAt=r["checked_at"]))
+        if r["item_id"].startswith("repeat-"):
+            continue  # Hidden second looks measure consistency; they are not confirmations.
+        group = groups.setdefault((r["actor_id"], r["result"]), dict(frames=[], targets=[], items=0, lastAt=r["checked_at"]))
         group["items"] += 1
         group["lastAt"] = max(group["lastAt"], r["checked_at"])
         if not legacy and r["item_id"].startswith("frame-"):
             group["frames"].append(int(r["item_id"][6:]))
-    out = [dict(actor=_person(names, actor), result=result, frames=g["items"], spans=review.spans(g["frames"]), lastAt=g["lastAt"])
+        elif r["item_id"].startswith("obj-"):
+            group["targets"].append(int(r["item_id"][4:]))
+    out = [dict(actor=_person(names, actor), result=result, frames=g["items"], spans=review.spans(g["frames"]),
+                targets=sorted(g["targets"]), lastAt=g["lastAt"])
            for (actor, result), g in groups.items()]
     out.sort(key=lambda g: (g["spans"][0][0] if g["spans"] else 0, g["lastAt"]))
     return out
@@ -139,5 +158,6 @@ def detail(review_id):
         names = _names(c)
         checks = c.execute("SELECT item_id,result,actor_id,checked_at FROM annotation_review_checks WHERE review_id=?", (review_id,)).fetchall()
     changes = json.loads(row["changes_json"]) if row["changes_json"] else None
-    return dict(reviewId=review_id, legacy=_is_legacy(row), confirmations=_confirmations(checks, _is_legacy(row), names),
+    return dict(reviewId=review_id, legacy=_is_legacy(row), unit="targets" if _by_target(row) else "frames",
+                confirmations=_confirmations(checks, _is_legacy(row), names),
                 changes=change_spans(changes["frames"], names) if changes else [])
