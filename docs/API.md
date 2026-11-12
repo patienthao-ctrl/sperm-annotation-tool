@@ -85,7 +85,7 @@
 | `GET /api/track/status/{taskId}`、`/api/track/result/{mediaId}` | 追踪状态与对象 |
 | `GET /api/track/result-file/{mediaId}`、`/api/track/overlay/{mediaId}` | JSONL 与按需生成的完整带框视频；预览缓存以当前视频/追踪/删除规则校验，生成时输入变化返回 409，失败 503 不影响已保存 JSONL |
 | `POST /api/prelabel/{mediaId}` | 自动预标：202 `{taskId,status,frameCount}`，状态用 `/api/track/status/{taskId}`（`stage: queued/detecting/linking/completed/failed`）。`Idempotency-Key` 同键返回原任务、用于其他请求 409；已有 AI 结果 409 `PRELABEL_EXISTS`（重新预标须先清空标注）；不需要 SAM3 |
-| `GET /api/prelabel/{mediaId}` | 无预标为 `{state:'none'}`；否则 `{state:'available',…摘要,checkFrames:[{frame,reason,scannedBy?,scannedByName?,scannedAt?}]}`，摘要含模型、阈值、轨迹数与轨迹标记 |
+| `GET /api/prelabel/{mediaId}` | 无预标为 `{state:'none'}`；否则 `{state:'available',…摘要,checkFrames:[{frame,reason,scannedBy?,scannedByName?,scannedAt?}]}`，摘要含模型、阈值、轨迹数与轨迹标记；每个查漏帧另有 `hints:[[x1,y1,x2,y2]]`，是模型在该帧检到、当前没有任何框覆盖的位置（原图像素），页面画成虚线圈 |
 | `PUT /api/prelabel/{mediaId}/scans/{frameIndex}` | 记录“这张查漏帧看完了”，只接受 `checkFrames` 中的帧，无预标 409；返回同上的摘要 |
 | `POST /api/prelabel/{mediaId}/extend` | `{frameIndex,x,y}`（原图像素）：点击处的头加上其他帧里同一个头，返回 `{frameIndex,width,height,confidence,boxes:[{frameIndex,bbox:[x1,y1,x2,y2],kind}]}`；不写数据，页面作为同一个新目标的人工框保存。点击处已有框 409 `ALREADY_BOXED`，找不到头 422，模型不可用 503 |
 

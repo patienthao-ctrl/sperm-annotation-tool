@@ -1587,7 +1587,21 @@ def prelabel_summary(media_id: str, user: dict[str, Any] = Depends(current_user)
     summary['checkFrames'] = [{**item, **({'scannedBy': scans[item['frame']]['actorId'], 'scannedByName': names.get(scans[item['frame']]['actorId']),
                                             'scannedAt': scans[item['frame']]['at']} if item['frame'] in scans else {})}
                               for item in summary['checkFrames']]
+    # Dashed "maybe missed" hints: what the model saw on a check frame that no box covers now.
+    detections = detector_tracks.read_detections(directory)
+    if detections is not None:
+        source = source_media_info(directory)
+        occupied = _occupied_boxes(directory, annotation_state.read_state(directory), {'width': int(source['width']), 'height': int(source['height'])})
+        for item in summary['checkFrames']:
+            rows = detections[item['frame']] if 0 <= item['frame'] < len(detections) else []
+            item['hints'] = [[round(float(v), 1) for v in r[:4]] for r in rows
+                             if len(r) == 5 and not _covered(r, occupied.get(item['frame'], []))]
     return {'state': 'available', **summary}
+
+
+def _covered(row: list[float], boxes: list[list[float]], pad: float = 4.0) -> bool:
+    cx, cy = (row[0] + row[2]) / 2, (row[1] + row[3]) / 2
+    return any(b[0] - pad <= cx <= b[2] + pad and b[1] - pad <= cy <= b[3] + pad for b in boxes)
 
 
 def _user_names(ids: set[int]) -> dict[int, str]:

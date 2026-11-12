@@ -46,7 +46,7 @@ def test_prelabel_publishes_tracks_without_sam3_and_refuses_to_overwrite(imports
     boxes = [a for f in result['frames'] for a in f['annotations']]
     assert {a['objectId'] for a in boxes} == {1} and boxes[0]['bbox'] == [25, 15, 35, 25]
     summary = client.get('/api/prelabel/' + mid).json()
-    assert summary['state'] == 'available' and summary['checkFrames'][0] == {'frame': 0, 'kind': 'fixed'}
+    assert summary['state'] == 'available' and summary['checkFrames'][0] == {'frame': 0, 'kind': 'fixed', 'hints': [[50.0, 40.0, 54.0, 44.0]]}
     assert summary['tracks'][0]['objectId'] == 1
     again = client.post('/api/prelabel/' + mid, headers={'Idempotency-Key': 'pre-2'})
     assert again.status_code == 409 and again.json()['detail']['code'] == 'PRELABEL_EXISTS'
@@ -115,3 +115,12 @@ def test_reset_annotations_discards_the_prelabel_and_its_scans(imports, fake_det
     # Prelabelling again starts clean: no scan survives from the discarded run.
     _wait(client, client.post('/api/prelabel/' + mid).json()['taskId'])
     assert all('scannedBy' not in c for c in client.get('/api/prelabel/' + mid).json()['checkFrames'])
+
+
+def test_check_frames_carry_model_candidates_no_box_covers(imports, fake_detector):
+    client, video = imports
+    mid = upload(client, video).json()['mediaId']
+    _wait(client, client.post('/api/prelabel/' + mid).json()['taskId'])
+    checks = client.get('/api/prelabel/' + mid).json()['checkFrames']
+    # The weak head at (52, 42) never became a target; the confident one is boxed.
+    assert all(c['hints'] == [[50.0, 40.0, 54.0, 44.0]] for c in checks)

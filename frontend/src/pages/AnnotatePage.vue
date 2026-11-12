@@ -25,6 +25,7 @@ import AnnotationTrackingFeedback from '../components/AnnotationTrackingFeedback
 import UserGuide from '../components/UserGuide.vue'
 import userGuide from '../help/user-guide.md?raw'
 import { revealBoxScroll } from '../annotation/geometry'
+import { openHints, planBlocks, type ScanBlock } from '../annotation/scanBlocks'
 import { useAuth } from '../stores/auth'
 import { useWorkspace } from '../stores/workspace'
 import { addLeaveGuard, useRouter } from '../router'
@@ -286,6 +287,51 @@ const minimapSource = computed(() => isVideo.value ? (exactFrameUrl.value && (!i
 async function seekFrame(frame: number) { if (isAiBusy.value) return; frameInput.value = frame; await seekToInputFrame() }
 const size = ref({ w: 0, h: 0 }), base = ref({ w: 800, h: 450 })
 const mousePixel = ref<{ x: number; y: number } | null>(null)
+// Check frames are looked at block by block: the view jumps to each overlapping block in a
+// snake order, Enter moves on, the last Enter records the frame as scanned.
+const scanning = computed(() => isVideo.value && !reviewing.value && !!currentCheckFrame.value && !currentCheckFrame.value.scannedAt)
+const scanBlocks = computed<ScanBlock[]>(() => scanning.value ? planBlocks(selectedMedia.value?.width || 0, selectedMedia.value?.height || 0, size.value.w, size.value.h) : [])
+const blockIndex = ref(0)
+const blockCols = computed(() => Math.max(1, ...scanBlocks.value.map(b => b.col + 1)))
+const blockCells = computed(() => scanBlocks.value.map((b, i) => ({ ...b, i })).sort((a, b) => a.row - b.row || a.col - b.col))
+const lastBlock = computed(() => scanBlocks.value.length <= 1 || blockIndex.value >= scanBlocks.value.length - 1)
+async function showBlock(i: number, smooth = true) {
+  const b = scanBlocks.value[i], sc = scrollContainerRef.value, el = stageRef.value
+  if (!b || !sc || !el || pointerActive || pan) return
+  blockIndex.value = i
+  cancelPendingPauseView()
+  // The stage may still have the shape of a frame size not known yet: fit it to this video first.
+  const media = selectedMedia.value
+  if (media?.width && media.height && Math.abs(base.value.w / base.value.h - media.width / media.height) > .01) { fit(); await nextTick() }
+  const target = Math.min(10, Math.max(.25, +Math.min(size.value.w / ((b.x1 - b.x0) * base.value.w), size.value.h / ((b.y1 - b.y0) * base.value.h)).toFixed(2)))
+  if (Math.abs(target - zoom.value) > .005) {
+    pauseStageMargins.value = null
+    if (target > zoom.value) zoomIn(target - zoom.value); else zoomOut(zoom.value - target)
+    await nextTick()
+  }
+  const r = el.getBoundingClientRect(), vp = sc.getBoundingClientRect()
+  const left = sc.scrollLeft + r.left + b.x0 * r.width - vp.left - (sc.clientWidth - (b.x1 - b.x0) * r.width) / 2
+  const top = sc.scrollTop + r.top + b.y0 * r.height - vp.top - (sc.clientHeight - (b.y1 - b.y0) * r.height) / 2
+  sc.scrollTo({ left, top, behavior: smooth && motionAllowed.value ? 'smooth' : 'auto' })
+}
+async function scanNext() {
+  if (!lastBlock.value) { await showBlock(blockIndex.value + 1); return }
+  await finishScan()
+}
+// A new check frame starts at its first block; a resized view keeps the block it was on.
+watch(() => `${currentMediaId.value}:${currentFrame.value}:${scanning.value}`, () => { blockIndex.value = 0 })
+watch(() => [currentMediaId.value, currentFrame.value, scanBlocks.value.length, blockCols.value, base.value.w], async () => {
+  if (scanBlocks.value.length < 2) return
+  blockIndex.value = Math.min(blockIndex.value, scanBlocks.value.length - 1)
+  await nextTick(); requestAnimationFrame(() => { void showBlock(blockIndex.value, false) })
+})
+const scanHints = computed(() => {
+  const media = selectedMedia.value, hints = scanning.value ? currentCheckFrame.value?.hints ?? [] : []
+  if (!media?.width || !media.height || !hints.length) return []
+  const pct = hints.map(h => [h[0] / media.width! * 100, h[1] / media.height! * 100, h[2] / media.width! * 100, h[3] / media.height! * 100])
+  const boxes = displayObjects.value.filter(o => o.bbox).map(o => [o.bbox!.x, o.bbox!.y, o.bbox!.x + o.bbox!.width, o.bbox!.y + o.bbox!.height])
+  return openHints(pct, boxes, .1)
+})
 const stageSize = computed(() => ({ w: Math.round(base.value.w * zoom.value), h: Math.round(base.value.h * zoom.value) }))
 const stageStyle = computed(() => ({
   width: `${stageSize.value.w}px`, height: `${stageSize.value.h}px`,
@@ -712,7 +758,7 @@ function keys(e:KeyboardEvent){
       if(e.key==='ArrowRight'){e.preventDefault();return}
     }
   }
-  if(!reviewing.value&&e.key==='Enter'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat&&currentCheckFrame.value&&!currentCheckFrame.value.scannedAt&&!(e.target as HTMLElement)?.closest('button,a,summary')){e.preventDefault();void finishScan();return}
+  if(!reviewing.value&&e.key==='Enter'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat&&currentCheckFrame.value&&!currentCheckFrame.value.scannedAt&&!(e.target as HTMLElement)?.closest('button,a,summary')){e.preventDefault();void scanNext();return}
   if(e.key==='Escape'){e.preventDefault();if(pointerActive||pan){cancelPointer();return}if(focused.value){void toggleFocus();return}cancelPointer();hiddenBoxes.value=false;clearSelection();return}
   if(e.key.toLowerCase()==='f'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat){e.preventDefault();void toggleFocus();return}
   if(mediaBusy.value||workspaceRestoring.value)return
@@ -836,6 +882,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
               </template><img v-else :key="selectedMedia.id" ref="imageRef" :src="selectedMedia.url" :alt="selectedMedia.name" class="stage-media picture-enter" :style="{filter}" @load="onImageLoaded" /></template>
               <div v-else-if="reviewing" class="canvas-empty"><AppIcon name="folder" :size="36" /><h3>选择一段视频开始审查</h3><p>在左侧素材库里选择要审查的视频。</p></div><div v-else class="canvas-empty"><AppIcon name="upload" :size="36" /><h3>把注意力留给画面</h3><p>导入一段视频，开始精细标注。</p><button class="btn-primary" @click="openFilePicker('video')">导入视频</button></div>
               <div ref="annotationHitRef" data-testid="annotation-hit" class="annotation-hit" :class="{panning:spaceHeld||pan,selecting:activeTool==='select',locked:editingBlocked}" @click="stageClick" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="cancelPointer" @lostpointercapture="cancelPointer" @pointerleave="mousePixel=null" />
+              <div v-if="scanHints.length && !hiddenBoxes" class="scan-hints" aria-hidden="true"><i v-for="(h, n) in scanHints" :key="n" class="scan-hint" :style="{ left: `${(h[0] + h[2]) / 2}%`, top: `${(h[1] + h[3]) / 2}%`, width: `calc(${(h[2] - h[0]) * 2.2}% + 14px)`, aspectRatio: '1' }" /></div>
               <AnnotationOverlay :objects="displayObjects" :selected="selectedObjectId" :width="stageSize.w" :height="stageSize.h" :draft="tempBbox" :labels="labels" :hidden="hiddenBoxes || (!!frameError && !exactFrameUrl)" />
             </div>
           </div>
@@ -933,11 +980,15 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
           <div v-else-if="checkFrames.length" key="scan" class="task-body" data-testid="scan-task">
             <div class="task-eyebrow"><span>第 1 步 · 标注</span><span class="num">{{ scannedCount }} / {{ checkFrames.length }}</span></div>
             <h3 class="task-title">{{ scanComplete ? '都看完了' : '找漏掉的精子' }}</h3>
-            <p class="shell-card-note">{{ scanComplete ? '接下来去审查，逐个确认找到的目标。' : '看这一张，没框到的头点一下就补上。' }}</p>
+            <p class="shell-card-note">{{ scanComplete ? '接下来去审查，逐个确认找到的目标。' : '看这一块，没框到的头点一下就补上。黄色虚线圈是模型拿不准的地方。' }}</p>
             <div class="check-steps" role="group" aria-label="要查漏的帧">
               <button v-for="(item,i) in checkFrames" :key="item.frame" class="check-step" :class="{done:!!item.scannedAt,current:item.frame===currentFrame}" :aria-current="item.frame===currentFrame?'step':undefined" :title="`第 ${item.frame+1} 帧${item.scannedAt?` · ${item.scannedByName||''}已看`:''}`" :aria-label="`第 ${i+1} 张，第 ${item.frame+1} 帧${item.scannedAt?'，已看':''}`" :disabled="isAiBusy" @click="seekFrame(item.frame)"><AppIcon v-if="item.scannedAt" name="check" :size="12" /><template v-else>{{ i+1 }}</template></button>
             </div>
-            <button v-if="!scanComplete && currentCheckFrame && !currentCheckFrame.scannedAt" class="btn-primary shell-wide task-primary" data-testid="scan-done" :disabled="scanBusy||editingBlocked" @click="finishScan">这张看完了<kbd>Enter</kbd></button>
+            <div v-if="scanBlocks.length > 1" class="scan-grid" :style="{ '--cols': blockCols }" role="group" :aria-label="`这张分成 ${scanBlocks.length} 块`">
+              <button v-for="cell in blockCells" :key="cell.i" class="scan-cell" :class="{ done: cell.i < blockIndex, current: cell.i === blockIndex }" :aria-current="cell.i === blockIndex ? 'step' : undefined" :aria-label="`第 ${cell.i + 1} 块`" @click="showBlock(cell.i); ($event.currentTarget as HTMLElement).blur()" />
+              <span class="scan-count num">第 {{ blockIndex + 1 }} / {{ scanBlocks.length }} 块</span>
+            </div>
+            <button v-if="!scanComplete && currentCheckFrame && !currentCheckFrame.scannedAt" class="btn-primary shell-wide task-primary" data-testid="scan-done" :disabled="scanBusy||editingBlocked" @click="scanNext">{{ lastBlock ? '这张看完了' : '下一块' }}<kbd>Enter</kbd></button>
             <button v-else-if="!scanComplete" class="btn-primary shell-wide task-primary" :disabled="isAiBusy" @click="goNextCheck">回到要看的那张</button>
             <button v-else class="btn-primary shell-wide task-primary" @click="router.push('/review')">去审查<AppIcon name="next" :size="14" /></button>
             <div v-if="!scanComplete" class="task-how" aria-hidden="true"><span><AppIcon name="cursor" :size="15" />点一下 补框</span><span><AppIcon name="box" :size="15" />拖动 画框</span><span><kbd>Del</kbd>删除</span></div>
@@ -1015,6 +1066,13 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
 .task-eyebrow .num { font-variant-numeric:tabular-nums; color:var(--muted); font-weight:500; }
 .task-title { margin:0; font-size:var(--fs-xl); line-height:1.25; letter-spacing:-.01em; }
 .check-steps { display:flex; flex-wrap:wrap; gap:5px; }
+.scan-grid { display:grid; grid-template-columns:repeat(var(--cols), 22px); gap:3px; align-items:center; }
+.scan-cell { width:22px; height:16px; padding:0; border-radius:3px; border:1px solid var(--line-strong, #9bb); background:var(--surface); cursor:pointer; transition:background-color var(--dur-fast,.12s) var(--ease-out,ease), box-shadow var(--dur-fast,.12s) var(--ease-out,ease); }
+.scan-cell.done { background:var(--accent); border-color:var(--accent); }
+.scan-cell.current { box-shadow:0 0 0 2px var(--accent); border-color:var(--accent); background:var(--accent-soft); }
+.scan-count { grid-column:1 / -1; color:var(--muted); font-size:var(--fs-xs); }
+.scan-hints { position:absolute; inset:0; pointer-events:none; z-index:3; }
+.scan-hint { position:absolute; transform:translate(-50%,-50%); border:2px dashed #ffc542; border-radius:50%; box-shadow:0 0 0 1px #0006; }
 .check-step { min-width:28px; height:28px; padding:0 6px; border-radius:var(--radius-sm); border:1.5px solid var(--accent); background:var(--surface); color:var(--accent); font-size:var(--fs-xs); font-weight:650; font-variant-numeric:tabular-nums; display:inline-grid; place-items:center; cursor:pointer; transition:background-color var(--dur-fast,.12s) var(--ease-out,ease), color var(--dur-fast,.12s) var(--ease-out,ease), box-shadow var(--dur-fast,.12s) var(--ease-out,ease); }
 .check-step:hover:not(:disabled) { background:var(--accent-soft); }
 .check-step.done { background:var(--accent); color:var(--on-accent); }

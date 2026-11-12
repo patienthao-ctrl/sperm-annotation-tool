@@ -57,7 +57,7 @@ export interface DuplicateVideo {
   mediaId:string;videoName:string;canOverwrite:boolean;reason:string;workspaceRevision:number;media:TrackUploadResponse
 }
 
-export interface PrelabelCheckFrame { frame: number; kind: 'fixed' | 'event'; scannedBy?: number; scannedByName?: string | null; scannedAt?: string }
+export interface PrelabelCheckFrame { frame: number; kind: 'fixed' | 'event'; scannedBy?: number; scannedByName?: string | null; scannedAt?: string; hints?: number[][] }
 export interface PrelabelTrackFlag { kind: 'cross' | 'jump' | 'partial' | 'weak'; frame?: number; last?: number; with?: number }
 export interface PrelabelSummary {
   state: 'available' | 'none'
