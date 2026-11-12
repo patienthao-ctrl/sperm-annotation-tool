@@ -21,3 +21,14 @@ test('next open card wraps and stops when all are answered',()=>{
   done.add(3)
   assert.equal(nextOpen(queue,e=>done.has(e.objectId),0),-1)
 })
+test('a possible swap is no longer asked once the target has no boxes on both sides of it',()=>{
+  const flags={15:[{kind:'cross',frame:6,with:23}]}
+  // Split at frame 4: the target keeps frames 0-3, nothing left around frame 6.
+  const split=buildQueue([15],flags,new Set(),{15:[0,1,2,3]})
+  assert.deepEqual(split.map(e=>[e.ask,e.suspectFrame]),[['what',undefined]])
+  // Boxes still on both sides: the question stays.
+  const whole=buildQueue([15,16],flags,new Set(),{15:[0,3,5,6,7,9],16:[0,1]})
+  assert.deepEqual(whole.map(e=>[e.objectId,e.ask,e.suspectFrame]),[[15,'same',6],[16,'what',undefined]])
+  // Only after it (the part before was split off): nothing to compare.
+  assert.equal(buildQueue([15],flags,new Set(),{15:[6,7,8]})[0].ask,'what')
+})

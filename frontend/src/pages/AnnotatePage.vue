@@ -96,7 +96,12 @@ const manualTargets = computed(() => {
   for (const o of annotationsByMedia.value[currentMediaId.value] ?? []) { if (o.objectId == null) continue; all.add(o.objectId); if (o.source !== 'manual') ai.add(o.objectId) }
   return new Set([...all].filter(id => !ai.has(id)))
 })
-const reviewQueue = computed<QueueEntry[]>(() => reviewRound.value ? buildQueue(reviewRound.value.targets ?? [], targetFlags.value, manualTargets.value) : [])
+const targetFrames = computed(() => {
+  const out: Record<number, number[]> = {}
+  for (const o of annotationsByMedia.value[currentMediaId.value] ?? []) if (o.objectId != null) (out[o.objectId] ??= []).push(o.frameIndex ?? 0)
+  return out
+})
+const reviewQueue = computed<QueueEntry[]>(() => reviewRound.value ? buildQueue(reviewRound.value.targets ?? [], targetFlags.value, manualTargets.value, targetFrames.value) : [])
 const queueIndex = ref(0)
 const answeredEntry = (entry: QueueEntry) => {
   const round = reviewRound.value
