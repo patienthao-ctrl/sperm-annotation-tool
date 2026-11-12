@@ -101,6 +101,8 @@ export const trackingProgress = computed(()=>trackingProgressByMedia.value[curre
 // Structured status behind the stepped progress bar (AI card, header, frame strip, media list).
 export const trackingStatusByMedia = ref<Record<string,TrackingProgressInput>>({})
 // Videos whose run just completed: the bar briefly shows its finished state before leaving.
+// One-button enhancement (median background, gain 8, as on the training review sheets). Per browser.
+export const enhancedView = ref((() => { try { return localStorage.getItem('annotation-enhanced') === '1' } catch { return false } })())
 // 'not_generated': the video has no AI result yet, so the detector prelabel may run.
 export const trackingResultState = ref<Record<string,'available'|'not_generated'>>({})
 export const trackingFinishedByMedia = ref<Record<string,true>>({})

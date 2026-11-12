@@ -1432,7 +1432,7 @@ def video(media_id: str, user: dict[str, Any] = Depends(current_video_user)) -> 
 
 
 @app.get("/api/track/frame/{media_id}/{frame_index}")
-def video_frame(media_id: str, frame_index: int, user: dict[str, Any] = Depends(current_user)) -> Response:
+def video_frame(media_id: str, frame_index: int, enhance: bool = Query(default=False), user: dict[str, Any] = Depends(current_user)) -> Response:
     """返回原始视频的精确第 frame_index 帧。\n\n    精确逐帧标注模式不再依赖浏览器 currentTime/seek 的实际呈现帧；\n    后端直接从用户上传的原始源视频解码指定帧，并以 JPEG 返回给前端。\n    """
     if frame_index < 0:
         raise HTTPException(400, "frame_index 不能小于 0")
@@ -1444,7 +1444,7 @@ def video_frame(media_id: str, frame_index: int, user: dict[str, Any] = Depends(
 
     try:
         from .video_frames import frames, FrameReadError
-        data = frames.read(file, frame_index)
+        data = frames.read_enhanced(file, frame_index) if enhance else frames.read(file, frame_index)
         return Response(content=data, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=31536000, immutable'})
     except FrameReadError as exc:
         raise HTTPException(exc.status, str(exc)) from exc

@@ -176,4 +176,51 @@ class ExactFrames:
             raise
 
 
+    def read_enhanced(self, video, index):
+        """The frame as the reviewers saw training crops: denoised minus a median background, gain 8."""
+        import numpy as np
+        video = Path(video)
+        raw = self.read(video, index)
+        with self.lock:
+            directory = self._cache(video, source_signature(video))
+            cached = directory / f'frame_{index:08d}_enh.jpg'
+            if cached.is_file() and cached.stat().st_size:
+                data = cached.read_bytes()
+                cached.touch()
+                return data
+        gray = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if gray is None:
+            raise FrameReadError(f'第 {index} 帧无法增强')
+        ok, encoded = cv2.imencode('.jpg', enhance_gray(gray), [cv2.IMWRITE_JPEG_QUALITY, 92])
+        if not ok:
+            raise FrameReadError(f'第 {index} 帧增强图编码失败')
+        data = encoded.tobytes()
+        with self.lock:
+            self._atomic(cached, data)
+            self._prune(directory)
+        return data
+
+
+def enhance_gray(gray):
+    """Median-background enhancement used for the training review sheets (make_review.py).
+
+    The sheets worked at 4096-wide scale: pre-blur 1, median 81, background blur 6, gain 8,
+    and a 1.2 px denoise at native resolution. The background is low-frequency, so it is
+    estimated on a 1024-wide copy (median 21, blur 1.5) and scaled back; a median rather
+    than Gaussian background avoids white halos that would hide the tail root.
+    """
+    import numpy as np
+    h, w = gray.shape[:2]
+    k = max(w, h) / 4096
+    f = gray.astype(np.float32)
+    den = cv2.GaussianBlur(f, (0, 0), 1.2)
+    pre = np.clip(cv2.GaussianBlur(f, (0, 0), max(.3, k)), 0, 255).astype(np.uint8)
+    s = 1024 / max(w, h)
+    small = cv2.resize(pre, (max(1, round(w * s)), max(1, round(h * s))), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR)
+    size = max(3, int(round(81 * k * s)) | 1)
+    bg = cv2.GaussianBlur(cv2.medianBlur(small, size).astype(np.float32), (0, 0), max(.5, 6 * k * s))
+    bg = cv2.resize(bg, (w, h), interpolation=cv2.INTER_LINEAR)
+    return np.clip(128 + 8 * (den - bg), 0, 255).astype(np.uint8)
+
+
 frames = ExactFrames()

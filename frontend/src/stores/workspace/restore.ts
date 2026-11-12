@@ -7,7 +7,7 @@ import { useAuth } from '../auth'
 import { activeTool, annotationsByMedia, anomalyFrames, anomalyObjectIds, anomalyPanelVisible, brightness, collaborationErrors, contrast, currentFrame, currentMediaId, currentTime, dedupeAnnotationObjects, deletedFrameObjects, deletedObjectIds, deletedTrackingIds, exactFrameLoading, frameError, frameInput, isObjectDeleted, isVideo, lastPausedContext, maxFrameIndex, mediaAssets, messageOf, normalMotionSamples, objectDeletionError, objectNameInput, pausedAnomalies, pendingDeletion, pendingFeedback, pendingRestart, runtime, saveError, saveQueues, saveState, selectedMediaId, selectedObjectId, showToast, trackingErrors, trackingFeedbackError, trackingFeedbackEvents, trackingFinishedByMedia, type TrackingJob, trackingJobs, trackingMedia, trackingProgressByMedia, trackingRestartBusy, trackingRestartError, trackingRestartStorageWarning, trackingStatusByMedia, trackingWarningSummary, videoDeletionHistory, videoDuration, videoFps, videoRef, workspaceGenerations, workspaceReadError, workspaceRestoring, workspaceWrites, zoom } from './state'
 import { histories, historyRevision } from './history'
 import { cancelAnnotationGesture, tempBbox } from './editing'
-import { frameCache, frameToTime, loadExactFrame, requestedFrame, revokeExactFrameUrl, stopFallbackPlayback, videoPlaybackFallback } from './frames'
+import { frameCache, frameToTime, loadExactFrame, prefetchClip, requestedFrame, revokeExactFrameUrl, stopFallbackPlayback, videoPlaybackFallback } from './frames'
 import { controlsCacheKey, persistWorkspaceState, rememberControls, workspaceSaveTimers } from './save'
 import { savePersonalView, viewKey } from './collaboration'
 import { restoreRestart } from './trackingActions'
@@ -166,6 +166,7 @@ export const resetAnnotationViewForMedia = async (mediaId = currentMediaId.value
     }
     await loadExactFrame(targetFrame, mediaId)
     if (!isCurrent()) return
+    prefetchClip(mediaId)
     try { await loadTrackingResult(mediaId, true, true) }
     catch(error) {
       if(isCurrent()) {

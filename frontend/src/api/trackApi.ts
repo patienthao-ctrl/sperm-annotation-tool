@@ -395,9 +395,9 @@ export const trackApi = {
     return result
   },
 
-  async getFrameBlob(mediaId: string, frameIndex: number): Promise<Blob> {
+  async getFrameBlob(mediaId: string, frameIndex: number, enhanced = false): Promise<Blob> {
     return withRequestTimeout(20000, async (signal) => {
-      const res = await fetch(`/api/track/frame/${encodeURIComponent(mediaId)}/${encodeURIComponent(frameIndex)}`, {
+      const res = await fetch(`/api/track/frame/${encodeURIComponent(mediaId)}/${encodeURIComponent(frameIndex)}${enhanced ? '?enhance=true' : ''}`, {
         signal,
         headers: {
           ...(tokenStore.get() ? { Authorization: `Bearer ${tokenStore.get()}` } : {}),

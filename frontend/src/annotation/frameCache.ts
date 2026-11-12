@@ -5,6 +5,7 @@ export class FrameCache {
   private bytes = 0
   private generation = 0
   constructor(private maxEntries = 12, private maxBytes = 32 * 1024 * 1024) {}
+  has(key: string) { return this.entries.has(key) }
   clear() { this.generation++; this.entries.clear(); this.pending.clear(); this.bytes = 0 }
   invalidate(key: string) {
     const cached = this.entries.get(key)

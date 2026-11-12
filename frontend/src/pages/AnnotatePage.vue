@@ -29,7 +29,7 @@ import type { MergeChoice, MergeEntry } from '../annotation/workspaceWrites'
 import '../annotation/annotation.css'
 import '../annotation/annotation-shell.css'
 import { cancelExtend, checkFrames, currentCheckFrame, currentPrelabel, extendBusy, markFrameScanned, nextUnscannedFrame, prelabelErrors, reprelabelBusy, reprelabelCurrent, retryPrelabel, scanBusy, scanComplete, scannedCount } from '../stores/workspace/prelabel'
-import { trackingResultState } from '../stores/workspace/state'
+import { enhancedView, trackingResultState } from '../stores/workspace/state'
 const {
   collaborationConflict, collaborationBusy, resolveCollaboration, syncWorkspace, downloadWorkspaceBackup, currentRemoteTracking, lastEditors, discardLocalDraft, storageWarning, headBoxBusy, headBoxError, cancelHeadBox, mediaAssets, selectedMediaId, submissionBusy, mediaImportBusy, importError, duplicateImport, reimportSaving, cancelDuplicateImport, confirmDuplicateImport, restoreImportIntent, activeTool, selectedObjectId, currentFrame, currentTime, frameInput, isPlaying,
   refreshLibrary, isAiBusy, statusMessage, toast, dismissToast, imageRef, videoRef, exactFrameImageRef, exactFrameUrl, exactFrameLoading, videoPlaybackFallback, annotationHitRef, fileInputRef, videoInputRef, packageInputRef, packageImportReport, importPackage,
@@ -135,7 +135,7 @@ const importDialog=ref<HTMLElement|null>(null)
 watch(duplicateImport,async value=>{if(value){await nextTick();importDialog.value?.querySelector<HTMLElement>('button:not(:disabled)')?.focus()}})
 function importDialogKeys(e:KeyboardEvent){if(e.key==='Escape'){e.preventDefault();cancelDuplicateImport()}if(e.key==='Tab'){const nodes=Array.from(importDialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled)')||[]);if(nodes.length){e.preventDefault();const i=nodes.indexOf(document.activeElement as HTMLElement);nodes[(i+(e.shiftKey?-1:1)+nodes.length)%nodes.length]?.focus()}}}
 const scrollContainerRef = ref<HTMLDivElement | null>(null), stageRef = ref<HTMLDivElement | null>(null), loupe = ref<HTMLCanvasElement | null>(null)
-const help = ref(false), helpDialog = ref<HTMLElement | null>(null), focused = ref(false), labels = ref(false), hiddenBoxes = ref(false), magnifier = ref(false), inverted = ref(false), enhancing = ref(false), spaceHeld = ref(false)
+const help = ref(false), helpDialog = ref<HTMLElement | null>(null), focused = ref(false), labels = ref(false), hiddenBoxes = ref(false), magnifier = ref(false), spaceHeld = ref(false)
 // Switching or importing videos stays possible while the current video tracks.
 const libraryBusy = computed(() => submissionBusy.value || mediaImportBusy.value || !!duplicateImport.value || !!deletingMediaId.value || objectDeletionBusy.value || trackingFeedbackBusy.value || trackingRestartBusy.value || !!trackingRestartPendingAction.value || !!objectDeletionPendingAction.value || trackingFeedbackPending.value)
 const mediaBusy = computed(() => submissionBusy.value || mediaImportBusy.value || !!duplicateImport.value || isAiBusy.value || !!deletingMediaId.value || objectDeletionBusy.value || trackingFeedbackBusy.value || trackingRestartBusy.value || !!trackingRestartPendingAction.value || !!objectDeletionPendingAction.value || trackingFeedbackPending.value)
@@ -184,7 +184,7 @@ async function requestEndpointTracking() {
   if(window.confirm(`首帧 ${head} 个人工头框；尾帧 ${tail} 个人工头框。\n${tail?'请确认已完整检查首尾两帧。':'请确认尾帧确实没有精子头；缺少尾帧目标的片段仍需审查。'}\n将重新生成整段视频标注，保留人工框并统一匹配对象编号。旧 AI 分支会重建。`)) await runEndpointTrack()
 }
 const frameAiCount = computed(() => currentObjects.value.length - frameManualCount.value)
-const minimapSource = computed(() => isVideo.value ? (exactFrameUrl.value && !isPlaying.value ? exactFrameImageRef.value : videoRef.value) : imageRef.value)
+const minimapSource = computed(() => isVideo.value ? (exactFrameUrl.value && (!isPlaying.value || enhancedView.value) ? exactFrameImageRef.value : videoRef.value) : imageRef.value)
 async function seekFrame(frame: number) { if (isAiBusy.value) return; frameInput.value = frame; await seekToInputFrame() }
 const size = ref({ w: 0, h: 0 }), base = ref({ w: 800, h: 450 })
 const mousePixel = ref<{ x: number; y: number } | null>(null)
@@ -200,7 +200,8 @@ const stageStyle = computed(() => ({
 const pauseStageMargins = ref<{marginLeft:number;marginRight:number;marginTop:number;marginBottom:number} | null>(null)
 // Another video tracking in the background: the closed media drawer shows a pulsing dot.
 const backgroundTracking = computed(() => mediaAssets.value.some(media => media.id !== selectedMediaId.value && isTrackingMedia(media.id)))
-const filter = computed(() => `${mediaFilterStyle.value} ${inverted.value ? 'invert(1)' : ''}`)
+// Display filters were replaced by the server-side enhanced frame; saved brightness/contrast are ignored.
+const filter = computed(() => '')
 const saveLabel = computed(() => workspaceRecoveryRequired.value ? '需重新读取' : selectedMedia.value?.serverMediaId ? ({ idle:'自动保存', saving:'保存中…', saved:'已保存', error:'保存失败' }[saveState.value]) : '本机自动保存')
 // Shortcut help and the full guide share the same maintained Markdown source.
 const jumpFrameInput = ref<HTMLInputElement|null>(null)
@@ -599,7 +600,6 @@ async function retrySave(){
   if(workspaceRecoveryRequired.value){try{await reloadWorkspaceFromServer()}catch(error){saveError.value=(error as Error)?.message||'本机备份未成功，请保持页面打开并导出备份'}return}
   try{await retryWorkspaceSave()}catch{/* The store logs and exposes the failure. */}
 }
-function enhancement(preset:string){if(preset==='原图'){resetMediaFilter();inverted.value=false}else if(preset==='暗场'){brightness.value=150;contrast.value=125}else{brightness.value=100;contrast.value=160}}
 function keys(e:KeyboardEvent){
   if(document.querySelector('[data-user-guide][open], [data-object-delete-dialog][open], [data-reimport-dialog]'))return
 
@@ -626,6 +626,7 @@ function keys(e:KeyboardEvent){
   else if(key==='m')libraryOpen.value=!libraryOpen.value
   else if(key==='h')hiddenBoxes.value=!hiddenBoxes.value
   else if(key==='l')magnifier.value=!magnifier.value
+  else if(key==='e')enhancedView.value=!enhancedView.value
   else if(key==='k'){e.preventDefault();void togglePlayback()}
   else if(key==='g'){e.preventDefault();jumpFrameInput.value?.focus();jumpFrameInput.value?.select()}
   else if(canvasZoomKey(e)==='in'){e.preventDefault();void zoomAt(1)}
@@ -729,8 +730,8 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
           <div ref="scrollContainerRef" class="canvas-scroll" @wheel.capture="cancelPendingPauseView" @pointerdown.capture="cancelPendingPauseView" @wheel="wheel">
             <div ref="stageRef" class="annotation-stage" :style="stageStyle">
               <template v-if="selectedMedia"><template v-if="isVideo">
-                <video :key="selectedMedia.id" ref="videoRef" :src="selectedMedia.url" class="stage-media" :class="{'hidden-video':videoPlaybackFallback||(exactFrameUrl&&!isPlaying)}" :style="{filter}" preload="metadata" playsinline @loadedmetadata="onVideoLoaded" @timeupdate="onVideoTimeUpdate" @ended="onVideoEnded" @error="onVideoError" />
-                <img v-if="exactFrameUrl&&(!isPlaying||videoPlaybackFallback)" ref="exactFrameImageRef" :src="exactFrameUrl" :alt="`${selectedMedia.name} 第 ${currentFrame+1} 帧`" class="stage-media exact-media" :class="{'picture-enter':pictureEnters}" :style="{filter}" />
+                <video :key="selectedMedia.id" ref="videoRef" :src="selectedMedia.url" class="stage-media" :class="{'hidden-video':videoPlaybackFallback||enhancedView||(exactFrameUrl&&!isPlaying)}" :style="{filter}" preload="metadata" playsinline @loadedmetadata="onVideoLoaded" @timeupdate="onVideoTimeUpdate" @ended="onVideoEnded" @error="onVideoError" />
+                <img v-if="exactFrameUrl&&(!isPlaying||videoPlaybackFallback||enhancedView)" ref="exactFrameImageRef" :src="exactFrameUrl" :alt="`${selectedMedia.name} 第 ${currentFrame+1} 帧`" class="stage-media exact-media" :class="{'picture-enter':pictureEnters}" :style="{filter}" />
               </template><img v-else :key="selectedMedia.id" ref="imageRef" :src="selectedMedia.url" :alt="selectedMedia.name" class="stage-media picture-enter" :style="{filter}" @load="onImageLoaded" /></template>
               <div v-else-if="reviewing" class="canvas-empty"><AppIcon name="folder" :size="36" /><h3>选择一段视频开始审查</h3><p>在左侧素材库里选择要审查的视频。</p></div><div v-else class="canvas-empty"><AppIcon name="upload" :size="36" /><h3>把注意力留给画面</h3><p>导入一段视频，开始精细标注。</p><button class="btn-primary" @click="openFilePicker('video')">导入视频</button></div>
               <div ref="annotationHitRef" data-testid="annotation-hit" class="annotation-hit" :class="{panning:spaceHeld||pan,selecting:activeTool==='select',locked:editingBlocked}" @click="stageClick" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="cancelPointer" @lostpointercapture="cancelPointer" @pointerleave="mousePixel=null" />
@@ -750,7 +751,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             <button class="shell-tool" :class="{active:magnifier}" :aria-pressed="magnifier" title="放大镜 (L)" aria-label="局部放大镜" @click="magnifier=!magnifier"><AppIcon name="zoom" :size="17" /></button>
             <button class="shell-tool" :class="{active:hiddenBoxes}" :aria-pressed="hiddenBoxes" title="隐藏框 (H)" aria-label="显示或隐藏标注" @click="hiddenBoxes=!hiddenBoxes"><AppIcon name="eye" :size="17" /></button>
             <button class="shell-tool" :class="{active:labels}" :aria-pressed="labels" title="显示对象编号" aria-label="显示对象编号" @click="labels=!labels"><AppIcon name="hash" :size="16" /></button>
-            <button class="shell-tool" :class="{active:enhancing}" :aria-expanded="enhancing" title="画面增强" aria-label="画面增强" @click="enhancing=!enhancing"><AppIcon name="sun" :size="17" /></button>
+            <button class="shell-tool" :class="{active:enhancedView}" :aria-pressed="enhancedView" title="增强 (E)：去掉背景、加强对比，看清尾巴；与训练复核图相同，只影响显示" aria-label="增强" data-testid="enhance-toggle" @click="enhancedView=!enhancedView"><AppIcon name="sun" :size="17" /><span>增强</span></button>
             <button class="shell-tool" :class="{active:minimapOn}" :aria-pressed="minimapOn" title="放大后显示小地图（会遮住画面右上角）" aria-label="小地图" @click="minimapOn=!minimapOn"><span>小地图</span></button>
             <button ref="focusButton" class="shell-tool" :class="{active:focused}" :aria-pressed="focused" :title="focused?'退出专注 (F / Esc)':'专注模式 (F)'" :aria-label="focused?'退出专注':'专注'" @click="toggleFocus"><AppIcon name="fit" :size="16" /></button>
             <Transition name="notice-chip"><button v-if="collapsedCount" class="notice-chip" data-testid="notice-chip" title="展开未处理的提示" @click="expandNotices"><AppIcon name="alert" :size="14" /><span>{{ collapsedCount }} 条未处理</span></button></Transition>
@@ -760,7 +761,6 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             <span>{{ extendBusy||headBoxBusy?'正在识别点击处的头部…':headBoxError }}</span>
             <button class="quiet-button" @click="extendBusy?cancelExtend():headBoxBusy?cancelHeadBox():headBoxError=''">{{ extendBusy||headBoxBusy?'取消':'关闭' }}</button>
           </div></Transition>
-          <Transition name="enhance-glide" :css="motionAllowed"><div v-if="enhancing" class="annot-enhance enhancement-bar"><button v-for="p in ['原图','暗场','低对比']" :key="p" class="quiet-button" @click="enhancement(p)">{{ p }}</button><label>亮度 <input v-model.number="brightness" aria-label="亮度" type="range" min="50" max="200" /></label><label>对比 <input v-model.number="contrast" aria-label="对比度" type="range" min="50" max="220" /></label><label><input v-model="inverted" type="checkbox" />反相</label><span>只影响显示</span></div></Transition>
           <AnnotationMinimap v-if="selectedMedia && minimapOn" :source="minimapSource" :scroller="scrollContainerRef" :stage="stageRef" :media-width="selectedMedia.width||4" :media-height="selectedMedia.height||3" :redraw-key="`${currentMediaId}:${currentFrame}:${exactFrameUrl}:${stageSize.w}`" />
           <div v-if="exactFrameLoading||workspaceRestoring||isAiBusy||currentRemoteTracking" class="canvas-status" data-testid="canvas-status">{{ isAiBusy?(prelabelRunning?'AI 正在预标本视频 · 可以先看其他视频':'AI 正在追踪本视频 · 可切换到其他视频继续标注'):currentRemoteTracking?`${currentRemoteTracking.userName||'其他人'}正在追踪本视频 · 完成后自动刷新，可先标注其他视频`:workspaceRestoring?'正在恢复工作区…':'正在读取帧…' }}</div>
           <div v-if="frameError" class="canvas-error" role="alert">{{ frameError }}<button class="btn-secondary" @click="retryExactFrame">重试读取</button></div>

@@ -2,7 +2,7 @@
 import { nextTick, ref, watch } from 'vue'
 import { FrameCache } from '../../annotation/frameCache'
 import { trackApi } from '../../api/trackApi'
-import { annotationsByMedia, currentFrame, currentMediaId, currentTime, exactFrameLoading, exactFrameUrl, frameError, frameInput, imageRef, isAiBusy, isPlaying, isVideo, maxFrameIndex, mediaAssets, playbackRate, runtime, selectedMedia, statusMessage, videoDuration, videoFps, videoRef, workspaceRestoring } from './state'
+import { annotationsByMedia, currentFrame, currentMediaId, currentTime, enhancedView, exactFrameLoading, exactFrameUrl, frameError, frameInput, imageRef, isAiBusy, isPlaying, isVideo, maxFrameIndex, mediaAssets, playbackRate, runtime, selectedMedia, statusMessage, videoDuration, videoFps, videoRef, workspaceRestoring } from './state'
 import { isInteracting } from './editing'
 
 let videoFrameCallbackId: number | null = null
@@ -38,7 +38,30 @@ export const revokeExactFrameUrl = () => {
   }
 }
 
-export const frameCache = new FrameCache()
+// Large enough to hold a whole short clip (35 frames of 4K JPEG ~ 70 MB) in both views.
+export const frameCache = new FrameCache(160, 256 * 1024 * 1024)
+const frameKey = (serverId: string, frameIndex: number, enhanced: boolean) => `${serverId}:${frameIndex}${enhanced ? ':enh' : ''}`
+const readFrame = (serverId: string, frameIndex: number, enhanced = enhancedView.value) =>
+  frameCache.get(frameKey(serverId, frameIndex, enhanced), () => trackApi.getFrameBlob(serverId, frameIndex, enhanced))
+let prefetchGeneration = 0
+/** Background prefetch, two requests at a time; a newer prefetch or video switch cancels the rest. */
+export const prefetchFrames = async (serverId: string, frames: number[], enhanced = enhancedView.value) => {
+  const generation = ++prefetchGeneration, queue = frames.filter(fi => !frameCache.has(frameKey(serverId, fi, enhanced)))
+  const worker = async () => {
+    while (queue.length && generation === prefetchGeneration) {
+      const fi = queue.shift()!
+      await readFrame(serverId, fi, enhanced).catch(error => console.debug('[annotation.prefetch_failed]', { frameIndex: fi, error }))
+    }
+  }
+  await Promise.all([worker(), worker()])
+}
+/** Short clips are fetched whole so stepping, seeking and playback never wait on the network. */
+export const prefetchClip = (mediaId = currentMediaId.value) => {
+  const media = mediaAssets.value.find(item => item.id === mediaId)
+  if (!media?.serverMediaId || media.type !== 'video' || !media.frameCount || media.frameCount > 60) return
+  const order = Array.from({ length: media.frameCount }, (_, i) => (currentFrame.value + i) % media.frameCount!)
+  void prefetchFrames(media.serverMediaId, order)
+}
 const failedFrame = ref<number | null>(null)
 export const retryExactFrame = () => loadExactFrame(failedFrame.value ?? currentFrame.value)
 export const loadExactFrame = async (frameIndex: number, mediaId = currentMediaId.value) => {
@@ -47,7 +70,8 @@ export const loadExactFrame = async (frameIndex: number, mediaId = currentMediaI
   const serial = ++runtime.exactFrameRequestSerial, started = performance.now()
   exactFrameLoading.value = true; frameError.value = ''; failedFrame.value = null
   let url: string | null = null
-  const read = (fi: number) => frameCache.get(`${media.serverMediaId}:${fi}`, () => trackApi.getFrameBlob(media.serverMediaId!, fi))
+  const enhanced = enhancedView.value
+  const read = (fi: number) => readFrame(media.serverMediaId!, fi, enhanced)
   try {
     const blob = await read(frameIndex)
     if (serial !== runtime.exactFrameRequestSerial || mediaId !== currentMediaId.value) return false
@@ -61,12 +85,13 @@ export const loadExactFrame = async (frameIndex: number, mediaId = currentMediaI
     if (old) URL.revokeObjectURL(old)
     const elapsedMs = Math.round(performance.now() - started)
     if (elapsedMs > 250) console.info('[annotation.frame_slow]', { mediaId, frameIndex, elapsedMs })
-    for (const next of [frameIndex + 1, frameIndex - 1]) {
+    // Stepping forward is the common direction; keep the next few frames ready.
+    for (const next of [frameIndex + 1, frameIndex + 2, frameIndex - 1, frameIndex + 3, frameIndex + 4]) {
       if (next >= 0 && next < (media.frameCount || 0)) void read(next).catch(error => console.debug('[annotation.prefetch_failed]', { mediaId, frameIndex: next, error }))
     }
     return true
   } catch (error) {
-    if (url) frameCache.invalidate(`${media.serverMediaId}:${frameIndex}`)
+    if (url) frameCache.invalidate(frameKey(media.serverMediaId, frameIndex, enhanced))
     if (serial === runtime.exactFrameRequestSerial && mediaId === currentMediaId.value) {
       failedFrame.value = frameIndex
       frameError.value = `第 ${frameIndex + 1} 帧读取失败，请重试`; statusMessage.value = frameError.value
@@ -139,19 +164,25 @@ export const onVideoError = async () => {
   statusMessage.value = `当前浏览器不能直接播放 ${media.name}，已切换为原始视频逐帧预览（源文件未转换）`
 }
 
+// Frame-by-frame playback from decoded server frames (enhanced view, or a video the browser
+// cannot play). Frames are scheduled on a fixed clock from the source FPS and the next ones are
+// fetched ahead, so a slow frame delays only itself instead of the whole rhythm drifting.
 const playFallbackFrames = async () => {
   const media = selectedMedia.value
   if (!media?.serverMediaId) return
   const serial = ++fallbackPlaybackSerial
   isPlaying.value = true
   const fps = Math.max(1, media.fps || videoFps.value || 30)
-  const delay = Math.max(10, Math.round(1000 / (fps * playbackRate.value)))
+  const interval = 1000 / (fps * playbackRate.value)
+  let due = performance.now() + interval
   while (serial === fallbackPlaybackSerial && isPlaying.value && currentFrame.value < maxFrameIndex.value) {
-    await new Promise((resolve) => setTimeout(resolve, delay))
-    if (serial !== fallbackPlaybackSerial || !isPlaying.value) break
     const next = currentFrame.value + 1
+    void prefetchFrames(media.serverMediaId, [next + 1, next + 2, next + 3, next + 4, next + 5, next + 6].filter(fi => fi <= maxFrameIndex.value))
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, due - performance.now())))
+    if (serial !== fallbackPlaybackSerial || !isPlaying.value) break
     const ok = await loadExactFrame(next, media.id)
     if (!ok) break
+    due = Math.max(due + interval, performance.now())
   }
   if (serial === fallbackPlaybackSerial) isPlaying.value = false
 }
@@ -254,7 +285,7 @@ export const seekByFrame = async (delta: number) => {
 
 export const togglePlayback = async () => {
   if (runtime.isSeekingVideo || exactFrameLoading.value || isAiBusy.value || isInteracting()) return
-  if (videoPlaybackFallback.value) {
+  if (videoPlaybackFallback.value || enhancedView.value) {
     if (isPlaying.value) {
       stopFallbackPlayback()
       await loadExactFrame(currentFrame.value)
@@ -326,4 +357,10 @@ const goToNextUnannotatedFrame = async () => {
 
 export const setupFramesWatchers = () => {
   watch(playbackRate, value => { if (videoRef.value) videoRef.value.playbackRate = value })
+  watch(enhancedView, value => {
+    try { localStorage.setItem('annotation-enhanced', value ? '1' : '0') } catch {}
+    if (!isVideo.value) return
+    pausePlayback()
+    void loadExactFrame(currentFrame.value).then(() => prefetchClip())
+  })
 }
