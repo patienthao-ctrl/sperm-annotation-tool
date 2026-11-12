@@ -5,7 +5,7 @@ import { trackApi, type PrelabelSummary } from '../../api/trackApi'
 import { createRequestId } from '../../utils/browserCompat'
 import { useAuth } from '../auth'
 import {
-  annotationsByMedia, currentFrame, currentMediaId, editingBlocked, getNextObjectId, maxFrameIndex, mediaAssets,
+  annotationsByMedia, currentFrame, currentMediaId, deletedFrameObjects, editingBlocked, getNextObjectId, maxFrameIndex, mediaAssets,
   messageOf, objectNameInput, runtime, selectedObjectId, showToast, statusMessage, trackingFinishedByMedia,
   trackingMedia, trackingProgressByMedia, trackingResultState, trackingStatusByMedia,
 } from './state'
@@ -211,4 +211,30 @@ export const reprelabelCurrent = async () => {
   } finally {
     reprelabelBusy.value = false
   }
+}
+
+/** A track that jumped to another head: from ``frame`` on, its boxes become a new target. */
+export const splitTrack = (objectId: number, frame: number) => {
+  const mediaId = currentMediaId.value
+  if (editingBlocked.value) return null
+  const objects = annotationsByMedia.value[mediaId] ?? []
+  const later = objects.filter((item) => item.objectId === objectId && (item.frameIndex ?? 0) >= frame && item.bbox)
+  if (!later.length || !objects.some((item) => item.objectId === objectId && (item.frameIndex ?? 0) < frame)) return null
+  const next = getNextObjectId(mediaId)
+  const name = numberedObjectName(objectNameInput.value.trim() || 'rare sperm', next)
+  const moved = new Set(later.map((item) => item.id))
+  const copies: AnnotationObject[] = later.map((item) => {
+    const creationId = `manual-split-${Date.now()}-${next}-${item.frameIndex ?? 0}`
+    return { ...item, id: creationId, creationId, objectId: next, name, source: 'manual' as const }
+  })
+  // AI boxes of the old ID are retired frame by frame; manual ones simply move to the new target.
+  const retired = later.filter((item) => item.source !== 'manual').map((item) => ({ objectId, frameIndex: item.frameIndex ?? 0 }))
+  annotationsByMedia.value = { ...annotationsByMedia.value, [mediaId]: [...objects.filter((item) => !moved.has(item.id)), ...copies] }
+  if (retired.length) {
+    const keep = (deletedFrameObjects.value[mediaId] ?? []).filter((d) => !(d.objectId === objectId && d.frameIndex >= frame))
+    deletedFrameObjects.value = { ...deletedFrameObjects.value, [mediaId]: [...keep, ...retired] }
+  }
+  scheduleWorkspaceStateSave(mediaId)
+  statusMessage.value = `已从第 ${frame + 1} 帧分开：后半段成为 ${name}`
+  return next
 }

@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { useAuth } from './auth'
-import { annotationReviewApi as api, type CheckResult, type Failure, type ReviewPerson, type ReviewStage, type ReviewState, type ReviewStatus } from '../api/annotationReviewApi'
+import { annotationReviewApi as api, type CheckResult, type TargetResult, type Failure, type ReviewPerson, type ReviewStage, type ReviewState, type ReviewStatus } from '../api/annotationReviewApi'
 
 // One review state for the selected server video, shared by the review panel, the
 // frame strip, the header status and the export gate.
@@ -62,8 +62,8 @@ async function run(mediaId: string, reviewId: string | null, action: () => Promi
   } catch (e) {
     console.warn('[annotation_review.action_failed]', {mediaId,reviewId,error:e})
     if (current()) error.value = describe(e)
-    // The server saw a frame change that this page has not shown yet.
-    if (current() && (e as Failure).code === 'REVIEW_FRAME_CHANGED') { const message = error.value; await load(mediaId); error.value = message }
+    // The server saw a change that this page has not shown yet.
+    if (current() && ['REVIEW_FRAME_CHANGED', 'REVIEW_TARGET_CHANGED', 'ITEM_NOT_FOUND'].includes((e as Failure).code ?? '')) { const message = error.value; await load(mediaId); error.value = message }
     return false
   } finally { busy.value = false }
 }
@@ -80,6 +80,8 @@ export function useAnnotationReview() {
     start: (mediaId: string) => run(mediaId, null, () => api.start(mediaId)),
     check: (mediaId: string, reviewId: string, frame: number, result: CheckResult) => run(mediaId, reviewId, () => api.check(mediaId, reviewId, frame, result)),
     pass: (mediaId: string, reviewId: string) => run(mediaId, reviewId, () => api.pass(mediaId, reviewId)),
+    checkTarget: (mediaId: string, reviewId: string, objectId: number, result: TargetResult, repeat = false) => run(mediaId, reviewId, () => api.checkTarget(mediaId, reviewId, objectId, result, repeat)),
+    playthrough: (mediaId: string, reviewId: string) => run(mediaId, reviewId, () => api.playthrough(mediaId, reviewId)),
   }
 }
 

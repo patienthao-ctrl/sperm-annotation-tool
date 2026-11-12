@@ -71,10 +71,10 @@ const submit = async () => {
       <header class="login-intro">
         <span class="login-mark"><AppIcon name="layers" :size="29" /></span>
         <div><h1>微流控标注工作台</h1><p class="login-subject">稀有精子识别与提取</p></div>
-        <p class="login-purpose">逐帧标注与 AI 辅助追踪，<br>审查通过后导出训练数据。</p>
+        <p class="login-purpose">AI 自动预标，人工查漏和确认，<br>审查通过后导出训练数据。</p>
         <ol class="login-flow" aria-label="数据制作流程">
-          <li><AppIcon name="box" :size="17" /><strong>标注</strong><small>首尾画框，AI 补全整段</small></li>
-          <li><AppIcon name="check" :size="17" /><strong>审查</strong><small>按清单逐项检查、直接修改</small></li>
+          <li><AppIcon name="box" :size="17" /><strong>标注</strong><small>AI 预标，人工补上漏掉的</small></li>
+          <li><AppIcon name="check" :size="17" /><strong>审查</strong><small>逐个确认目标，有错直接改</small></li>
           <li><AppIcon name="upload" :size="17" /><strong>导出</strong><small>审查通过的视频生成训练集</small></li>
         </ol>
       </header>

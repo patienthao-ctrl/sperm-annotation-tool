@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { annotationReviewApi, type Failure, type ReviewRecordDetail } from '../api/annotationReviewApi'
 
-// Opened from a row of the review records: who confirmed which frames and what the round changed.
+// Opened from a row of the review records: who answered which targets (or, for older rounds,
+// confirmed which frames) and what the round changed.
 const props = defineProps<{ reviewId: string; open: boolean }>()
 const detail = ref<ReviewRecordDetail | null>(null)
 const loading = ref(false)
@@ -29,6 +30,8 @@ const hiddenChanges = computed(() => Math.max(0, (detail.value?.changes.length ?
 const frameText = (a: number, b: number) => a === b ? `第 ${a + 1} 帧` : `第 ${a + 1}–${b + 1} 帧`
 const spansText = (spans: [number, number][]) => spans.slice(0, SHOWN_SPANS).map(([a, b]) => a === b ? `${a + 1}` : `${a + 1}–${b + 1}`).join('、') + (spans.length > SHOWN_SPANS ? ` 等 ${spans.length} 段` : '')
 const objects = (ids: number[]) => ids.join('、')
+const byTarget = computed(() => detail.value?.unit === 'targets')
+const verdictLabel: Record<string, string> = { tail: '有尾巴', head: '没尾巴', no: '不是精子', unsure: '看不清' }
 const formatTime = (value: string) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString() }
 </script>
 
@@ -37,14 +40,16 @@ const formatTime = (value: string) => { const date = new Date(value); return Num
     <p v-if="loading && !detail" class="record-detail-note" role="status">正在读取明细…</p>
     <div v-else-if="error" class="error-banner" role="alert">{{ error }} <button class="quiet-button" :disabled="loading" @click="load">重试</button></div>
     <template v-else-if="detail">
-      <section aria-label="逐帧确认">
-        <h4>逐帧确认</h4>
-        <p v-if="!detail.confirmations.length" class="record-detail-note">还没有人确认过帧。</p>
+      <section :aria-label="byTarget ? '目标判定' : '逐帧确认'">
+        <h4>{{ byTarget ? '目标判定' : '逐帧确认' }}</h4>
+        <p v-if="!detail.confirmations.length" class="record-detail-note">{{ byTarget ? '还没有人判定过目标。' : '还没有人确认过帧。' }}</p>
         <p v-if="detail.legacy" class="record-detail-note">这一轮来自旧版清单，按检查项记录，没有逐帧帧号。</p>
         <ul v-if="detail.confirmations.length">
           <li v-for="item in detail.confirmations" :key="`${item.actor.id}-${item.result}`">
             <strong>{{ item.actor.name }}</strong>
-            <span>{{ item.result === 'empty' ? '确认无目标' : '确认' }} {{ item.frames }} {{ detail.legacy ? '项' : '帧' }}</span>
+            <span v-if="item.result in verdictLabel">判为“{{ verdictLabel[item.result] }}” {{ item.frames }} 个目标</span>
+            <span v-else>{{ item.result === 'empty' ? '确认无目标' : '确认' }} {{ item.frames }} {{ detail.legacy ? '项' : '帧' }}</span>
+            <span v-if="item.targets?.length" class="record-detail-frames">目标 {{ objects(item.targets.slice(0, 30)) }}{{ item.targets.length > 30 ? ` 等 ${item.targets.length} 个` : '' }}</span>
             <span v-if="item.spans.length" class="record-detail-frames">第 {{ spansText(item.spans) }} 帧</span>
             <small>最后确认 {{ formatTime(item.lastAt) }}</small>
           </li>

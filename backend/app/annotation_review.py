@@ -263,13 +263,16 @@ def current_checks(c, review_id, frames_list):
 
 
 def round_targets(c, row, frames_list):
-    """Targets to judge: the round's list plus targets changed since the last pass, while
-    they still exist (a deleted track needs no answer)."""
+    """Targets to judge: the round's list, targets that appeared since the round started and
+    targets changed since the last pass, while they still exist (a deleted track needs no answer)."""
     tracks = target_tracks(frames_list)
     listed = set(item_targets(json.loads(row["items_json"])))
-    passed = last_passed(c, row["media_id"])
-    if row["state"] == "open" and passed is not None and passed["passed_frames_json"]:
-        listed |= set(changed_targets(json.loads(passed["passed_frames_json"]), frames_list))
+    if row["state"] == "open":
+        # A target that appears during the round (a missed head added, a split track) is judged too.
+        listed |= set(tracks) - set(target_tracks(json.loads(row["start_frames_json"])))
+        passed = last_passed(c, row["media_id"])
+        if passed is not None and passed["passed_frames_json"]:
+            listed |= set(changed_targets(json.loads(passed["passed_frames_json"]), frames_list))
     return sorted(k for k in listed if k in tracks)
 
 

@@ -13,7 +13,7 @@ const { showToast } = useWorkspace()
 // Workbench pages fill the window edge to edge; their context goes into the header.
 const workbenchRoute = computed(() => ['/annotate', '/review'].includes(routePath.value))
 // Both stages render the same canvas: say so at the moment of switching, not only in the colours.
-const stageEntered: Record<string, string> = { '/annotate': '已进入标注模式', '/review': '已进入审查模式：逐帧检查，有错直接改，再确认这一帧' }
+const stageEntered: Record<string, string> = { '/annotate': '已进入标注模式', '/review': '已进入审查模式：逐个确认目标，有错直接改' }
 watch(routePath, path => { if (stageEntered[path]) showToast(stageEntered[path]) }, { flush: 'post' })
 async function signOut() { if (await router.canLeave()) { await logout(); await router.replace('/login') } }
 </script>

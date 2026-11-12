@@ -3,6 +3,8 @@ import { tokenStore } from './http'
 
 export type ReviewStatus = 'none' | 'open' | 'passed' | 'stale'
 export type CheckResult = 'ok' | 'empty'
+/** One answer per target (a whole track). 'no' is followed by deleting the track. */
+export type TargetResult = 'tail' | 'head' | 'unsure' | 'no'
 /** How far a video without a review round has got. */
 export type ReviewStage = 'unstarted' | 'annotating' | 'ready'
 /** Who the list shows beside a video, and who passed it. */
@@ -19,6 +21,12 @@ export interface ReviewRound {
   /** Frames to check in this round as inclusive [start, end] spans; checkedFrames adds the result. */
   frames: [number, number][]; checkedFrames: [number, number, CheckResult][]
   checked: number; total: number; passedBy: number | null; passedAt: string | null; changes: ReviewChanges | null
+  /** Target rounds (decision 0006): objectIds to judge, answers by objectId, targets changed after their answer. */
+  policy?: string; targets?: number[]; results?: Record<string, TargetResult>; changedTargets?: number[]
+  /** Frames without any annotation, still to confirm empty; and those confirmed. */
+  unknownFrames?: [number, number][]; emptyFrames?: [number, number][]
+  playthroughBy?: number | null; playthroughAt?: string | null
+  repeats?: Record<string, TargetResult>; consistency?: { pairs: number; same: number }
 }
 export interface ReviewState {
   mediaId: string; status: ReviewStatus; stage?: ReviewStage | null; currentRevision: string | null; unknownFrames: number; notReady?: string
@@ -34,13 +42,16 @@ export interface ReviewRecord {
   /** From the old doubt/sampling checklist: counts are items, not frames. */
   legacy: boolean
   startedBy: RecordPerson; startedAt: string; passedBy: RecordPerson | null; passedAt: string | null; lastActivityAt: string
+  /** What checked/total count: whole targets since decision 0006, frames before. */
+  unit?: 'targets' | 'frames'
   checked: number; total: number; emptyFrames: number
+  verdicts?: { tail: number; head: number; unsure: number; no: number } | null
   reviewers: (RecordPerson & { frames: number })[]
   changes: { added: number; removed: number; moved: number; frames: number } | null
 }
 export interface ReviewRecordDetail {
-  reviewId: string; legacy: boolean
-  confirmations: { actor: RecordPerson; result: CheckResult; frames: number; spans: [number, number][]; lastAt: string }[]
+  reviewId: string; legacy: boolean; unit?: 'targets' | 'frames'
+  confirmations: { actor: RecordPerson; result: CheckResult | TargetResult; frames: number; spans: [number, number][]; targets?: number[]; lastAt: string }[]
   changes: { start: number; end: number; added: number[]; removed: number[]; moved: number[]; checkedBy: RecordPerson | null }[]
 }
 export interface CompletionPreview { sourceRevision: string; frameCount: number; objectFrames: number; emptyFrames: number; unknownFrames: number; unknownFrameRanges: { start: number; end: number }[] }
@@ -68,6 +79,8 @@ export const annotationReviewApi = {
   status: (id: string) => request<ReviewState>(media(id)),
   start: (id: string) => request<ReviewState>(media(id) + '/start', 'POST'),
   check: (id: string, reviewId: string, frame: number, result: CheckResult) => request<ReviewState>(`${media(id)}/frames/${frame}`, 'PUT', { reviewId, result }),
+  checkTarget: (id: string, reviewId: string, objectId: number, result: TargetResult, repeat = false) => request<ReviewState>(`${media(id)}/targets/${objectId}`, 'PUT', { reviewId, result, repeat }),
+  playthrough: (id: string, reviewId: string) => request<ReviewState>(media(id) + '/playthrough', 'POST', { reviewId }),
   pass: (id: string, reviewId: string) => request<ReviewState>(media(id) + '/pass', 'POST', { reviewId }),
   summary: () => request<{ items: Record<string, ReviewStatus>; stages: Record<string, ReviewStage>; people: Record<string, ReviewPerson> }>('/annotation-review/summary'),
   records: () => request<{ items: ReviewRecord[]; total: number }>('/annotation-review/records'),

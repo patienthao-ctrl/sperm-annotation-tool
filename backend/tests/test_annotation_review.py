@@ -147,6 +147,15 @@ def test_not_a_sperm_must_actually_be_deleted_and_is_never_exported(source):
         assert 1 not in review.verdicts(c, MID)
 
 
+def test_a_target_added_during_the_round_is_judged_too(source):
+    state = review.start(MID, source, INFO, 1)
+    ws = workspace(source)
+    ws["manualAnnotations"].append({"source": "manual", "objectId": 7, "frameIndex": 1, "name": "sperm 7", "bbox": {"x": 50, "y": 50, "width": 5, "height": 5}})
+    save_workspace(source, ws)  # E.g. a reviewer adds a missed head, or splits a track.
+    status = review.status(MID, source, INFO)["review"]
+    assert 7 in status["targets"] and status["total"] == state["total"] + 1
+
+
 def test_answers_are_validated_and_bound_to_the_round(source):
     state = review.start(MID, source, INFO, 1)
     current = review.load(source, INFO)

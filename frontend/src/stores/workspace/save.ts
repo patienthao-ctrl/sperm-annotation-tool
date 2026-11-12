@@ -22,6 +22,9 @@ export const persistLocalAnnotations = async (dirtyMedia: Set<string>) => {
     if(!base)continue
     const draft=sharedWorkspace(buildWorkspaceState(media.id))
     if(!workspaceEqual(base,draft))await workspaceWrites.saveDraft(media.serverMediaId,base,draft).catch(error=>{console.warn('[annotation.local_draft_failed]',error);storageWarning.value='本机草稿缓存不可用：修改仍直接保存到服务器，但刷新前未保存的修改无法恢复，请勿关闭页面'})
+    // Back to exactly what the server has (e.g. undo then redo): an older draft from the
+    // intermediate state must not survive, or reopening the video would replay it as unsaved work.
+    else await workspaceWrites.clearDraft(media.serverMediaId)
   }
   if(actor===useAuth().user.value?.id)localStorage.setItem('annotationsByMedia', JSON.stringify(compact))
 }

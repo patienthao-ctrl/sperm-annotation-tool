@@ -41,7 +41,7 @@ export const revokeExactFrameUrl = () => {
 // Large enough to hold a whole short clip (35 frames of 4K JPEG ~ 70 MB) in both views.
 export const frameCache = new FrameCache(160, 256 * 1024 * 1024)
 const frameKey = (serverId: string, frameIndex: number, enhanced: boolean) => `${serverId}:${frameIndex}${enhanced ? ':enh' : ''}`
-const readFrame = (serverId: string, frameIndex: number, enhanced = enhancedView.value) =>
+export const readFrame = (serverId: string, frameIndex: number, enhanced = enhancedView.value) =>
   frameCache.get(frameKey(serverId, frameIndex, enhanced), () => trackApi.getFrameBlob(serverId, frameIndex, enhanced))
 let prefetchGeneration = 0
 /** Background prefetch, two requests at a time; a newer prefetch or video switch cancels the rest. */
@@ -76,7 +76,10 @@ export const loadExactFrame = async (frameIndex: number, mediaId = currentMediaI
     const blob = await read(frameIndex)
     if (serial !== runtime.exactFrameRequestSerial || mediaId !== currentMediaId.value) return false
     url = URL.createObjectURL(blob)
-    const decoded = new Image(); decoded.src = url; await decoded.decode()
+    // Decode before swapping so the picture never flashes; a background tab may defer decoding
+    // indefinitely, so never let that hold up restoring the workspace.
+    const decoded = new Image(); decoded.src = url
+    await Promise.race([decoded.decode(), new Promise(resolve => setTimeout(resolve, 2000))])
     if (serial !== runtime.exactFrameRequestSerial || mediaId !== currentMediaId.value) return false
     const old = exactFrameUrl.value
     exactFrameUrl.value = url; url = null
