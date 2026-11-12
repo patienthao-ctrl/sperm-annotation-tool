@@ -83,7 +83,7 @@ export const buildWorkspaceState = (mediaId: string, useCurrentUiState = false):
       zoom: includeUiState ? zoom.value : 1,
     },
     editor: {
-      activeTool: includeUiState ? (activeTool.value === 'head' ? 'bbox' : activeTool.value) : 'select',
+      activeTool: includeUiState ? (activeTool.value === 'head' || activeTool.value === 'smart' ? 'bbox' : activeTool.value) : 'select',
       objectNameInput: includeUiState ? objectNameInput.value : 'rare sperm',
       selectedObjectId: includeUiState ? selectedObjectId.value : null,
     },

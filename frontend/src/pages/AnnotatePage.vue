@@ -28,6 +28,8 @@ import { useAnnotationReview } from '../stores/annotationReview'
 import type { MergeChoice, MergeEntry } from '../annotation/workspaceWrites'
 import '../annotation/annotation.css'
 import '../annotation/annotation-shell.css'
+import { cancelExtend, checkFrames, currentCheckFrame, currentPrelabel, extendBusy, markFrameScanned, nextUnscannedFrame, prelabelErrors, reprelabelBusy, reprelabelCurrent, retryPrelabel, scanBusy, scanComplete, scannedCount } from '../stores/workspace/prelabel'
+import { trackingResultState } from '../stores/workspace/state'
 const {
   collaborationConflict, collaborationBusy, resolveCollaboration, syncWorkspace, downloadWorkspaceBackup, currentRemoteTracking, lastEditors, discardLocalDraft, storageWarning, headBoxBusy, headBoxError, cancelHeadBox, mediaAssets, selectedMediaId, submissionBusy, mediaImportBusy, importError, duplicateImport, reimportSaving, cancelDuplicateImport, confirmDuplicateImport, restoreImportIntent, activeTool, selectedObjectId, currentFrame, currentTime, frameInput, isPlaying,
   refreshLibrary, isAiBusy, statusMessage, toast, dismissToast, imageRef, videoRef, exactFrameImageRef, exactFrameUrl, exactFrameLoading, videoPlaybackFallback, annotationHitRef, fileInputRef, videoInputRef, packageInputRef, packageImportReport, importPackage,
@@ -156,8 +158,22 @@ const anomalyFrameSet = computed(() => new Set(anomalyFrames.value.map(item => i
 const frameKind = (frame: number) => { const s = frameStats.value.get(frame); return s?.manual ? 'manual' : s?.ai ? 'ai' : 'empty' }
 const frameFlags = (frame: number) => reviewing.value
   ? [reviewFrames.value.todo.has(frame) ? 'review-todo' : reviewFrames.value.done.has(frame) ? 'review-done' : '']
-  : [anomalyFrameSet.value.has(frame) ? 'anomaly' : '', trackingPausedFrame.value === frame ? 'paused' : ''].filter(Boolean)
-const frameTitle = (frame: number) => { const s = frameStats.value.get(frame); const parts = [s?.manual ? `人工 ${s.manual}` : '', s?.ai ? `AI ${s.ai}` : ''].filter(Boolean); return `第 ${frame + 1} 帧 · ${parts.join(' · ') || '无框'}${trackingPausedFrame.value === frame ? ' · 追踪暂停' : anomalyFrameSet.value.has(frame) ? ' · 追踪提示' : ''}` }
+  : [checkFrameState.value.get(frame) ?? '', anomalyFrameSet.value.has(frame) ? 'anomaly' : '', trackingPausedFrame.value === frame ? 'paused' : ''].filter(Boolean)
+const frameTitle = (frame: number) => { const s = frameStats.value.get(frame); const parts = [s?.manual ? `人工 ${s.manual}` : '', s?.ai ? `AI ${s.ai}` : ''].filter(Boolean); const check = checkFrameState.value.get(frame); return `第 ${frame + 1} 帧 · ${parts.join(' · ') || '无框'}${check ? (check === 'check-done' ? ' · 已查漏' : ' · 要查漏') : ''}${trackingPausedFrame.value === frame ? ' · 追踪暂停' : anomalyFrameSet.value.has(frame) ? ' · 追踪提示' : ''}` }
+// Frames the annotator scans for heads the detector missed, marked on the frame strip.
+const checkFrameState = computed(() => new Map(checkFrames.value.map(item => [item.frame, item.scannedAt ? 'check-done' : 'check'])))
+const prelabelError = computed(() => prelabelErrors.value[currentMediaId.value] || '')
+const legacyResult = computed(() => isVideo.value && trackingResultState.value[currentMediaId.value] === 'available' && currentPrelabel.value?.state === 'none')
+const reprelabelConfirm = ref(false)
+watch(currentMediaId, () => { reprelabelConfirm.value = false })
+const prelabelRunning = computed(() => currentTrackingProgress.value?.steps[0]?.key === 'detect')
+async function finishScan() {
+  if (!currentCheckFrame.value || currentCheckFrame.value.scannedAt || scanBusy.value || editingBlocked.value) return
+  await flushWorkspace().catch(() => undefined)
+  const next = await markFrameScanned()
+  if (next != null) await seekFrame(next)
+}
+function goNextCheck() { if (nextUnscannedFrame.value != null) void seekFrame(nextUnscannedFrame.value) }
 const frameManualCount = computed(() => currentObjects.value.filter(object => object.source === 'manual').length)
 const endpointCount = (frame:number) => (annotationsByMedia.value[currentMediaId.value]||[]).filter(o=>o.source==='manual' && (o.frameIndex??0)===frame && o.bbox).length
 async function requestEndpointTracking() {
@@ -595,6 +611,7 @@ function keys(e:KeyboardEvent){
     if(reviewKey==='1'){e.preventDefault();reviewPanel.value?.confirm();return}
     if(reviewKey==='n'){e.preventDefault();reviewPanel.value?.next();return}
   }
+  if(!reviewing.value&&e.key==='Enter'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat&&currentCheckFrame.value&&!currentCheckFrame.value.scannedAt&&!(e.target as HTMLElement)?.closest('button,a,summary')){e.preventDefault();void finishScan();return}
   if(e.key==='Escape'){e.preventDefault();if(pointerActive||pan){cancelPointer();return}if(focused.value){void toggleFocus();return}cancelPointer();hiddenBoxes.value=false;clearSelection();return}
   if(e.key.toLowerCase()==='f'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat){e.preventDefault();void toggleFocus();return}
   if(mediaBusy.value||workspaceRestoring.value)return
@@ -605,7 +622,7 @@ function keys(e:KeyboardEvent){
   const key=e.key.toLowerCase()
   if(key==='arrowleft'||key==='arrowright'){e.preventDefault();void seekByFrame((key==='arrowleft'?-1:1)*(e.shiftKey?10:1))}
   else if(key==='delete'||key==='backspace'){if(selectedObject.value){e.preventDefault();deleteSelectedFrame()}}
-  else if(key==='v'||key==='b')selectTool(key==='v'?'select':'bbox')
+  else if(key==='v'||key==='b')selectTool(key==='v'?'select':'smart')
   else if(key==='m')libraryOpen.value=!libraryOpen.value
   else if(key==='h')hiddenBoxes.value=!hiddenBoxes.value
   else if(key==='l')magnifier.value=!magnifier.value
@@ -622,7 +639,7 @@ function beforeUnload(e:BeforeUnloadEvent){if(importRunning.value||mediaImportBu
 watch(trackingRestartPendingAction,(value,previous)=>{if(!value&&previous&&restartDialogOpen.value)closeRestartDialog()})
 watch(help,async value=>{if(value){helpPriorFocus=document.activeElement as HTMLElement;await nextTick();helpDialog.value?.querySelector<HTMLElement>('button')?.focus()}else helpPriorFocus?.focus()})
 // Single-class head boxes: the point tool and per-object names are no longer offered.
-watch(activeTool,tool=>{if(tool==='point')selectTool('bbox')},{immediate:true})
+watch(activeTool,tool=>{if(tool==='point'||tool==='bbox'||tool==='head')selectTool('smart')},{immediate:true})
 watch(selectedObjectId,()=>{if(!trackingFeedbackPending.value&&selectedObject.value?.objectId!=null){feedbackTargetId.value=selectedObject.value.objectId;if(!applyingFeedbackSelection)feedbackSelectionRequest.value=null}},{flush:'sync'})
 watch(()=>feedbackTarget.value?.objectId,()=>{if(!trackingFeedbackPending.value)learnNormalMotion.value=true})
 watch(trackingPausedFrame,()=>{feedbackTargetId.value=null;if(!trackingFeedbackPending.value)learnNormalMotion.value=true})
@@ -647,7 +664,7 @@ onMounted(()=>{
   observer=new ResizeObserver(()=>{const scroller=scrollContainerRef.value;if(scroller)size.value={w:scroller.clientWidth,h:scroller.clientHeight};if(zoom.value===1 && !pauseResizeLocked)fit()})
   if(scrollContainerRef.value)observer.observe(scrollContainerRef.value)
   window.addEventListener('keydown',keys);window.addEventListener('keyup',keyup);window.addEventListener('blur',blur);window.addEventListener('beforeunload',beforeUnload)
-  removeGuard=addLeaveGuard(async()=>{if(mediaBusy.value)return false;cancelHeadBox();cancelPointer();pausePlayback();try{await persistWorkspaceState(currentMediaId.value,true);return true}catch{return false}})
+  removeGuard=addLeaveGuard(async()=>{if(mediaBusy.value)return false;cancelHeadBox();cancelExtend();cancelPointer();pausePlayback();try{await persistWorkspaceState(currentMediaId.value,true);return true}catch{return false}})
   if(selectedMedia.value)void resetAnnotationViewForMedia(selectedMediaId.value)
   void review.loadSummary()
 })
@@ -691,7 +708,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <button v-if="!reviewing && reviewMediaId && review.status.value!=='passed'" class="btn-secondary" data-testid="go-review" @click="router.push('/review')">去审查</button>
         <button v-if="reviewing" class="quiet-button" @click="router.push('/annotate')">回到标注</button>
         <AnnotationDatasetExport />
-        <template v-if="focused && isVideo && !reviewing"><button class="quiet-button" :disabled="editingBlocked||isAiBusy" @click="seekVideo(0)">首帧</button><button class="quiet-button" :disabled="editingBlocked||isAiBusy" @click="seekVideo(frameToTime(maxFrameIndex))">尾帧</button><button class="quiet-button" :disabled="editingBlocked||isAiBusy||hasPausedTracking||maxFrameIndex<1||!endpointCount(0)" @click="requestEndpointTracking">首尾双向追踪</button></template>
+        <template v-if="focused && isVideo && !reviewing && checkFrames.length && !scanComplete"><span class="shell-meta">查漏 {{ scannedCount }} / {{ checkFrames.length }}</span><button class="quiet-button" :disabled="nextUnscannedFrame==null" @click="goNextCheck">下一张要看的</button><button class="btn-primary" :disabled="!currentCheckFrame||!!currentCheckFrame.scannedAt||scanBusy||editingBlocked" @click="finishScan">这张看完了</button></template>
         <template v-if="focused"><UserGuide :page="reviewing?'/review':'/annotate'" /></template>
       </span></template>
       <template #drawer><MediaLibrary :busy="libraryBusy" :reviewing="reviewing" @select="id=>{selectedMediaId=id;libraryOpen=false}" /></template>
@@ -723,8 +740,8 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
           <div class="shell-tools" aria-label="标注工具">
             <span :key="mode" class="mode-tag" data-testid="workbench-mode"><AppIcon :name="reviewing?'check':'box'" :size="14" />{{ reviewing?'审查模式':'标注模式' }}</span>
             <i class="shell-tools-sep" />
-            <button v-for="tool in ([['select','cursor','选择','V'],['bbox','box','画框','B']] as const)" :key="tool[0]" class="shell-tool" :class="{active:activeTool===tool[0]}" :aria-pressed="activeTool===tool[0]" :disabled="editingBlocked" :title="`${tool[2]} (${tool[3]})`" :aria-label="tool[2]" @click="selectTool(tool[0])"><AppIcon :name="tool[1]" :size="17" /></button>
-            <button class="shell-tool" :class="{active:activeTool==='head'}" :aria-pressed="activeTool==='head'" :disabled="editingBlocked||!isVideo" title="点击头部自动生成框，生成后可微调" aria-label="点选头部" @click="selectTool('head')"><AppIcon name="box" :size="17" /><span>点选头部</span></button>
+            <button class="shell-tool" :class="{active:activeTool==='smart'}" :aria-pressed="activeTool==='smart'" :disabled="editingBlocked" title="标注 (B)：点一下精子头自动补框，其他帧一起补；按住拖动手动画框" aria-label="标注" @click="selectTool('smart')"><AppIcon name="box" :size="17" /><span>标注</span></button>
+            <button class="shell-tool" :class="{active:activeTool==='select'}" :aria-pressed="activeTool==='select'" :disabled="editingBlocked" title="只选择和移动框 (V)" aria-label="选择" @click="selectTool('select')"><AppIcon name="cursor" :size="17" /></button>
             <i class="shell-tools-sep" />
             <button class="shell-tool" title="撤销 (Ctrl/⌘ Z)" aria-label="撤销本帧操作" :disabled="editingBlocked||!!objectDeletionPendingAction||trackingFeedbackPending||!canUndo" @click="undo"><AppIcon name="undo" :size="17" /></button>
             <button class="shell-tool" title="重做 (Ctrl/⌘ Shift Z)" aria-label="重做本帧操作" :disabled="editingBlocked||!!objectDeletionPendingAction||trackingFeedbackPending||!canRedo" @click="redo"><AppIcon name="redo" :size="17" /></button>
@@ -738,14 +755,14 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             <button ref="focusButton" class="shell-tool" :class="{active:focused}" :aria-pressed="focused" :title="focused?'退出专注 (F / Esc)':'专注模式 (F)'" :aria-label="focused?'退出专注':'专注'" @click="toggleFocus"><AppIcon name="fit" :size="16" /></button>
             <Transition name="notice-chip"><button v-if="collapsedCount" class="notice-chip" data-testid="notice-chip" title="展开未处理的提示" @click="expandNotices"><AppIcon name="alert" :size="14" /><span>{{ collapsedCount }} 条未处理</span></button></Transition>
           </div>
-          <Transition name="toast-corner"><div v-if="headBoxBusy || headBoxError" class="head-proposal-status" :class="{failed:!headBoxBusy&&!!headBoxError}" :role="headBoxError?'alert':'status'">
-            <AppIcon v-if="!headBoxBusy" name="alert" :size="15" /><i v-else class="notice-spinner" aria-hidden="true" />
-            <span>{{ headBoxBusy?'正在识别点击处的头部…':headBoxError }}</span>
-            <button class="quiet-button" @click="headBoxBusy?cancelHeadBox():headBoxError=''">{{ headBoxBusy?'取消':'关闭' }}</button>
+          <Transition name="toast-corner"><div v-if="headBoxBusy || headBoxError || extendBusy" class="head-proposal-status" :class="{failed:!headBoxBusy&&!extendBusy&&!!headBoxError}" :role="headBoxError&&!extendBusy?'alert':'status'">
+            <AppIcon v-if="!headBoxBusy&&!extendBusy" name="alert" :size="15" /><i v-else class="notice-spinner" aria-hidden="true" />
+            <span>{{ extendBusy||headBoxBusy?'正在识别点击处的头部…':headBoxError }}</span>
+            <button class="quiet-button" @click="extendBusy?cancelExtend():headBoxBusy?cancelHeadBox():headBoxError=''">{{ extendBusy||headBoxBusy?'取消':'关闭' }}</button>
           </div></Transition>
           <Transition name="enhance-glide" :css="motionAllowed"><div v-if="enhancing" class="annot-enhance enhancement-bar"><button v-for="p in ['原图','暗场','低对比']" :key="p" class="quiet-button" @click="enhancement(p)">{{ p }}</button><label>亮度 <input v-model.number="brightness" aria-label="亮度" type="range" min="50" max="200" /></label><label>对比 <input v-model.number="contrast" aria-label="对比度" type="range" min="50" max="220" /></label><label><input v-model="inverted" type="checkbox" />反相</label><span>只影响显示</span></div></Transition>
           <AnnotationMinimap v-if="selectedMedia && minimapOn" :source="minimapSource" :scroller="scrollContainerRef" :stage="stageRef" :media-width="selectedMedia.width||4" :media-height="selectedMedia.height||3" :redraw-key="`${currentMediaId}:${currentFrame}:${exactFrameUrl}:${stageSize.w}`" />
-          <div v-if="exactFrameLoading||workspaceRestoring||isAiBusy||currentRemoteTracking" class="canvas-status" data-testid="canvas-status">{{ isAiBusy?'AI 正在追踪本视频 · 可切换到其他视频继续标注':currentRemoteTracking?`${currentRemoteTracking.userName||'其他人'}正在追踪本视频 · 完成后自动刷新，可先标注其他视频`:workspaceRestoring?'正在恢复工作区…':'正在读取帧…' }}</div>
+          <div v-if="exactFrameLoading||workspaceRestoring||isAiBusy||currentRemoteTracking" class="canvas-status" data-testid="canvas-status">{{ isAiBusy?(prelabelRunning?'AI 正在预标本视频 · 可以先看其他视频':'AI 正在追踪本视频 · 可切换到其他视频继续标注'):currentRemoteTracking?`${currentRemoteTracking.userName||'其他人'}正在追踪本视频 · 完成后自动刷新，可先标注其他视频`:workspaceRestoring?'正在恢复工作区…':'正在读取帧…' }}</div>
           <div v-if="frameError" class="canvas-error" role="alert">{{ frameError }}<button class="btn-secondary" @click="retryExactFrame">重试读取</button></div>
           <Transition name="toast"><div v-if="toast" :key="toast.id" class="status-toast" :class="`toast-${toast.tone}`" role="status" data-testid="status-toast"><span class="notice-icon"><AppIcon :name="toast.tone==='success'?'check':toast.tone==='info'?'info':'alert'" :size="14" /></span><span>{{ toast.message }}</span><button v-if="toast.tone==='error'" type="button" class="notice-close" aria-label="关闭提示" @click="dismissToast"><AppIcon name="close" :size="13" /></button></div></Transition>
           <div v-if="magnifier" class="loupe"><canvas ref="loupe" width="200" height="150" :style="{filter}" /><span>4× 原图局部 · {{ mousePixel?`${mousePixel.x}, ${mousePixel.y}`:'移动指针查看' }}</span></div>
@@ -792,18 +809,42 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <div ref="pauseControlHost" class="pause-control-host" />
         <div v-show="pauseDetailsOpen" ref="inspectorDetailsHost" class="pause-inspector-details" />
       </section>
-      <section v-show="!reviewing && (!showPauseFeedback || trackingCalibrationSummary.length || (trackingFeedbackError && trackingFeedbackPendingAction?.decision==='reset'))" class="shell-card annot-ai">
+      <section v-show="!reviewing && (!showPauseFeedback || trackingCalibrationSummary.length || (trackingFeedbackError && trackingFeedbackPendingAction?.decision==='reset'))" class="shell-card annot-task" data-testid="prelabel-card">
         <template v-if="!showPauseFeedback">
-          <div class="shell-card-head"><AppIcon name="spark" :size="16"/><strong>AI 追踪</strong><span class="ai-state">{{ isAiBusy?'追踪中':hasPausedTracking?'待核对':'就绪' }}</span></div>
-          <TrackingProgress v-if="currentTrackingProgress || currentTrackingFinished" class="annot-tracking-progress" :view="currentTrackingProgress" :finished="currentTrackingFinished" />
-          <p v-else class="shell-card-note">{{ trackingProgress || '框好首尾帧头部后，生成整段标注，自动识别边缘入画。' }}</p>
-          <p v-if="currentTrackingProgress && currentTrackingProgress.mode !== 'finishing'" class="shell-card-note annot-tracking-hint">追踪在服务器上进行，可以切换到其他视频继续标注。</p>
-          <div v-if="isVideo" class="endpoint-tracking" aria-label="首尾帧标注">
-            <div class="endpoint-navigation"><button class="btn-secondary" :disabled="editingBlocked||isAiBusy" @click="seekVideo(0)">首帧 · {{ endpointCount(0) }} 人工框</button><button class="btn-secondary" :disabled="editingBlocked||isAiBusy" @click="seekVideo(frameToTime(maxFrameIndex))">尾帧 · {{ endpointCount(maxFrameIndex) }} 人工框</button></div>
-            <p class="shell-card-note">完整框出两端的头部；编号可不同。尾帧框须人工绘制或修正。</p>
-            <button class="btn-primary shell-wide" :disabled="editingBlocked||isAiBusy||hasPausedTracking||maxFrameIndex<1||!endpointCount(0)" @click="requestEndpointTracking">首尾双向追踪</button>
+          <Transition name="task-swap" mode="out-in" :css="motionAllowed">
+          <div v-if="currentTrackingProgress || currentTrackingFinished" key="running" class="task-body">
+            <div class="shell-card-head"><AppIcon name="spark" :size="16"/><strong>{{ prelabelRunning || currentTrackingFinished ? '自动预标' : 'AI 追踪' }}</strong></div>
+            <TrackingProgress class="annot-tracking-progress" :view="currentTrackingProgress" :finished="currentTrackingFinished" />
+            <p v-if="currentTrackingProgress && currentTrackingProgress.mode !== 'finishing'" class="shell-card-note">在服务器上识别，可以先看其他视频。</p>
           </div>
-          <div v-if="trackingWarningSummary.length && !hasPausedTracking" class="tracking-warning-summary" role="status"><span>{{ trackingWarningSummary.reduce((count,item)=>count+item.count,0) }} 次追踪变化已合并提示</span><details><summary>详情</summary><p v-for="item in trackingWarningSummary" :key="`${item.objectId}:${item.reason}`">对象 {{ item.objectId }} · {{ item.reason==='overlap'?'重叠':item.reason==='size'?'尺寸 / 形状':item.reason==='image'?'主体 / 覆盖':'运动' }} · 第 {{ item.firstFrame+1 }}–{{ item.lastFrame+1 }} 帧 · {{ item.count }} 次{{ item.calibrated?' · 参考已确认正常样本':'' }}</p></details></div>
+          <div v-else-if="prelabelError" key="failed" class="task-body" role="alert">
+            <div class="shell-card-head"><AppIcon name="alert" :size="16"/><strong>自动预标没完成</strong></div>
+            <p class="shell-card-note">{{ prelabelError }}</p>
+            <button class="btn-primary shell-wide" :disabled="isAiBusy" @click="retryPrelabel">重试</button>
+          </div>
+          <div v-else-if="checkFrames.length" key="scan" class="task-body" data-testid="scan-task">
+            <div class="task-eyebrow"><span>第 1 步 · 标注</span><span class="num">{{ scannedCount }} / {{ checkFrames.length }}</span></div>
+            <h3 class="task-title">{{ scanComplete ? '都看完了' : '找漏掉的精子' }}</h3>
+            <p class="shell-card-note">{{ scanComplete ? '接下来去审查，逐个确认找到的目标。' : '看这一张，没框到的头点一下就补上。' }}</p>
+            <div class="check-steps" role="group" aria-label="要查漏的帧">
+              <button v-for="(item,i) in checkFrames" :key="item.frame" class="check-step" :class="{done:!!item.scannedAt,current:item.frame===currentFrame}" :aria-current="item.frame===currentFrame?'step':undefined" :title="`第 ${item.frame+1} 帧${item.scannedAt?` · ${item.scannedByName||''}已看`:''}`" :aria-label="`第 ${i+1} 张，第 ${item.frame+1} 帧${item.scannedAt?'，已看':''}`" :disabled="isAiBusy" @click="seekFrame(item.frame)"><AppIcon v-if="item.scannedAt" name="check" :size="12" /><template v-else>{{ i+1 }}</template></button>
+            </div>
+            <button v-if="!scanComplete && currentCheckFrame && !currentCheckFrame.scannedAt" class="btn-primary shell-wide task-primary" data-testid="scan-done" :disabled="scanBusy||editingBlocked" @click="finishScan">这张看完了<kbd>Enter</kbd></button>
+            <button v-else-if="!scanComplete" class="btn-primary shell-wide task-primary" :disabled="isAiBusy" @click="goNextCheck">回到要看的那张</button>
+            <button v-else class="btn-primary shell-wide task-primary" @click="router.push('/review')">去审查<AppIcon name="next" :size="14" /></button>
+            <div v-if="!scanComplete" class="task-how" aria-hidden="true"><span><AppIcon name="cursor" :size="15" />点一下 补框</span><span><AppIcon name="box" :size="15" />拖动 画框</span><span><kbd>Del</kbd>删除</span></div>
+          </div>
+          <div v-else-if="legacyResult" key="legacy" class="task-body">
+            <div class="shell-card-head"><AppIcon name="spark" :size="16"/><strong>旧流程标注的视频</strong></div>
+            <p class="shell-card-note">可以继续手动修改；也可以清空现有的框，用新模型重新预标。</p>
+            <button v-if="!reprelabelConfirm" class="btn-secondary shell-wide" :disabled="isAiBusy||editingBlocked||reprelabelBusy" @click="reprelabelConfirm=true">用新模型重新预标…</button>
+            <div v-else class="task-confirm" role="alert"><p>会清空这段视频现有的全部框，审查也要重新做。确定吗？</p><div><button class="btn-secondary" @click="reprelabelConfirm=false">取消</button><button class="btn-primary" :disabled="reprelabelBusy" @click="reprelabelConfirm=false;reprelabelCurrent()">{{ reprelabelBusy?'正在清空…':'清空并重新预标' }}</button></div></div>
+          </div>
+          <div v-else-if="isVideo" key="idle" class="task-body">
+            <div class="shell-card-head"><AppIcon name="spark" :size="16"/><strong>自动预标</strong></div>
+            <p class="shell-card-note">{{ workspaceRestoring ? '正在读取这段视频…' : '打开视频后自动识别精子头。' }}</p>
+          </div>
+          </Transition>
         </template>
         <details v-if="trackingCalibrationSummary.length" class="tracking-calibration"><summary>已保存的正常确认（{{ trackingCalibrationSummary.length }} 个对象）</summary><div v-for="item in trackingCalibrationSummary" :key="item.objectId" :data-calibration-object-id="item.objectId"><span>对象 {{ item.objectId }}<template v-if="item.sampleCount"> · {{ item.sampleCount }} 次正常运动确认</template><template v-if="item.geometryFrame!=null"> · 第 {{ item.geometryFrame+1 }} 帧尺寸已确认</template><template v-if="item.overlapCount"> · {{ item.overlapCount }} 个重叠组合已确认（{{ item.overlapPartnerIds.map(id=>'对象 '+id).join('、') }}）</template></span><button class="quiet-button" :disabled="feedbackBlocked||trackingFeedbackPending" @click="resetTrackingCalibration(item.objectId)">恢复默认判断</button></div></details>
         <div v-if="trackingFeedbackError && trackingFeedbackPendingAction?.decision==='reset'" class="tracking-feedback-error" role="alert">{{ trackingFeedbackError }}<button class="quiet-button" :disabled="trackingFeedbackBusy" @click="retryTrackingAnomalyFeedback">重试恢复默认判断</button></div>
@@ -815,7 +856,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             <div class="selection-context"><strong>对象 {{ selectedObject.objectId }}</strong><span>{{ selectedObject.source==='manual'?'人工':'AI 追踪' }}{{ selectedObject.confidence?` · ${Math.round(selectedObject.confidence*100)}%`:'' }}<template v-if="isVideo"> · {{ selectedObjectCoverage }}/{{ maxFrameIndex+1 }} 帧</template><template v-if="selectedObject.bbox"> · {{ (selectedObject.bbox.width*(selectedMedia?.width||0)/100).toFixed(0) }}×{{ (selectedObject.bbox.height*(selectedMedia?.height||0)/100).toFixed(0) }} px</template></span></div>
             <div class="object-delete-actions"><button class="btn-secondary" data-testid="delete-object-frame" title="只删当前帧 (Delete)" :disabled="editingBlocked||trackingFeedbackPending||!!objectDeletionPendingAction" @click="deleteSelectedFrame"><AppIcon name="trash" :size="13" />删除本帧的框</button><button class="btn-secondary delete-video-button" data-testid="delete-object-video" :disabled="editingBlocked||!isVideo||!selectedMedia?.serverMediaId||trackingFeedbackPending||!!objectDeletionPendingAction" title="删除这个对象在整段视频所有帧中的框，可撤销" @click="openVideoDeletion"><AppIcon name="trash" :size="13" />删除全视频中此对象</button></div>
           </template>
-          <p v-else class="object-no-selection">{{ activeTool==='bbox'?'在画面上拖出头部框；按 V 切换到选择。':'点击画面中的框，或下方编号选中对象。' }}</p>
+          <p v-else class="object-no-selection">{{ activeTool==='select'?'点击画面中的框，或下方编号选中对象。':'点一下精子头补框（其他帧一起补），按住拖动手动画框；点框可选中、拖动。' }}</p>
           <div v-if="frameDeletionVisible" class="object-deletion-feedback" role="status"><AppIcon name="check" :size="14"/><span>对象 {{ frameDeletion?.objectId }} 已删除本帧标注</span><button class="quiet-button" :disabled="editingBlocked||!canUndo||!!objectDeletionPendingAction||trackingFeedbackPending" @click="undoFrameDeletion"><AppIcon name="undo" :size="13" />撤销</button></div>
           <div v-else-if="videoDeletionVisible && lastVideoObjectDeletion" class="object-deletion-feedback" role="status"><AppIcon name="check" :size="14"/><span>对象 {{ lastVideoObjectDeletion.objectId }} 已删除 {{ lastVideoObjectDeletion.frameCount }} 帧标注</span><button class="quiet-button" :disabled="editingBlocked||!canUndoVideoDeletion||!!objectDeletionPendingAction||trackingFeedbackPending" @click="undoVideoDeletion"><AppIcon name="undo" :size="13" />撤销</button></div>
         </div>
@@ -852,6 +893,27 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
 </template>
 
 <style scoped>
+.annot-task { display:grid; gap:10px; }
+.task-body { display:grid; gap:10px; }
+.task-eyebrow { display:flex; justify-content:space-between; padding-right:30px; font-size:var(--fs-xs); font-weight:600; color:var(--accent); } /* Clear of the inspector collapse button. */
+.task-eyebrow .num { font-variant-numeric:tabular-nums; color:var(--muted); font-weight:500; }
+.task-title { margin:0; font-size:var(--fs-xl); line-height:1.25; letter-spacing:-.01em; }
+.check-steps { display:flex; flex-wrap:wrap; gap:5px; }
+.check-step { min-width:28px; height:28px; padding:0 6px; border-radius:var(--radius-sm); border:1.5px solid var(--accent); background:var(--surface); color:var(--accent); font-size:var(--fs-xs); font-weight:650; font-variant-numeric:tabular-nums; display:inline-grid; place-items:center; cursor:pointer; transition:background-color var(--dur-fast,.12s) var(--ease-out,ease), color var(--dur-fast,.12s) var(--ease-out,ease), box-shadow var(--dur-fast,.12s) var(--ease-out,ease); }
+.check-step:hover:not(:disabled) { background:var(--accent-soft); }
+.check-step.done { background:var(--accent); color:var(--on-accent); }
+.check-step.current { box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.task-primary { display:flex; align-items:center; justify-content:center; gap:8px; min-height:40px; font-size:var(--fs-md); }
+.task-primary kbd { font-size:var(--fs-2xs); opacity:.75; border:1px solid currentColor; border-radius:4px; padding:0 4px; }
+.task-how { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+.task-how span { display:flex; flex-direction:column; align-items:center; gap:3px; padding:7px 4px; border-radius:var(--radius-sm); background:var(--surface-subtle); color:var(--muted); font-size:var(--fs-2xs); }
+.task-how kbd { font-size:var(--fs-2xs); }
+.task-confirm { display:grid; gap:8px; padding:10px; border-radius:var(--radius-sm); background:var(--danger-soft); font-size:var(--fs-xs); }
+.task-confirm p { margin:0; }
+.task-confirm div { display:flex; gap:6px; justify-content:flex-end; }
+.task-swap-enter-active, .task-swap-leave-active { transition:opacity var(--dur-base,.2s) var(--ease-out,ease), transform var(--dur-base,.2s) var(--ease-out,ease); }
+.task-swap-enter-from { opacity:0; transform:translateY(6px); }
+.task-swap-leave-to { opacity:0; transform:translateY(-4px); }
 .collaboration-card { border:1px solid var(--warning,#b87b21); padding:12px; display:grid; gap:10px; }
 .collaboration-entries { max-height:260px; overflow:auto; display:grid; gap:12px; }
 .collaboration-entry { display:grid; gap:6px; }

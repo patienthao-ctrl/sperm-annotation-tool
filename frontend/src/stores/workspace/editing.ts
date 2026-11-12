@@ -7,6 +7,7 @@ import { useAuth } from '../auth'
 import { activeTool, annotationHitRef, annotationsByMedia, currentFrame, currentMediaId, currentObjects, currentTime, deletedFrameObjects, deletedTrackingIds, dragPreview, editingBlocked, getNextObjectId, isAiBusy, isVideo, lastPausedContext, mediaAssets, objectNameInput, pausedAnomalies, runtime, selectedMedia, selectedObject, selectedObjectId, showToast, statusMessage, zoom } from './state'
 import { snapshotUndo } from './history'
 import { scheduleWorkspaceStateSave } from './save'
+import { cancelExtend, extendAt } from './prelabel'
 
 export const isInteracting = () => !!tempBbox.value || !!draggingObjectId || !!runtime.bboxStart
 // 4K heads are 20–30 px in a ~0.27× fitted view, so allow up to 10× the fit.
@@ -64,7 +65,7 @@ export const addObject = (point: { x: number; y: number }, bbox?: { x: number; y
 }
 
 const toolLabel = (tool: AnnotationTool) =>
-  tool === 'head' ? '点选头部' : tool === 'select' ? '选择框' : tool === 'point' ? '点标注' : '框标注'
+  tool === 'smart' ? '标注' : tool === 'head' ? '点选头部' : tool === 'select' ? '选择框' : tool === 'point' ? '点标注' : '框标注'
 
 export const selectTool = (tool: AnnotationTool) => {
   if (editingBlocked.value) return
@@ -113,6 +114,8 @@ export const createHeadBox = async (point: {x:number;y:number}, creationKey?:str
 
 export const onStageClick = (event: MouseEvent) => {
   if (editingBlocked.value) return
+  // The combined tool decides click versus drag on pointer up.
+  if (activeTool.value === 'smart') { hitExisting = false; event.preventDefault(); return }
   if (activeTool.value === 'head') { event.preventDefault(); void createHeadBox(getStagePoint(event)); return }
   // 如果本次按下命中了已有框，跳过 click（防止添加新点标注覆盖选中）
   if (hitExisting) { hitExisting = false; return }
@@ -161,7 +164,7 @@ export const onBboxDown = (event: PointerEvent) => {
     selectedObjectId.value = hit.id; draggingObjectId = hit.id
     dragStartPoint = point; dragStartBbox = { ...hit.bbox }; dragMoved = false
     resizeHandle = handle; hitExisting = true
-  } else if (activeTool.value === 'bbox') {
+  } else if (activeTool.value === 'bbox' || activeTool.value === 'smart') {
     runtime.bboxStart = point; tempBbox.value = { ...point, width: 0, height: 0 }; hitExisting = false
   } else if (activeTool.value === 'select') { clearSelection() }
 }
@@ -194,7 +197,10 @@ export const onBboxUp = (event: PointerEvent) => {
     statusMessage.value = resizeHandle ? '已调整标注框' : '已移动标注框'
   } else if (runtime.bboxStart && tempBbox.value) {
     const b = tempBbox.value, w = selectedMedia.value?.width || 1000, h = selectedMedia.value?.height || 1000
-    if (b.width*w/100 >= 2 && b.height*h/100 >= 2) addObject({ x: b.x+b.width/2, y: b.y+b.height/2 }, { ...b })
+    const drawn = b.width*w/100 >= 2 && b.height*h/100 >= 2
+    const clicked = activeTool.value === 'smart' && b.width*w/100 < 4 && b.height*h/100 < 4
+    if (clicked) { const at = { ...runtime.bboxStart }; cancelAnnotationGesture(); selectedObjectId.value = null; void extendAt(at); return }
+    if (drawn) addObject({ x: b.x+b.width/2, y: b.y+b.height/2 }, { ...b })
   }
   cancelAnnotationGesture()
 }
@@ -291,4 +297,5 @@ export const clearSelection = () => {
 
 export const setupEditingWatchers = () => {
   watch([currentMediaId, currentFrame, activeTool, editingBlocked, annotationsByMedia, () => useAuth().user.value?.id], cancelHeadBox, {flush:'sync'})
+  watch([currentMediaId, currentFrame, editingBlocked, () => useAuth().user.value?.id], cancelExtend, {flush:'sync'})
 }

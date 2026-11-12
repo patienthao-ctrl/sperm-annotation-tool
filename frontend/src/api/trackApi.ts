@@ -57,6 +57,17 @@ export interface DuplicateVideo {
   mediaId:string;videoName:string;canOverwrite:boolean;reason:string;workspaceRevision:number;media:TrackUploadResponse
 }
 
+export interface PrelabelCheckFrame { frame: number; kind: 'fixed' | 'event'; scannedBy?: number; scannedByName?: string | null; scannedAt?: string }
+export interface PrelabelTrackFlag { kind: 'cross' | 'jump' | 'partial' | 'weak'; frame?: number; last?: number; with?: number }
+export interface PrelabelSummary {
+  state: 'available' | 'none'
+  policy?: string
+  modelId?: string | null
+  frameCount?: number
+  checkFrames?: PrelabelCheckFrame[]
+  tracks?: { objectId: number; first: number; last: number; flags: PrelabelTrackFlag[] }[]
+}
+
 export interface TrackRunResponse {
   taskId: string
   status: 'queued' | 'running' | 'success' | 'failed'
@@ -92,7 +103,7 @@ export interface TrackStatusResponse {
   taskId: string
   status: 'queued' | 'running' | 'success' | 'failed' | 'paused'
   message?: string
-  stage?: 'queued' | 'decoding' | 'preparing_model' | 'tracking' | 'checking' | 'saving_results' | 'paused' | 'completed'
+  stage?: 'queued' | 'decoding' | 'preparing_model' | 'tracking' | 'checking' | 'saving_results' | 'paused' | 'completed' | 'detecting' | 'linking' | 'failed'
   elapsedSeconds?: number
   /** Structured stage position for the progress bar (endpoint backward pass / combine). */
   phase?: 'backward' | 'combine'
@@ -262,6 +273,20 @@ export interface TrackWorkspaceState {
 export const trackApi = {
   headBox: (mediaId: string, frameIndex: number, x: number, y: number, signal?: AbortSignal) =>
     jsonRequest<{bbox:number[];confidence:number;frameIndex:number;width:number;height:number}>(`/track/head-box/${encodeURIComponent(mediaId)}`, {method:'POST', body:JSON.stringify({frameIndex,x,y}), signal}),
+  async startPrelabel(mediaId: string, requestKey: string) {
+    const result = await jsonRequest<{taskId:string;status:string;frameCount?:number}>(`/prelabel/${encodeURIComponent(mediaId)}`, {method:'POST', headers:{'Idempotency-Key':requestKey}})
+    if (typeof result.taskId !== 'string' || !result.taskId) throw new Error('服务器未返回有效的预标任务，请重试')
+    return result
+  },
+  async prelabelSummary(mediaId: string) {
+    const result = await jsonRequest<PrelabelSummary>(`/prelabel/${encodeURIComponent(mediaId)}`)
+    if (result.state !== 'none' && (result.state !== 'available' || !Array.isArray(result.checkFrames) || !Array.isArray(result.tracks))) throw new Error('预标摘要结构无效，请重新读取')
+    return result
+  },
+  recordScan: (mediaId: string, frameIndex: number) =>
+    jsonRequest<PrelabelSummary>(`/prelabel/${encodeURIComponent(mediaId)}/scans/${encodeURIComponent(frameIndex)}`, {method:'PUT'}),
+  extendHead: (mediaId: string, frameIndex: number, x: number, y: number, signal?: AbortSignal) =>
+    jsonRequest<{frameIndex:number;width:number;height:number;confidence:number;boxes:{frameIndex:number;bbox:number[];kind:string}[]}>(`/prelabel/${encodeURIComponent(mediaId)}/extend`, {method:'POST', body:JSON.stringify({frameIndex,x,y}), signal}),
   async uploadVideo(file: File): Promise<TrackUploadResponse> {
     const form = new FormData()
     form.append('file', file, file.name)

@@ -40,3 +40,13 @@ test('single-frame and malformed numbers stay within 0..1',()=>{
   const view=describeTrackingProgress({...base,startFrame:5,endFrame:5,status:'running',stage:'tracking',lastProcessedFrame:Number.NaN})
   assert.equal(view.steps[0].fraction,1);assert.equal(formatElapsed(undefined),'');assert.equal(formatElapsed(3725),'1:02:05')
 })
+test('prelabel shows detection by processed frames, then linking',()=>{
+  const pre={startFrame:0,endFrame:34,endpoint:false,combine:false,prelabel:true}
+  assert.equal(states(describeTrackingProgress({...pre,status:'queued',stage:'queued'})),'detect:pending link:pending')
+  const preparing=describeTrackingProgress({...pre,status:'running',stage:'detecting'})
+  assert.equal(preparing.mode,'preparing');assert.equal(preparing.steps[0].fraction,null)
+  const running=describeTrackingProgress({...pre,status:'running',stage:'detecting',lastProcessedFrame:6})
+  assert.equal(running.detail,'第 7 / 35 帧');assert.equal(running.steps[0].fraction,7/35);assert.deepEqual(running.covered,[0,6])
+  assert.equal(states(describeTrackingProgress({...pre,status:'running',stage:'linking',lastProcessedFrame:34})),'detect:done link:active')
+  assert.equal(describeTrackingProgress({...pre,status:'success'}).mode,'finishing')
+})

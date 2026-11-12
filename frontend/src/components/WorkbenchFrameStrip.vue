@@ -77,6 +77,9 @@ function pick(event: MouseEvent) {
 .frame-strip i.review-todo::after,.frame-strip i.review-done::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:3px;border-radius:0 0 2px 2px}
 .frame-strip i.review-todo::after{background:var(--accent)}
 .frame-strip i.review-done::after{background:var(--success);opacity:.55}
+/* Annotation check frames: a ring still to scan, a filled dot once scanned. */
+.frame-strip i.check::before,.frame-strip i.check-done::before{content:'';position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;box-sizing:border-box;border:1.5px solid var(--accent);background:var(--surface);transition:background-color var(--dur-base) var(--ease-out)}
+.frame-strip i.check-done::before{background:var(--accent)}
 .frame-strip i.current{border:2px solid var(--text);transform:scaleY(1.16);box-shadow:0 2px 6px #0003;z-index:1}
 /* Tracking scan: a tinted band over frames already processed by the active stage and a glowing
    head on the frame the model is reading. Both glide with the 0.7 s status poll; neither blocks clicks. */

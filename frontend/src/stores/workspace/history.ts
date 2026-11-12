@@ -5,6 +5,7 @@ import { annotationsByMedia, canUndoVideoDeletion, clone, currentFrame, currentM
 import { cancelHeadBox, isInteracting } from './editing'
 import { rememberControls, scheduleWorkspaceStateSave } from './save'
 import { applyVideoDeletion, undoVideoObjectDeletion } from './trackingActions'
+import { dropUndoneTrackAdd, latestTrackAdd, redoTrackAdd, undoTrackAdd } from './prelabel'
 
 type HistoryState = { objects: AnnotationObject[]; deleted: string[]; frameDeleted: FrameDeletion[]; sequence: number; pause?: { items: typeof pausedAnomalies.value; context: typeof lastPausedContext.value } }
 export const histories = new Map<string, { undo: HistoryState[]; redo: HistoryState[] }>()
@@ -23,12 +24,13 @@ const captureHistory = (): HistoryState => ({
 })
 export const snapshotUndo = () => {
   if (videoDeletionHistory.value[currentMediaId.value]?.undone) { delete videoDeletionHistory.value[currentMediaId.value]; rememberControls(currentMediaId.value) }
+  dropUndoneTrackAdd(currentMediaId.value) // A new edit replaces what redo could bring back.
   const h = history(); h.undo.push(captureHistory()); h.redo.length = 0
   if (h.undo.length > 50) h.undo.shift()
   historyRevision.value++
 }
-export const canUndo = computed(() => { void historyRevision.value; return history().undo.length > 0 || canUndoVideoDeletion.value })
-export const canRedo = computed(() => { void historyRevision.value; return history().redo.length > 0 || !!videoDeletionHistory.value[currentMediaId.value]?.undone })
+export const canUndo = computed(() => { void historyRevision.value; const add = latestTrackAdd(currentMediaId.value); return history().undo.length > 0 || canUndoVideoDeletion.value || (!!add && !add.undone) })
+export const canRedo = computed(() => { void historyRevision.value; return history().redo.length > 0 || !!videoDeletionHistory.value[currentMediaId.value]?.undone || !!latestTrackAdd(currentMediaId.value)?.undone })
 const restoreHistory = (state: HistoryState) => {
   const mid = currentMediaId.value, fi = currentFrame.value
   const affected = new Set([...currentObjects.value, ...state.objects].map(o => o.id))
@@ -47,6 +49,8 @@ export const undo = () => {
   if (editingBlocked.value || isInteracting()) return
   const h = history()
   const deletion = videoDeletionHistory.value[currentMediaId.value]
+  const add = latestTrackAdd(currentMediaId.value)
+  if (add && !add.undone && add.sequence >= (h.undo[h.undo.length - 1]?.sequence ?? 0) && add.sequence >= (deletion && !deletion.undone ? deletion.sequence : 0)) { undoTrackAdd(currentMediaId.value); historyRevision.value++; return }
   if (deletion && !deletion.undone && deletion.sequence >= (h.undo[h.undo.length - 1]?.sequence ?? 0)) { void undoVideoObjectDeletion(); return }
   if (!h.undo.length) return
   h.redo.push(captureHistory()); restoreHistory(h.undo.pop()!); statusMessage.value = '已撤销本帧操作'
@@ -56,6 +60,8 @@ export const redo = () => {
   if (editingBlocked.value || isInteracting()) return
   const h = history()
   const deletion = videoDeletionHistory.value[currentMediaId.value]
+  const add = latestTrackAdd(currentMediaId.value)
+  if (add?.undone && add.sequence >= (h.redo[h.redo.length - 1]?.sequence ?? 0)) { redoTrackAdd(currentMediaId.value); historyRevision.value++; return }
   if (deletion?.undone && deletion.sequence >= (h.redo[h.redo.length - 1]?.sequence ?? 0)) { void applyVideoDeletion('redo', deletion); return }
   if (!h.redo.length) return
   h.undo.push(captureHistory()); restoreHistory(h.redo.pop()!); statusMessage.value = '已重做本帧操作'

@@ -62,7 +62,7 @@ watch(mediaAssets, (val) => {
 let rememberedMedia = ''
 try { rememberedMedia = localStorage.getItem('annotation-selected-media') || '' } catch {}
 export const selectedMediaId = ref(mediaAssets.value.find(m => m.id === rememberedMedia)?.id ?? mediaAssets.value[0]?.id ?? '')
-export const activeTool = ref<AnnotationTool>('bbox')
+export const activeTool = ref<AnnotationTool>('smart')
 export const objectNameInput = ref('rare sperm')
 export const selectedObjectId = ref<string | null>(null)
 export const currentFrame = ref(0)
@@ -101,6 +101,8 @@ export const trackingProgress = computed(()=>trackingProgressByMedia.value[curre
 // Structured status behind the stepped progress bar (AI card, header, frame strip, media list).
 export const trackingStatusByMedia = ref<Record<string,TrackingProgressInput>>({})
 // Videos whose run just completed: the bar briefly shows its finished state before leaving.
+// 'not_generated': the video has no AI result yet, so the detector prelabel may run.
+export const trackingResultState = ref<Record<string,'available'|'not_generated'>>({})
 export const trackingFinishedByMedia = ref<Record<string,true>>({})
 export const trackingProgressViewFor = (mediaId: string): TrackingProgressView | null => {
   const input = trackingStatusByMedia.value[mediaId]

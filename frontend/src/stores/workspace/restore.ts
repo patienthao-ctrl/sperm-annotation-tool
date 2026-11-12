@@ -14,6 +14,7 @@ import { restoreRestart } from './trackingActions'
 import { clearResetCache } from './media'
 import { loadTrackingResult, normalizePauseNotice } from './trackingResult'
 import { trackingJournalKey } from './tracking'
+import { afterTrackingLoaded } from './prelabel'
 
 const restoreWorkspaceState = async (mediaId: string, isCurrent: () => boolean): Promise<number | null> => {
   const media = mediaAssets.value.find((item) => item.id === mediaId)
@@ -93,7 +94,8 @@ const restoreWorkspaceState = async (mediaId: string, isCurrent: () => boolean):
     contrast.value = Number(state.display?.contrast) || 100
     zoom.value = Number(state.display?.zoom) || 1
     if (state.editor?.activeTool && ['select', 'point', 'bbox'].includes(state.editor.activeTool)) {
-      activeTool.value = state.editor.activeTool
+      // Saved drawing tools come back as the combined tool: click finds a head, drag draws.
+      activeTool.value = state.editor.activeTool === 'select' ? 'select' : 'smart'
     }
     if (typeof state.editor?.objectNameInput === 'string') objectNameInput.value = state.editor.objectNameInput
     selectedObjectId.value = typeof state.editor?.selectedObjectId === 'string'
@@ -134,7 +136,7 @@ export const resetAnnotationViewForMedia = async (mediaId = currentMediaId.value
   frameInput.value = 0
   tempBbox.value = null
   runtime.bboxStart = null
-  activeTool.value = 'bbox'
+  activeTool.value = 'smart'
   anomalyObjectIds.value = []
   anomalyFrames.value = []
   pausedAnomalies.value = []
@@ -174,6 +176,7 @@ export const resetAnnotationViewForMedia = async (mediaId = currentMediaId.value
       return
     }
     if (!isCurrent()) return
+    void afterTrackingLoaded(mediaId)
     try{
       const job=JSON.parse(sessionStorage.getItem(trackingJournalKey(mediaId))||'null') as TrackingJob|null
       // A loop still polling this video in the background already owns its job.

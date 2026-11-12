@@ -4,7 +4,7 @@ import { pauseDiagnostics, pauseTypeFromEvidence } from '../../annotation/pauseD
 import type { AnnotationObject, MediaAsset } from '../../types/annotation'
 import { trackApi } from '../../api/trackApi'
 import { useAuth } from '../auth'
-import { annotationsByMedia, currentMediaId, dedupeAnnotationObjects, deletedTrackingIds, imageRef, isObjectDeleted, mediaAssets, pausedAnomalies, runtime, trackingErrors, trackingFramesByMedia, videoRef } from './state'
+import { annotationsByMedia, currentMediaId, dedupeAnnotationObjects, deletedTrackingIds, imageRef, trackingResultState, isObjectDeleted, mediaAssets, pausedAnomalies, runtime, trackingErrors, trackingFramesByMedia, videoRef } from './state'
 import { numberedObjectName } from './editing'
 
 export const loadTrackingResult = async (mediaId: string, force = false, strict = false, required = false) => {
@@ -16,6 +16,7 @@ export const loadTrackingResult = async (mediaId: string, force = false, strict 
     const result = await trackApi.getResult(media.serverMediaId, undefined, required)
     if (serial !== runtime.trackingLoadSerial || mediaId !== currentMediaId.value || actor !== useAuth().user.value?.id) return
     if ('state' in result && result.state === 'not_generated' && required) throw new Error('追踪任务应已生成结果，请管理员检查任务日志与存储')
+    if ('frames' in result) trackingResultState.value = { ...trackingResultState.value, [mediaId]: 'state' in result && result.state === 'not_generated' ? 'not_generated' : 'available' }
     if('jointTracking' in result && result.jointTracking?.state==='failed'){
       trackingErrors.value[mediaId]={phase:'生成自动标注',frameIndex:0,endpointMode:true,message:'上次自动标注未完成，已保留原结果；请重试生成或检查服务日志。'}
     }

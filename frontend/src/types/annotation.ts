@@ -1,5 +1,6 @@
 export type MediaType = 'image' | 'video'
-export type AnnotationTool = 'select' | 'point' | 'bbox' | 'head'
+// 'smart': click asks the detector for the head (and the same head on other frames), drag draws a box.
+export type AnnotationTool = 'select' | 'point' | 'bbox' | 'head' | 'smart'
 export type ObjectSource = 'manual' | 'ai'
 export type TaskStatus = 'queued' | 'running' | 'success' | 'failed'
 

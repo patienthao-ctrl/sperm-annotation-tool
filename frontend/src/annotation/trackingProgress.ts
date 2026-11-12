@@ -2,7 +2,7 @@
 // header, frame strip and media list. Every number comes from frames the backend
 // reports as processed; there is no blended "overall percent" and no time estimate.
 
-export type TrackingStepKey = 'forward' | 'backward' | 'combine'
+export type TrackingStepKey = 'forward' | 'backward' | 'combine' | 'detect' | 'link'
 export type TrackingStepState = 'pending' | 'active' | 'done'
 export type TrackingProgressMode = 'queued' | 'preparing' | 'running' | 'finishing'
 
@@ -24,6 +24,8 @@ export interface TrackingProgressInput {
   combine: boolean
   /** The task finished and the browser is reading the published result. */
   loadingResult?: boolean
+  /** Detector prelabel: every frame is detected, then boxes are linked into tracks. */
+  prelabel?: boolean
 }
 
 export interface TrackingStep {
@@ -51,8 +53,8 @@ export interface TrackingProgressView {
   elapsed: string
 }
 
-const LABELS: Record<TrackingStepKey, string> = { forward: '正向追踪', backward: '反向核验', combine: '综合标注' }
-const SHORT: Record<TrackingStepKey, string> = { forward: '正向', backward: '反向', combine: '综合' }
+const LABELS: Record<TrackingStepKey, string> = { forward: '正向追踪', backward: '反向核验', combine: '综合标注', detect: '逐帧识别', link: '连成轨迹' }
+const SHORT: Record<TrackingStepKey, string> = { forward: '正向', backward: '反向', combine: '综合', detect: '识别', link: '连接' }
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
@@ -65,6 +67,7 @@ export function formatElapsed(seconds?: number): string {
 }
 
 export function describeTrackingProgress(input: TrackingProgressInput): TrackingProgressView {
+  if (input.prelabel) return describePrelabel(input)
   const keys: TrackingStepKey[] = ['forward']
   if (input.endpoint) keys.push('backward')
   if (input.endpoint && input.combine) keys.push('combine')
@@ -108,4 +111,25 @@ export function describeTrackingProgress(input: TrackingProgressInput): Tracking
   const total = end - start + 1, done = last - start + 1
   return view('running', build('forward', ratio(done, total)), LABELS.forward, `第 ${last + 1} / ${end + 1} 帧`, `${SHORT.forward} ${last + 1}/${end + 1}`,
     { frame: last, covered: [start, last] })
+}
+
+function describePrelabel(input: TrackingProgressInput): TrackingProgressView {
+  const end = Math.max(0, input.endFrame), total = end + 1
+  const elapsed = formatElapsed(input.elapsedSeconds)
+  const steps = (detect: TrackingStepState, fraction: number | null, link: TrackingStepState): TrackingStep[] => [
+    { key: 'detect', label: LABELS.detect, state: detect, fraction: detect === 'done' ? 1 : fraction },
+    { key: 'link', label: LABELS.link, state: link, fraction: link === 'done' ? 1 : link === 'active' ? null : 0 },
+  ]
+  const base = { frame: null, direction: 1 as const, covered: null, elapsed }
+  if (input.loadingResult || input.status === 'success')
+    return { ...base, mode: 'finishing', steps: steps('done', 1, 'done'), title: '正在载入结果', detail: '识别完成，正在把框放到画面上', compact: '载入结果' }
+  if (input.status === 'queued' || input.stage === 'queued')
+    return { ...base, mode: 'queued', steps: steps('pending', 0, 'pending'), title: '排队中', detail: '其他视频的 AI 任务完成后自动开始，可先看其他视频', compact: '排队中' }
+  if (input.stage === 'linking')
+    return { ...base, mode: 'running', steps: steps('done', 1, 'active'), title: LABELS.link, detail: '正在把各帧的框连成目标', compact: '连接中', covered: [0, end] }
+  if (!finite(input.lastProcessedFrame))
+    return { ...base, mode: 'preparing', steps: steps('active', null, 'pending'), title: '正在准备模型', detail: '马上开始逐帧识别', compact: '准备中' }
+  const last = Math.min(end, Math.max(0, input.lastProcessedFrame)), done = last + 1
+  return { ...base, mode: 'running', steps: steps('active', ratio(done, total), 'pending'), title: LABELS.detect,
+    detail: `第 ${done} / ${total} 帧`, compact: `${SHORT.detect} ${done}/${total}`, frame: last, covered: [0, last] }
 }
