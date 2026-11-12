@@ -2,9 +2,10 @@
 
 Confident boxes (>= HEAD_DETECTOR_CONF) may start a track; boxes between the low and the
 confident threshold may only extend a track that already exists, at its velocity-predicted
-position. Gaps of up to MAX_GAP frames between two observations are interpolated. A track
-needs at least MIN_CONFIDENT confident frames. On sperm264 rec_20261019_9 this removed all
-32 in-track holes of the 0.30 baseline and raised label recall from 0.964 to 0.993.
+position, across up to MAX_GAP frames without one. Frames without any detection are left
+without a box: guessed boxes landed on empty background when a head left by the edge or a
+fast head jumped beyond the gate (rec_20261022_20 objects 30, 11). A track needs at least
+MIN_CONFIDENT confident frames.
 
 Linking only decides which boxes are the same object, never whether something is sperm:
 motion is not a criterion (dead sperm do not move, debris drifts). Places where two tracks
@@ -71,7 +72,7 @@ def link(frames_rows: list[list[list[float]]], width: int, height: int, high: fl
     """frames_rows[f] = [[x1,y1,x2,y2,score], ...] in source pixels.
 
     Returns tracks as {'frames': {f: {'bbox', 'score', 'kind'}}, 'flags': [...]}, kind being
-    'high', 'low' or 'interp'. Tracks are ordered by first frame, then x.
+    'high' or 'low'; every box is a real detection. Tracks are ordered by first frame, then x.
     """
     gate = gate_for(width, height)
     tracks: list[dict[str, Any]] = []
@@ -115,13 +116,6 @@ def link(frames_rows: list[list[list[float]]], width: int, height: int, high: fl
     for track in tracks:
         if sum(item['kind'] == 'high' for item in track['frames'].values()) < MIN_CONFIDENT:
             continue
-        keys = sorted(track['frames'])
-        for a, b in zip(keys, keys[1:]):
-            if 1 < b - a <= MAX_GAP + 1:
-                for f in range(a + 1, b):
-                    w = (f - a) / (b - a)
-                    box = [(1 - w) * u + w * v for u, v in zip(track['frames'][a]['bbox'], track['frames'][b]['bbox'])]
-                    track['frames'][f] = {'bbox': box, 'score': None, 'kind': 'interp'}
         kept.append({'frames': dict(sorted(track['frames'].items())), 'flags': track['flags']})
     _flag_crossings(kept)
     kept.sort(key=lambda t: (min(t['frames']), _center(t['frames'][min(t['frames'])]['bbox'])[0]))
@@ -336,8 +330,8 @@ def extend(detections: list[list[list[float]]], seed_frame: int, seed_box: list[
            occupied: dict[int, list[list[float]]], width: int, height: int, low: float) -> list[dict[str, Any]]:
     """Follow one clicked head through the cached detections, both directions.
 
-    Only boxes not already taken by another target are used; up to MAX_GAP missing frames
-    are interpolated between found boxes; the search stops after MAX_GAP+1 misses in a row.
+    Only boxes not already taken by another target are used and nothing is guessed: frames
+    without a detection get no box. The search stops after MAX_GAP+1 misses in a row.
     """
     gate = gate_for(width, height)
     found = {seed_frame: [float(v) for v in seed_box]}
@@ -368,11 +362,4 @@ def extend(detections: list[list[list[float]]], seed_frame: int, seed_box: list[
             else:
                 misses += 1
             f += direction
-    keys = sorted(found)
-    for a, b in zip(keys, keys[1:]):
-        if 1 < b - a <= MAX_GAP + 1:
-            for f in range(a + 1, b):
-                w = (f - a) / (b - a)
-                found[f] = [(1 - w) * u + w * v for u, v in zip(found[a], found[b])]
-                kinds[f] = 'interp'
     return [{'frameIndex': f, 'bbox': [round(v, 3) for v in found[f]], 'kind': kinds[f]} for f in sorted(found)]

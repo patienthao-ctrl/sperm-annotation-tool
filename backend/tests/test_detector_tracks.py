@@ -8,14 +8,12 @@ def box(x, y, score, size=16):
     return [x - size / 2, y - size / 2, x + size / 2, y + size / 2, score]
 
 
-def test_weak_boxes_fill_flicker_but_never_start_a_track():
+def test_weak_boxes_extend_tracks_but_never_start_one_and_gaps_stay_empty():
     frames = [[box(100, 100, .8)], [box(101, 100, .2)], [], [box(103, 100, .9)], [box(500, 500, .2)], [box(500, 500, .25)]]
     tracks = dt.link(frames, W, H, .3, .1)
     assert len(tracks) == 1  # The lone weak head at (500, 500) never becomes a track.
     kinds = {f: item['kind'] for f, item in tracks[0]['frames'].items()}
-    assert kinds == {0: 'high', 1: 'low', 2: 'interp', 3: 'high'}
-    assert tracks[0]['frames'][2]['bbox'] == [94.0, 92.0, 110.0, 108.0]
-    assert tracks[0]['frames'][2]['score'] is None
+    assert kinds == {0: 'high', 1: 'low', 3: 'high'}  # Frame 2 had no detection: no guessed box.
 
 
 def test_one_confident_frame_is_not_enough():
@@ -68,6 +66,6 @@ def test_extend_follows_weak_boxes_skips_taken_heads_and_stops_after_misses():
     detections = [[box(100, 100, .15)], [box(102, 100, .12)], [], [box(106, 100, .11), box(300, 300, .9)],
                   [], [], [], [], [box(110, 100, .9)]]
     out = dt.extend(detections, 1, box(102, 100, 1)[:4], {}, W, H, .1)
-    assert [(b['frameIndex'], b['kind']) for b in out] == [(0, 'low'), (1, 'seed'), (2, 'interp'), (3, 'low')]
+    assert [(b['frameIndex'], b['kind']) for b in out] == [(0, 'low'), (1, 'seed'), (3, 'low')]
     taken = dt.extend(detections, 1, box(102, 100, 1)[:4], {0: [box(100, 100, 1)[:4]]}, W, H, .1)
-    assert [b['frameIndex'] for b in taken] == [1, 2, 3]  # Frame 0's head already belongs to someone.
+    assert [b['frameIndex'] for b in taken] == [1, 3]  # Frame 0's head already belongs to someone.
