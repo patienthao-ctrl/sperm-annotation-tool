@@ -149,6 +149,6 @@ endpoint_tracking.project_endpoints 是无写入投影：从已保存的真实�
 
 ## 可选边缘入画发现
 
-兼容 API 的 `TrackRequest.edgeDiscovery` 默认 false；新前端固定发送 true，不提供开关，未决任务仍重放原正文。使用 `head_click.detect_edges` 对原始边缘重叠512像素分块推理，`edge_entry.EntryGate` 做保守关联。初始可见及内部首次检出只作排除项；首次框贴边带（短边1%，至少3px）、至少4个连续原始帧且跨度≥0.15秒、检测分数均≥0.5且中位数≥0.7、扣除phase correlation估计的相机平移后向内移动≥半个头宽高最小值（至少3px）才接纳。歧义、重复、跟丢、低纹理/相机平移不可靠时拒绝新增。此为工程筛选条件，不是生物身份判定或精度保证。
+兼容 API 的 `TrackRequest.edgeDiscovery` 默认 false；新前端固定发送 true，不提供开关，未决任务仍重放原正文。使用 `head_click.detect_edges` 整帧推理（长边缩到 1024，与训练一致），`edge_entry.EntryGate` 做保守关联。初始可见及内部首次检出只作排除项；首次框贴边带（短边1%，至少3px）、至少4个连续原始帧且跨度≥0.15秒、检测分数均≥0.5且中位数≥0.7、扣除phase correlation估计的相机平移后向内移动≥半个头宽高最小值（至少3px）才接纳。歧义、重复、跟丢、低纹理/相机平移不可靠时拒绝新增。此为工程筛选条件，不是生物身份判定或精度保证。
 
 接纳后使用媒体内未占用稳定ID（扫描工作区、删除墓碑、结果和seed），确认帧将提示加入原SAM3 session，重新消费该帧以编码提示再从下一帧继续，保留已有对象记忆。连续检测观测补回首次可见帧；它们是 `edge_detector` AI 来源，不生成手工基准。`entryOrigin` 保留首次/确认帧及humanConfirmed=false。候选状态随每帧结果 `edgeDiscovery` 保存，续追恢复，暂停回退仅发表在返回帧前已确认的新增对象，未来候选不提前出现在旧帧。失败不发表半份结果。

@@ -1,24 +1,33 @@
 {
   "schemaVersion": 1,
-  "modelId": "yolo26s-svia-head-v1",
+  "modelId": "yolo26s-sperm264-head-v6",
   "file": "head-detector.pt",
-  "size": 20366405,
-  "sha256": "1cd32c856d305dcedb09f1538986846883f33e86d607f1122e812a0382a9a92a",
+  "size": 20355205,
+  "sha256": "9ba30c5dc2768afa4e6233f57b72f9bdf5a0d3bd7bb97851b346dc9ea39e9eb4",
   "architecture": "YOLO26s",
   "task": "detect",
   "classes": {
     "0": "sperm"
   },
   "ultralyticsVersion": "8.4.183",
-  "sourceRun": "YOLO26S-SVIA-20261023-001/baseline",
+  "sourceRun": "sperm264/v6/runs/final_s1024b (last.pt, optimizer state removed)",
   "training": {
-    "dataset": "SVIA Subset-A",
-    "epochs": 100,
+    "dataset": "Reviewed hospital annotations, sperm264 v6 labels (train+val)",
+    "epochs": 40,
     "imgsz": 1024,
-    "pretrained": "yolo26s.pt"
+    "pretrained": "yolo26s-svia-head-v1 (previous bundled head-detector.pt)"
   },
   "license": "AGPL-3.0",
   "licenseFile": "LICENSE-AGPL-3.0.txt",
-  "datasetSource": "https://github.com/Demozsj/Detection-Sperm",
-  "datasetUseNotice": "Upstream dataset welcomes non-commercial research; no expanded dataset rights or clinical approval are granted by this model package."
+  "datasetSource": "Initial weights from the SVIA-trained model: https://github.com/Demozsj/Detection-Sperm . Fine-tuned on this tool's own reviewed hospital annotations.",
+  "datasetUseNotice": "Weights contain no images, videos or annotation files. Fine-tuning used hospital annotations produced with this tool; upstream SVIA terms still apply to the initial weights. No clinical approval is granted.",
+  "trainedWithUltralytics": "8.4.202",
+  "inference": {
+    "input": "whole frame, grayscale copied to 3 channels, long side resized to 1024 with INTER_AREA",
+    "imgsz": 1024,
+    "iou": 0.7,
+    "maxDet": 500,
+    "defaultConfidence": 0.3,
+    "lowConfidence": 0.1
+  }
 }

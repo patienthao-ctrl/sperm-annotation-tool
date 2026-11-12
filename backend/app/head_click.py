@@ -98,14 +98,77 @@ def _take_turn(caller, timeout, busy_message):
         log.info('annotation.head_detector_waited caller=%s waited_ms=%.0f', caller, waited*1000)
 
 
-def choose(rows, x, y, width, height):
+def detector_device():
+    return os.getenv('HEAD_DETECTOR_DEVICE','cuda:0')
+
+
+def _threshold(name, default):
+    try:
+        value=float(os.getenv(name,'').strip() or default)
+    except ValueError:
+        value=default
+    return min(1.0,max(0.01,value))
+
+
+def high_confidence():
+    """Score that may start a track or count as a confident head (evaluated at 0.30)."""
+    return _threshold('HEAD_DETECTOR_CONF',0.30)
+
+
+def low_confidence():
+    """Score that may only extend an existing track or answer a click (fewer misses)."""
+    return min(high_confidence(),_threshold('HEAD_DETECTOR_LOW_CONF',0.10))
+
+
+INPUT_LONG_SIDE=1024
+
+
+def _prepare(image):
+    """The model only saw whole frames shrunk so the long side is 1024, gray copied to 3 channels."""
+    import cv2
+    import numpy as np
+    gray=image if image.ndim==2 else cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
+    h,w=gray.shape[:2]
+    scale=INPUT_LONG_SIDE/max(h,w)
+    if scale!=1:
+        size=(max(1,round(w*scale)),max(1,round(h*scale)))
+        gray=cv2.resize(gray,size,interpolation=cv2.INTER_AREA if scale<1 else cv2.INTER_CUBIC)
+    return np.ascontiguousarray(cv2.merge([gray,gray,gray])),(w/gray.shape[1],h/gray.shape[0])
+
+
+def _predict_full(model,images,conf):
+    """Whole-frame inference for one image or a list; rows are [x1,y1,x2,y2,score] in source pixels."""
+    single=not isinstance(images,list)
+    batch=[images] if single else images
+    prepared=[_prepare(image) for image in batch]
+    results=model.predict([p[0] for p in prepared] if not single else prepared[0][0],
+                          imgsz=INPUT_LONG_SIDE,conf=conf,iou=.7,max_det=500,
+                          device=detector_device(),verbose=False)
+    if len(results)!=len(batch):
+        raise ProposalError('头部检测返回不完整，请重试。',503)
+    out=[]
+    for (image,(sx,sy)),result,source in zip(prepared,results,batch):
+        boxes=result.boxes.xyxy.cpu().tolist();scores=result.boxes.conf.cpu().tolist()
+        if len(boxes)!=len(scores):
+            raise ProposalError('头部检测返回结构无效，请重试。',503)
+        h,w=source.shape[:2];rows=[]
+        for b,score in zip(boxes,scores):
+            x1,y1,x2,y2=max(0.,b[0]*sx),max(0.,b[1]*sy),min(float(w),b[2]*sx),min(float(h),b[3]*sy)
+            if x2>x1 and y2>y1:
+                rows.append([x1,y1,x2,y2,float(score)])
+        out.append(rows)
+    return out[0] if single else out
+
+
+def choose(rows, x, y, width, height, min_score=None):
+    min_score=low_confidence() if min_score is None else min_score
     candidates = []
     for row in rows:
         if len(row) != 5 or not all(math.isfinite(float(v)) for v in row):
             continue
         x1,y1,x2,y2,score = map(float,row)
         x1,y1,x2,y2 = max(0,x1),max(0,y1),min(width,x2),min(height,y2)
-        if x2 <= x1 or y2 <= y1 or not 0.15 <= score <= 1:
+        if x2 <= x1 or y2 <= y1 or not min_score <= score <= 1:
             continue
         radius = min(12., max(3., min(x2-x1,y2-y1)*.3))
         distance = math.hypot(max(x1-x,0,x-x2),max(y1-y,0,y-y2))
@@ -128,22 +191,20 @@ def choose(rows, x, y, width, height):
     return {'bbox':best[3], 'confidence':-best[2]}
 
 
-def propose(image, x, y):
-    global _model, _model_path
+def _require_weight(message):
     path = model_path()
     if not path.is_file():
-        raise ProposalError('头部检测权重缺失，请获取完整仓库文件或检查自定义模型路径；仍可手动画框。',503)
+        raise ProposalError(message,503)
+    return path
+
+
+def propose(image, x, y):
+    """Whole-frame detection at the low threshold, then the head under the click."""
+    path=_require_weight('头部检测权重缺失，请获取完整仓库文件或检查自定义模型路径；仍可手动画框。')
     _take_turn('click', INTERACTIVE_WAIT_SECONDS, '头部检测正在处理其他请求，请稍后重试。')
     try:
-        _get_model(path)
+        rows=_predict_full(_get_model(path),image,low_confidence())
         h,w=image.shape[:2]
-        left,top=max(0,int(x)-256),max(0,int(y)-256)
-        right,bottom=min(w,left+512),min(h,top+512)
-        result=_model.predict(image[top:bottom,left:right],imgsz=512,conf=.15,iou=.5,
-                              device=os.getenv('HEAD_DETECTOR_DEVICE','cuda:0'),verbose=False)[0]
-        rows=[]
-        for bbox,confidence in zip(result.boxes.xyxy.cpu().tolist(), result.boxes.conf.cpu().tolist()):
-            rows.append([bbox[0]+left,bbox[1]+top,bbox[2]+left,bbox[3]+top,confidence])
         return choose(rows,x,y,w,h)
     finally:
         _lock.release()
@@ -164,88 +225,51 @@ def _get_model(path):
     return _model
 
 
+def detect_batch(images, conf=None, caller='prelabel'):
+    """Whole frames in one detector turn; callers keep batches small so clicks are not starved."""
+    if not images:return []
+    path=_require_weight('头部检测权重缺失，自动预标未完成，请检查仓库文件或自定义路径。')
+    _take_turn(caller,BACKGROUND_WAIT_SECONDS,'头部检测器长时间繁忙，自动预标未完成，请稍后重试。')
+    try:
+        return _predict_full(_get_model(path),list(images),low_confidence() if conf is None else conf)
+    finally:
+        _lock.release()
+
+
 def detect_edges(image):
-    """Native-resolution overlapping perimeter tiles, one shared model lock."""
-    path = model_path()
-    if not path.is_file():
-        raise ProposalError('边缘识别权重缺失，请获取完整仓库文件或检查自定义模型路径。', 503)
+    """Whole-frame candidates at 0.5; EntryGate itself decides what counts as entering at the border."""
+    path=_require_weight('边缘识别权重缺失，请获取完整仓库文件或检查自定义模型路径。')
     _take_turn('edge_entry', BACKGROUND_WAIT_SECONDS, '头部检测器长时间繁忙，边缘识别未完成，请稍后重试。')
     try:
-        model = _get_model(path)
-        h, w = image.shape[:2]
-        xs = sorted(set(list(range(0, max(1,w-512),448))+[max(0,w-512)]))
-        ys = sorted(set(list(range(0, max(1,h-512),448))+[max(0,h-512)]))
-        tiles = sorted(set([(x,0) for x in xs]+[(x,max(0,h-512)) for x in xs]+
-                           [(0,y) for y in ys]+[(max(0,w-512),y) for y in ys]))
-        rows=[]
-        for left,top in tiles:
-            result=model.predict(image[top:top+512,left:left+512], imgsz=512, conf=.5, iou=.5,
-                                 device=os.getenv('HEAD_DETECTOR_DEVICE','cuda:0'), verbose=False)[0]
-            for bbox,score in zip(result.boxes.xyxy.cpu().tolist(),result.boxes.conf.cpu().tolist()):
-                rows.append([bbox[0]+left,bbox[1]+top,bbox[2]+left,bbox[3]+top,score])
-        return rows
+        return _predict_full(_get_model(path),image,.5)
     finally:
         _lock.release()
 
 
 def detect_frame(image):
-    """Full native-resolution image, overlapping tiles; candidates are not labels."""
-    path = model_path()
-    if not path.is_file():
-        raise ProposalError('头部检测权重缺失，自动核验未完成，请检查仓库文件或自定义路径。', 503)
+    """Whole frame at the low threshold; candidates are not labels."""
+    path=_require_weight('头部检测权重缺失，自动核验未完成，请检查仓库文件或自定义路径。')
     _take_turn('full_frame', BACKGROUND_WAIT_SECONDS, '头部检测器长时间繁忙，自动核验未完成。')
     try:
-        model = _get_model(path)
-        h,w=image.shape[:2]
-        xs=sorted(set(list(range(0,max(1,w-512),448))+[max(0,w-512)]))
-        ys=sorted(set(list(range(0,max(1,h-512),448))+[max(0,h-512)]))
-        rows=[]
-        for top in ys:
-            for left in xs:
-                result=model.predict(image[top:top+512,left:left+512],imgsz=512,conf=.15,iou=.5,
-                    device=os.getenv('HEAD_DETECTOR_DEVICE','cuda:0'),verbose=False)[0]
-                for box,score in zip(result.boxes.xyxy.cpu().tolist(),result.boxes.conf.cpu().tolist()):
-                    candidate=[box[0]+left,box[1]+top,box[2]+left,box[3]+top,float(score)]
-                    rows.append(candidate)
-        # Cross-tile NMS only removes near-identical detections, not nested heads.
-        kept=[]
-        for r in sorted(rows,key=lambda r:-r[4]):
-            duplicate=False
-            for k in kept:
-                inter=max(0,min(r[2],k[2])-max(r[0],k[0]))*max(0,min(r[3],k[3])-max(r[1],k[1]))
-                union=(r[2]-r[0])*(r[3]-r[1])+(k[2]-k[0])*(k[3]-k[1])-inter
-                if inter/max(union,1e-9)>.8: duplicate=True;break
-            if not duplicate:kept.append(r)
-        return kept
+        return _predict_full(_get_model(path),image,low_confidence())
     finally:
         _lock.release()
 
 
+REGION_RADIUS=256  # Native pixels, the reach of the former 512 tiles around each head.
+
+
 def detect_regions(image, boxes):
-    """Bounded native tiles around tracked heads, never a new-object discoverer."""
+    """Candidates near tracked heads only, never a new-object discoverer."""
     if not boxes:return []
-    path=model_path()
-    if not path.is_file():raise ProposalError('综合标注的头部检测权重缺失，请获取完整仓库文件或检查自定义路径。',503)
+    path=_require_weight('综合标注的头部检测权重缺失，请获取完整仓库文件或检查自定义路径。')
     _take_turn('joint_regions',BACKGROUND_WAIT_SECONDS,'头部检测器长时间繁忙，综合标注未完成，请重试。')
     try:
-        model=_get_model(path);h,w=image.shape[:2];tiles=set()
-        for b in boxes:
-            x,y=(b[0]+b[2])/2,(b[1]+b[3])/2
-            tiles.add((max(0,min(max(0,w-512),int((x-32)//448)*448)),max(0,min(max(0,h-512),int((y-32)//448)*448))))
-        tiles=sorted(tiles);rows=[]
-        for offset in range(0,len(tiles),4):
-            batch=tiles[offset:offset+4]
-            results=model.predict([image[y:y+512,x:x+512] for x,y in batch],imgsz=512,conf=.15,iou=.5,
-                                  device=os.getenv('HEAD_DETECTOR_DEVICE','cuda:0'),verbose=False)
-            if len(results)!=len(batch):raise ProposalError('头部检测返回不完整，综合标注未完成。',503)
-            for (x,y),result in zip(batch,results):
-                boxes=result.boxes.xyxy.cpu().tolist();scores=result.boxes.conf.cpu().tolist()
-                if len(boxes)!=len(scores):raise ProposalError('头部检测返回结构无效，综合标注未完成。',503)
-                for b,s in zip(boxes,scores):
-                    r=[b[0]+x,b[1]+y,b[2]+x,b[3]+y,float(s)]
-                    if not any(_region_iou(r,k)>.8 for k in rows):rows.append(r)
-        return rows
+        rows=_predict_full(_get_model(path),[image],low_confidence())[0]
     finally:_lock.release()
+    radius=REGION_RADIUS
+    centers=[((b[0]+b[2])/2,(b[1]+b[3])/2) for b in boxes]
+    return [r for r in rows if any(abs((r[0]+r[2])/2-x)<=radius and abs((r[1]+r[3])/2-y)<=radius for x,y in centers)]
 
 
 def _region_iou(a,b):

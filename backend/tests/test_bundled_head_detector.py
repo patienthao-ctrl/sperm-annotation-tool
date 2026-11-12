@@ -57,7 +57,7 @@ def test_detector_uses_gpu_for_all_inference_paths_and_does_not_retry_cpu(tmp_pa
         def cpu(self): return self
         def tolist(self): return self.data
 
-    result = SimpleNamespace(boxes=SimpleNamespace(xyxy=Values([[5, 5, 15, 15]]), conf=Values([0.9])))
+    result = SimpleNamespace(boxes=SimpleNamespace(xyxy=Values([[160, 160, 480, 480]]), conf=Values([0.9])))  # 32x32 frames run at 1024: x32
     def predict(images, **kwargs):
         calls.append(kwargs['device'])
         return [result] * (len(images) if isinstance(images, list) else 1)

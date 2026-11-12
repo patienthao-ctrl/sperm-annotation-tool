@@ -22,7 +22,7 @@ class Values:
 
 
 def _result():
-    return SimpleNamespace(boxes=SimpleNamespace(xyxy=Values([[250, 250, 270, 270]]), conf=Values([.9])))
+    return SimpleNamespace(boxes=SimpleNamespace(xyxy=Values([[504.32, 376.32, 529.92, 401.92]]), conf=Values([.9])))
 
 
 @pytest.fixture
@@ -136,7 +136,7 @@ def test_wait_timeout_is_a_clear_failure_and_detector_recovers(detector, monkeyp
     detector.release.set()
     holder.join(WAIT)
     assert not holder.is_alive()
-    assert CALLS['click']()['bbox'] == [394, 294, 414, 314]  # Nothing leaked.
+    assert CALLS['click']()['bbox'] == pytest.approx([394, 294, 414, 314])  # Nothing leaked.
 
 
 def test_model_failure_hands_detector_to_the_next_in_queue(detector):
@@ -149,7 +149,7 @@ def test_model_failure_hands_detector_to_the_next_in_queue(detector):
     waiter.join(WAIT)
     assert not holder.is_alive() and not waiter.is_alive()
     assert isinstance(held['error'], RuntimeError)  # Failure stays visible.
-    assert outcome['value']['bbox'] == [394, 294, 414, 314]
+    assert outcome['value']['bbox'] == pytest.approx([394, 294, 414, 314])
 
 
 def test_tracking_with_edge_discovery_survives_a_concurrent_click(detector, tmp_path, monkeypatch):

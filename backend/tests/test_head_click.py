@@ -52,7 +52,7 @@ def test_malformed_duplicate_and_distant_candidates():
     with pytest.raises(head_click.ProposalError):head_click.choose([[30,20,20,30,.9]],25,25,64,48)
 
 
-def test_local_crop_maps_back_to_source_and_lock_recovers(tmp_path,monkeypatch):
+def test_whole_frame_input_matches_training_and_lock_recovers(tmp_path,monkeypatch):
     import numpy as np
     from types import SimpleNamespace
     weight=tmp_path/'head.pt';weight.write_bytes(b'fixture-not-a-model')
@@ -63,16 +63,38 @@ def test_local_crop_maps_back_to_source_and_lock_recovers(tmp_path,monkeypatch):
         def tolist(self):return self.data
     calls=[]
     def predict(image,**kwargs):
-        calls.append(image.shape)
-        return [SimpleNamespace(boxes=SimpleNamespace(xyxy=Values([[250,250,270,270]]),conf=Values([.9])))]
+        calls.append((image.shape,kwargs['imgsz'],kwargs['conf'],kwargs['iou']))
+        # Boxes come back in the resized 1024x768 input; 800x600 was scaled by 1.28.
+        return [SimpleNamespace(boxes=SimpleNamespace(xyxy=Values([[502.4,371.2,527.36,396.8]]),conf=Values([.12])))]
     model=SimpleNamespace(predict=predict)
     monkeypatch.setattr(head_click,'_model',model)
     monkeypatch.setattr(head_click,'_model_path',str(weight.resolve()))
     image=np.zeros((600,800,3),dtype=np.uint8)
-    assert head_click.propose(image,400,300)['bbox']==[394,294,414,314]
-    assert calls==[(512,512,3)]
+    expected=pytest.approx([392.5,290.0,412.0,310.0])
+    assert head_click.propose(image,400,300)['bbox']==expected
+    # Whole frame, long side 1024, gray copied to 3 channels; a 0.12 head still answers a click.
+    assert calls==[((768,1024,3),1024,.1,.7)]
     def fail(*args,**kwargs):raise RuntimeError('injected predictor failure')
     model.predict=fail
     with pytest.raises(RuntimeError):head_click.propose(image,400,300)
     model.predict=predict
-    assert head_click.propose(image,400,300)['bbox']==[394,294,414,314]
+    assert head_click.propose(image,400,300)['bbox']==expected
+
+
+def test_thresholds_are_configurable(monkeypatch):
+    monkeypatch.delenv('HEAD_DETECTOR_CONF',raising=False);monkeypatch.delenv('HEAD_DETECTOR_LOW_CONF',raising=False)
+    assert (head_click.high_confidence(),head_click.low_confidence())==(.3,.1)
+    monkeypatch.setenv('HEAD_DETECTOR_CONF','0.4');monkeypatch.setenv('HEAD_DETECTOR_LOW_CONF','0.2')
+    assert (head_click.high_confidence(),head_click.low_confidence())==(.4,.2)
+    monkeypatch.setenv('HEAD_DETECTOR_LOW_CONF','0.9')  # Never above the confident threshold.
+    assert head_click.low_confidence()==.4
+    monkeypatch.setenv('HEAD_DETECTOR_CONF','bad')
+    assert head_click.high_confidence()==.3
+
+
+def test_gray_and_small_frames_are_prepared_like_training():
+    import numpy as np
+    image,scale=head_click._prepare(np.zeros((1500,2048),dtype=np.uint8))
+    assert image.shape==(750,1024,3) and scale==(2.0,2.0)
+    image,scale=head_click._prepare(np.zeros((300,400,3),dtype=np.uint8))
+    assert image.shape==(768,1024,3) and scale==pytest.approx((400/1024,300/768))
