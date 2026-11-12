@@ -361,7 +361,7 @@ const goToNextUnannotatedFrame = async () => {
 export const setupFramesWatchers = () => {
   watch(playbackRate, value => { if (videoRef.value) videoRef.value.playbackRate = value })
   watch(enhancedView, value => {
-    try { localStorage.setItem('annotation-enhanced', value ? '1' : '0') } catch {}
+    try { sessionStorage.setItem('annotation-enhanced', value ? '1' : '0') } catch {}
     if (!isVideo.value) return
     pausePlayback()
     void loadExactFrame(currentFrame.value).then(() => prefetchClip())

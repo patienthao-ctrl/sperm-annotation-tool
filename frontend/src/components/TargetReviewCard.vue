@@ -7,7 +7,7 @@ import { motionAllowed } from '../utils/motion'
 
 // One target (a whole track) at a time, filling the canvas area: a question, the target
 // cropped from its first, middle and last frame plus an average aligned on the head, and
-// the answers along the bottom. No boxes and no model scores are drawn on the crops.
+// the answers along the bottom. Only this target's box is drawn, the rest is dimmed; no model scores.
 const props = defineProps<{
   entry: QueueEntry
   /** Cards still to answer, this one included (repeat cards are not announced). */
@@ -80,13 +80,19 @@ function drawCrop(ctx: CanvasRenderingContext2D, image: ImageBitmap, fi: number,
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(image, cx - r, cy - r, 2 * r, 2 * r, 0, 0, size, size)
 }
-function ticks(ctx: CanvasRenderingContext2D, fi: number, size: number) {
-  const [, , diag] = centre(fi), s = size / (2 * radius.value), dpr = window.devicePixelRatio || 1
-  const inner = Math.max(6 * dpr, diag * .75 * s), outer = inner + 7 * dpr
-  ctx.strokeStyle = 'rgba(255,197,66,.95)'; ctx.lineWidth = 1.5 * dpr
-  for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    ctx.beginPath(); ctx.moveTo(size / 2 + dx * inner * .7, size / 2 + dy * inner * .7); ctx.lineTo(size / 2 + dx * outer * .7, size / 2 + dy * outer * .7); ctx.stroke()
-  }
+/** The target's own box as it is on that frame (the crop is centred on it), the rest dimmed:
+ *  one thing to look at, and a box sitting between two heads is plain to see. */
+function mark(ctx: CanvasRenderingContext2D, fi: number, size: number) {
+  const b = props.boxes.get(fi)!, s = size / (2 * radius.value), dpr = window.devicePixelRatio || 1, pad = 3 * dpr
+  const w = Math.min(size - 4 * dpr, Math.max(12 * dpr, (b[2] - b[0]) * s + 2 * pad))
+  const h = Math.min(size - 4 * dpr, Math.max(12 * dpr, (b[3] - b[1]) * s + 2 * pad))
+  const x = (size - w) / 2, y = (size - h) / 2
+  ctx.save()
+  ctx.beginPath(); ctx.rect(0, 0, size, size); ctx.rect(x, y, w, h)
+  ctx.fillStyle = 'rgba(0,0,0,.42)'; ctx.fill('evenodd')
+  ctx.strokeStyle = '#ffc542'; ctx.lineWidth = 2.5 * dpr; ctx.lineJoin = 'round'
+  ctx.strokeRect(x, y, w, h)
+  ctx.restore()
 }
 const canvases = ref<Record<string, HTMLCanvasElement | null>>({})
 const setCanvas = (key: string) => (el: unknown) => { canvases.value[key] = el as HTMLCanvasElement | null }
@@ -103,7 +109,7 @@ async function draw() {
     if (serial !== drawSerial) return
     canvas.width = canvas.height = size
     const ctx = canvas.getContext('2d')!
-    drawCrop(ctx, image, fi, size); ticks(ctx, fi, size)
+    drawCrop(ctx, image, fi, size); mark(ctx, fi, size)
   }
   loading.value = true
   try {
@@ -125,7 +131,7 @@ async function draw() {
       canvas.width = canvas.height = size
       const ctx = canvas.getContext('2d')!, out = ctx.createImageData(size, size)
       for (let i = 0; i < sum.length; i++) { const v = sum[i] / pick.length; out.data[i * 4] = out.data[i * 4 + 1] = out.data[i * 4 + 2] = v; out.data[i * 4 + 3] = 255 }
-      ctx.putImageData(out, 0, 0); ticks(ctx, trio.value[1], size)
+      ctx.putImageData(out, 0, 0); mark(ctx, trio.value[1], size)
     } else {
       await Promise.all(film.value.map(fi => paint(`f${fi}`, fi)))
     }
@@ -139,7 +145,7 @@ const answers: { value: TargetResult; label: string; hint?: string }[] = [
   { value: 'tail', label: '是，有尾巴' }, { value: 'head', label: '是，没尾巴' },
   { value: 'no', label: '不是', hint: '杂质等，整条删除' }, { value: 'unsure', label: '看不清', hint: '拿不准就选它' },
 ]
-const question = computed(() => step.value === 'same' ? '这几张是同一个精子吗？' : step.value === 'pick' ? '从哪一张开始变成了别的？点它' : '这是精子吗？')
+const question = computed(() => step.value === 'same' ? '黄框里一直是同一个精子吗？' : step.value === 'pick' ? '从哪一张起黄框里换了？点那一张' : '黄框里是精子吗？')
 function key(k: string) {
   if (props.busy) return false
   if (step.value === 'same') { if (k === '1') { step.value = 'what'; return true } if (k === '2') { step.value = 'pick'; return true } return false }
@@ -164,7 +170,7 @@ defineExpose({ key })
             <figure class="avg"><canvas :ref="setCanvas('avg')" /><figcaption>{{ Math.min(frames.length, 48) }} 帧叠加</figcaption></figure>
           </template>
           <template v-else>
-            <component :is="step === 'pick' ? 'button' : 'figure'" v-for="fi in film" :key="`f${fi}`" class="tr-film" :class="{ pick: step === 'pick', suspect: fi === entry.suspectFrame }" :aria-label="step === 'pick' ? `从第 ${fi + 1} 帧起分开` : undefined" @click="step === 'pick' && fi !== frames[0] && emit('split', fi)">
+            <component :is="step === 'pick' ? 'button' : 'figure'" v-for="fi in film" :key="`f${fi}`" class="tr-film" :class="{ pick: step === 'pick' }" :aria-label="step === 'pick' ? `从第 ${fi + 1} 帧起分开` : undefined" @click="step === 'pick' && fi !== frames[0] && emit('split', fi)">
               <canvas :ref="setCanvas(`f${fi}`)" /><figcaption>第 {{ fi + 1 }} 帧</figcaption>
             </component>
           </template>
@@ -204,7 +210,6 @@ defineExpose({ key })
 .tr-tiles figure, .tr-film { margin:0; padding:0; border:0; background:none; display:flex; flex-direction:column; align-items:center; gap:4px; color:#8aa0a8; font-size:var(--fs-xs); }
 .tr-tiles canvas { width:var(--tile); height:var(--tile); border-radius:10px; display:block; background:#7f7f7f; }
 .tr-tiles .avg canvas { box-shadow:0 0 0 1px #ffffff2e; }
-.tr-film.suspect canvas { box-shadow:0 0 0 2px #ffaa4d; }
 .tr-film.pick { cursor:pointer; border-radius:12px; }
 .tr-film.pick:hover canvas, .tr-film.pick:focus-visible canvas { box-shadow:0 0 0 3px #ff8a9e; }
 .tr-foot { padding:10px 20px 16px; display:grid; gap:10px; background:linear-gradient(transparent, #0006); }
