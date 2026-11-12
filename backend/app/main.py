@@ -79,7 +79,7 @@ def tracking_is_busy(media_id: str | None = None) -> bool:
                    for item in TASKS.values())
 
 
-MEDIA_HISTORY_TABLES = ("annotation_reviews", "annotation_review_exclusions", "annotation_export_snapshots", "media_revisions")
+MEDIA_HISTORY_TABLES = ("annotation_reviews", "annotation_review_exclusions", "annotation_export_snapshots", "media_revisions", "annotation_frame_scans")
 
 
 def _media_id_has_history(media_id: str) -> bool:
@@ -1489,6 +1489,181 @@ def head_box(media_id: str, req: HeadBoxRequest, user: dict[str, Any] = Depends(
     except Exception as exc:
         logging.getLogger('review.annotation.head_click').exception('proposal_failed media=%s frame=%s', media_id, req.frameIndex)
         raise HTTPException(503, '头部检测失败，请稍后重试或手动画框；管理员可查看 annotation.head_click 日志。') from exc
+
+
+def _manual_pixel_boxes(workspace: dict[str, Any], info: dict[str, Any]) -> dict[int, list[list[float]]]:
+    """Saved manual boxes per frame in source pixels (workspace boxes are 0-100 percent)."""
+    out: dict[int, list[list[float]]] = {}
+    for obj in workspace.get('manualAnnotations', []) or []:
+        box = obj.get('bbox') if isinstance(obj, dict) else None
+        try:
+            fi, oid = int(obj.get('frameIndex')), int(obj.get('objectId'))
+            if not isinstance(box, dict) or annotation_state.is_deleted(workspace, fi, oid):
+                continue
+            x, y = float(box['x']) * info['width'] / 100, float(box['y']) * info['height'] / 100
+            out.setdefault(fi, []).append([x, y, x + float(box['width']) * info['width'] / 100, y + float(box['height']) * info['height'] / 100])
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out
+
+
+def _occupied_boxes(directory: Path, workspace: dict[str, Any], info: dict[str, Any]) -> dict[int, list[list[float]]]:
+    occupied = _manual_pixel_boxes(workspace, info)
+    for row in annotation_state.read_rows(directory):
+        fi = int(row.get('source_frame_index', row.get('frame_index', 0)))
+        for obj in row.get('objects', []):
+            oid = int(obj.get('object_id', 0))
+            if isinstance(obj.get('bbox'), list) and len(obj['bbox']) == 4 and not annotation_state.is_deleted(workspace, fi, oid):
+                occupied.setdefault(fi, []).append([float(v) for v in obj['bbox']])
+    return occupied
+
+
+def _run_prelabel_task(task_id: str, media_id: str, directory: Path, video: Path, info: dict[str, Any]) -> None:
+    from . import detector_tracks
+    began = time.perf_counter()
+    log = logging.getLogger('review.prelabel')
+    _set_task(task_id, status='running', stage='detecting', message='正在逐帧识别精子头', processedFrames=0)
+    try:
+        workspace = annotation_state.read_state(directory)
+        summary = detector_tracks.prelabel(
+            directory, video, info, workspace, _manual_pixel_boxes(workspace, info),
+            progress=lambda **patch: _set_task(task_id, elapsedSeconds=round(time.perf_counter() - began, 1), **patch))
+        _set_task(task_id, status='success', stage='completed', message='completed', processedFrames=info['frameCount'],
+                  lastProcessedFrame=info['frameCount'] - 1, reachedVideoEnd=True, tracks=len(summary['tracks']),
+                  checkFrames=len(summary['checkFrames']))
+        log.info('prelabel.task_finished task=%s media=%s elapsed_ms=%.0f', task_id, media_id, (time.perf_counter() - began) * 1000)
+    except Exception as exc:
+        log.exception('prelabel.task_failed task=%s media=%s', task_id, media_id)
+        message = str(exc) if isinstance(exc, (RuntimeError, ValueError)) else f'自动预标失败：{exc}'
+        _set_task(task_id, status='failed', stage='failed', message=message)
+
+
+@app.post("/api/prelabel/{media_id}", status_code=202)
+@source_write
+def start_prelabel(media_id: str, user: dict[str, Any] = Depends(current_user), idempotency_key: str = Header(default='')) -> dict[str, Any]:
+    """Detector prelabel for a video without AI results. Does not need SAM3."""
+    from .tracker import RESULT_FILE_NAME
+    request_key = idempotency_key if isinstance(idempotency_key, str) else ''
+    if len(request_key) > 128:
+        raise HTTPException(422, '预标请求重试标识过长')
+    if request_key:
+        with TASK_LOCK:
+            prior = next((t for t in TASKS.values() if t.get('userId') == user['uid'] and t.get('requestKey') == request_key), None)
+        if prior:
+            if prior.get('kind') != 'prelabel' or prior.get('mediaId') != media_id:
+                raise HTTPException(409, '同一重试标识不能用于不同请求')
+            return {'taskId': prior['taskId'], 'status': prior['status'], 'frameCount': prior.get('totalFrames')}
+    if tracking_is_busy(media_id):
+        raise HTTPException(409, '该视频已有 AI 任务在排队或运行，请等待完成')
+    directory = media_dir(media_id)
+    video = find_video(directory)
+    if not video:
+        raise HTTPException(404, '视频不存在')
+    if (directory / RESULT_FILE_NAME).is_file():
+        raise HTTPException(409, {'code': 'PRELABEL_EXISTS', 'message': '这个视频已有 AI 标注结果；如需用新模型重新预标，请先清空标注'})
+    info = source_media_info(directory)
+    info = {'width': int(info['width']), 'height': int(info['height']), 'frameCount': int(info['frameCount'])}
+    task_id = uuid.uuid4().hex
+    _set_task(task_id, taskId=task_id, kind='prelabel', status='queued', stage='queued', message='queued', mediaId=media_id,
+              startFrame=0, maxFrames=info['frameCount'], totalFrames=info['frameCount'], userId=user['uid'], requestKey=request_key,
+              requestHash='prelabel')
+    TRACK_EXECUTOR.submit(_run_prelabel_task, task_id, media_id, directory, video, info)
+    logging.getLogger('review.prelabel').info('prelabel.queued task=%s media=%s frames=%s actor=%s', task_id, media_id, info['frameCount'], user['uid'])
+    return {'taskId': task_id, 'status': 'queued', 'frameCount': info['frameCount']}
+
+
+@app.get("/api/prelabel/{media_id}")
+def prelabel_summary(media_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    from . import detector_tracks
+    directory = media_dir(media_id)
+    if not find_video(directory):
+        raise HTTPException(404, '视频不存在')
+    summary = detector_tracks.read_summary(directory)
+    if not summary:
+        return {'state': 'none'}
+    from .annotation_review import scanned_frames
+    scans = scanned_frames(media_id)
+    names = _user_names({s['actorId'] for s in scans.values()})
+    summary['checkFrames'] = [{**item, **({'scannedBy': scans[item['frame']]['actorId'], 'scannedByName': names.get(scans[item['frame']]['actorId']),
+                                            'scannedAt': scans[item['frame']]['at']} if item['frame'] in scans else {})}
+                              for item in summary['checkFrames']]
+    return {'state': 'available', **summary}
+
+
+def _user_names(ids: set[int]) -> dict[int, str]:
+    names = {}
+    for uid in ids:
+        row = get_user_by_id(int(uid))
+        if row is not None:
+            names[uid] = row['username']
+    return names
+
+
+@app.put("/api/prelabel/{media_id}/scans/{frame_index}")
+def record_frame_scan(media_id: str, frame_index: int, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    """The annotator looked over this whole frame for heads without a box."""
+    from . import detector_tracks
+    from .annotation_review import record_scan
+    directory = media_dir(media_id)
+    if not find_video(directory):
+        raise HTTPException(404, '视频不存在')
+    summary = detector_tracks.read_summary(directory)
+    if not summary:
+        raise HTTPException(409, '这个视频还没有自动预标结果，不能记录查漏')
+    try:
+        record_scan(media_id, frame_index, int(user['uid']), summary['checkFrames'])
+    except ReviewError as exc:
+        raise HTTPException(exc.status, exc.message) from exc
+    return prelabel_summary(media_id, user)
+
+
+@app.post("/api/prelabel/{media_id}/extend")
+def prelabel_extend(media_id: str, req: HeadBoxRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    """Head under the click plus the same head on other frames. Writes nothing:
+    the page adds the boxes through the normal workspace save."""
+    import math
+    import cv2
+    import numpy as np
+    from . import detector_tracks, head_click
+    from .video_frames import frames, FrameReadError
+    if req.frameIndex < 0 or not all(math.isfinite(v) for v in (req.x, req.y)):
+        raise HTTPException(422, '帧号或点击坐标无效')
+    directory = media_dir(media_id)
+    video = find_video(directory)
+    if not video:
+        raise HTTPException(404, '视频不存在')
+    info = source_media_info(directory)
+    width, height, count = int(info['width']), int(info['height']), int(info['frameCount'])
+    if req.frameIndex >= count:
+        raise HTTPException(404, '帧号超出视频范围')
+    if not (0 <= req.x < width and 0 <= req.y < height):
+        raise HTTPException(422, '点击坐标超出原图')
+    workspace = annotation_state.read_state(directory)
+    occupied = _occupied_boxes(directory, workspace, {'width': width, 'height': height})
+    detections = detector_tracks.read_detections(directory)
+    if detections is not None and len(detections) != count:
+        detections = None
+    log = logging.getLogger('review.annotation.head_click')
+    try:
+        try:
+            if detections is None:
+                raise head_click.ProposalError('no cache')
+            seed = head_click.choose(detections[req.frameIndex], req.x, req.y, width, height)
+        except head_click.ProposalError:
+            image = cv2.imdecode(np.frombuffer(frames.read(video, req.frameIndex), dtype=np.uint8), cv2.IMREAD_COLOR)
+            if image is None:
+                raise HTTPException(500, '源帧读取失败')
+            seed = head_click.propose(image, req.x, req.y)
+    except (head_click.ProposalError, FrameReadError) as exc:
+        log.info('extend_rejected media=%s frame=%s reason=%s', media_id, req.frameIndex, exc)
+        raise HTTPException(exc.status, str(exc)) from exc
+    if any(detector_tracks.iou(seed['bbox'], b) > 0.5 for b in occupied.get(req.frameIndex, [])):
+        raise HTTPException(409, {'code': 'ALREADY_BOXED', 'message': '这里已经有框了'})
+    boxes = [{'frameIndex': req.frameIndex, 'bbox': [round(v, 3) for v in seed['bbox']], 'kind': 'seed'}]
+    if detections is not None:
+        boxes = detector_tracks.extend(detections, req.frameIndex, seed['bbox'], occupied, width, height, head_click.low_confidence())
+    log.info('extend media=%s frame=%s frames=%s', media_id, req.frameIndex, len(boxes))
+    return {'frameIndex': req.frameIndex, 'width': width, 'height': height, 'confidence': seed['confidence'], 'boxes': boxes}
 
 
 @app.get("/api/track/overlay/{media_id}")

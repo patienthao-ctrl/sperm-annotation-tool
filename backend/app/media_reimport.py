@@ -156,7 +156,8 @@ def reset(directory, uid, key, body, tracking_busy):
             if body['confirmDiscard'] is not True:
                 raise ReviewError('DISCARD_CONFIRMATION_REQUIRED', '请确认舍弃旧标注', 422)
             files = [p for p in directory.iterdir() if p.is_file() and (
-                p.name in {'workspace_state.json', 'tracker_results.json', annotation_state.RESULT_META_FILE, 'tracker_overlay.mp4'}
+                p.name in {'workspace_state.json', 'tracker_results.json', annotation_state.RESULT_META_FILE, 'tracker_overlay.mp4',
+                           'detections.json', 'detector_tracks.json'}
                 or (p.name.startswith('annotations_frame_') and p.suffix == '.json'))]
             folder = directory.parent / '_annotation_resets' / uuid.uuid4().hex
             folder.mkdir(parents=True)
@@ -172,6 +173,7 @@ def reset(directory, uid, key, body, tracking_busy):
                          display=dict(brightness=100, contrast=100, zoom=1))
             (directory / 'workspace_state.json').write_text(packed(clean))
             c.execute('DELETE FROM annotations WHERE media_id=?', (media_id,))
+            c.execute('DELETE FROM annotation_frame_scans WHERE media_id=?', (media_id,))  # Scans belonged to the old prelabel.
             result = dict(ok=True, mediaId=media_id, revision=revision + 1, generationId=clean['generationId'])
             c.execute('INSERT INTO review_write_receipts VALUES (?,?,?,?,?)', (uid, key, h, packed(result), now()))
             c.commit()

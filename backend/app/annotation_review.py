@@ -59,6 +59,27 @@ def migrate(c):
         if name not in columns:c.execute(f'ALTER TABLE annotation_reviews ADD COLUMN {name} TEXT')
     if 'frame_digest' not in {r[1] for r in c.execute('PRAGMA table_info(annotation_review_checks)')}:
         c.execute('ALTER TABLE annotation_review_checks ADD COLUMN frame_digest TEXT')
+    # Annotation stage: the annotator scanned these whole frames for heads the detector missed.
+    c.execute('''CREATE TABLE IF NOT EXISTS annotation_frame_scans (
+      media_id TEXT NOT NULL, frame_index INTEGER NOT NULL,
+      actor_id INTEGER NOT NULL, scanned_at TEXT NOT NULL,
+      PRIMARY KEY(media_id, frame_index))''')
+
+
+def scanned_frames(media_id):
+    with closing(connect()) as c:
+        return {r["frame_index"]: dict(actorId=r["actor_id"], at=r["scanned_at"]) for r in
+                c.execute("SELECT frame_index, actor_id, scanned_at FROM annotation_frame_scans WHERE media_id=?", (media_id,))}
+
+
+def record_scan(media_id, frame_index, actor_id, check_frames):
+    if frame_index not in {item["frame"] for item in check_frames}:
+        raise ReviewError("ITEM_NOT_FOUND", "这一帧不在要查漏的帧里", 404)
+    with closing(connect()) as c, c:
+        c.execute("INSERT INTO annotation_frame_scans VALUES (?,?,?,?) ON CONFLICT(media_id, frame_index) "
+                  "DO UPDATE SET actor_id=excluded.actor_id, scanned_at=excluded.scanned_at",
+                  (media_id, frame_index, actor_id, now()))
+    log.info("annotation_review.frame_scanned media=%s frame=%s actor=%s", media_id, frame_index, actor_id)
 
 
 # ---------------------------------------------------------------- content

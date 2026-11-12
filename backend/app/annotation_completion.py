@@ -52,10 +52,15 @@ def source(directory, uid, info, require_author=True, with_rows=False):
             'TRACKING_RESULTS_MISSING', '已生成的追踪结果文件缺失，无法送审；请管理员检查存储或恢复备份', 409
         )
     try:
-        workspace = json.loads(
-            (directory / "workspace_state.json").read_text(encoding="utf-8")
-        )
         raw = tracker.read_text(encoding="utf-8") if tracker.exists() else ""
+        try:
+            workspace = json.loads(
+                (directory / "workspace_state.json").read_text(encoding="utf-8")
+            )
+        except FileNotFoundError:
+            if not (tracker.exists() and (directory / "detector_tracks.json").exists()):
+                raise
+            workspace = {}  # Detector prelabel published results before anyone saved an edit.
     except (OSError, ValueError) as e:
         raise w.ReviewError(
             "SOURCE_UNAVAILABLE", "这个视频还没有保存的标注，请先在标注页标注", 422
