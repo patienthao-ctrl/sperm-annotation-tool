@@ -916,7 +916,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             </span>
             <span v-else-if="completionRunning" class="shell-meta">正在补全…</span>
           </template>
-          <button v-if="!reviewing && reviewMediaId && review.status.value!=='passed'" class="btn-secondary ctx-step" data-testid="go-review" :disabled="completionRunning" @click="goReview">{{ completionRunning ? '补全中…' : '去审查' }}<AppIcon v-if="!completionRunning" name="next" :size="14" /></button>
+          <button v-if="!reviewing && reviewMediaId && review.status.value!=='passed' && (!checkFrames.length || scanComplete)" class="btn-secondary ctx-step" data-testid="go-review" :disabled="completionRunning" @click="goReview">{{ completionRunning ? '补全中…' : '去审查' }}<AppIcon v-if="!completionRunning" name="next" :size="14" /></button>
           <button v-if="reviewing" class="btn-secondary ctx-step" @click="router.push('/annotate')"><AppIcon name="prev" :size="14" />回到标注</button>
           <AnnotationDatasetExport />
           <button v-if="focused" class="header-help" title="使用说明和快捷键 (?)" @click="openHelp"><AppIcon name="help" :size="16" /><span>帮助</span></button>
