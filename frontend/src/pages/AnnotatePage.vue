@@ -580,11 +580,16 @@ let toolbarObserver: ResizeObserver | null = null, toolbarFull = 0
 function measureToolbar() {
   const el = toolbarRef.value
   if (!el) return
+  // A row normally; a column on the left in focus mode, where height is what can run out.
+  const vertical = focused.value
   const items = Array.from(el.children).filter(child => !(child as HTMLElement).classList.contains('shell-tools-fill')) as HTMLElement[]
-  const style = getComputedStyle(el), gap = parseFloat(style.columnGap || '0') || 0
-  const needed = items.reduce((sum, child) => sum + child.offsetWidth, 0) + gap * Math.max(0, items.length - 1) + (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
-  if (!toolbarCompact.value && needed > el.clientWidth) { toolbarFull = needed; toolbarCompact.value = true }
-  else if (toolbarCompact.value && el.clientWidth >= toolbarFull + 8) toolbarCompact.value = false
+  const style = getComputedStyle(el), gap = parseFloat(vertical ? style.rowGap : style.columnGap) || 0
+  const size = (child: HTMLElement) => vertical ? child.offsetHeight + (parseFloat(getComputedStyle(child).marginTop) || 0) + (parseFloat(getComputedStyle(child).marginBottom) || 0) : child.offsetWidth
+  const pad = vertical ? (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0) : (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+  const needed = items.reduce((sum, child) => sum + size(child), 0) + gap * Math.max(0, items.length - 1) + pad
+  const room = vertical ? el.clientHeight : el.clientWidth
+  if (!toolbarCompact.value && needed > room) { toolbarFull = needed; toolbarCompact.value = true }
+  else if (toolbarCompact.value && room >= toolbarFull + 8) toolbarCompact.value = false
 }
 onMounted(() => { toolbarObserver = new ResizeObserver(measureToolbar); if (toolbarRef.value) toolbarObserver.observe(toolbarRef.value) })
 onUnmounted(() => toolbarObserver?.disconnect())
@@ -741,12 +746,13 @@ function placeLoupe(e: PointerEvent) {
   const box = stageRef.value?.closest('.annotation-canvas') as HTMLElement | null, el = loupe.value?.parentElement
   if (!box || !el) return
   const c = box.getBoundingClientRect(), w = el.offsetWidth || 202, h = el.offsetHeight || 176, gap = 26, edge = 8
-  const top = ((box.querySelector('.shell-tools') as HTMLElement | null)?.offsetHeight ?? 0) + edge
+  const bar = box.querySelector('.shell-tools') as HTMLElement | null  // A row on top, or a column on the left in focus mode.
+  const top = (focused.value ? 0 : bar?.offsetHeight ?? 0) + edge, left = (focused.value ? bar?.offsetWidth ?? 0 : 0) + edge
   const px = e.clientX - c.left, py = e.clientY - c.top
   let x = px + gap, y = py + gap
   if (x + w > c.width - edge) x = px - gap - w
   if (y + h > c.height - edge) y = py - gap - h
-  loupePos.value = { x: Math.max(edge, x), y: Math.max(top, y) }
+  loupePos.value = { x: Math.max(left, x), y: Math.max(top, y) }
 }
 function drawLoupe(e:PointerEvent) {
   const stage=stageRef.value, media=selectedMedia.value

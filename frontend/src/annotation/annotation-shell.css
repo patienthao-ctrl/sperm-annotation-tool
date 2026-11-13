@@ -129,3 +129,20 @@
 /* While the header carries tracking progress, the frame count (also in the bottom bar) gives way. */
 .annot-context.is-tracking .shell-meta{display:none}
 @media(max-width:1000px){.annot-context.is-tracking .ctx-file strong{max-width:96px}}
+
+/* Focus mode: the toolbar becomes a slim column on the left, so the picture keeps its height —
+   one bar on top (task and actions), the frame strip below, tools at the side. */
+.shell-annotate.is-focus .annotation-canvas{padding-left:68px}
+.shell-annotate.is-focus .annotation-canvas>.shell-tools{position:absolute;left:0;top:0;bottom:0;width:68px;flex-direction:column;align-items:center;flex-wrap:nowrap;gap:3px;padding:10px 6px;border-bottom:0;border-right:1px solid var(--line);background:var(--surface);z-index:35}
+.shell-annotate.is-focus .annotation-canvas>.shell-tools .wb-tool{width:54px;min-width:0}
+.shell-annotate.is-focus .mode-tag{flex-direction:column;height:auto;width:54px;padding:6px 2px;margin:0 0 2px;gap:3px;justify-content:center;text-align:center;white-space:normal;line-height:1.25;font-size:var(--fs-2xs)}
+.shell-annotate.is-focus .tool-seg{grid-auto-flow:row;width:58px}
+.shell-annotate.is-focus .tool-seg-thumb{right:2px;width:auto;bottom:auto;height:calc((100% - 4px - (var(--n) - 1) * 2px) / var(--n));transform:translateY(calc(var(--i) * (100% + 2px)))}
+.shell-annotate.is-focus .shell-tools-sep{width:30px;height:1px;margin:4px 0}
+.shell-annotate.is-focus .notice-chip{flex-direction:column;width:56px;padding:4px 2px;white-space:normal;text-align:center;font-size:var(--fs-2xs);line-height:1.25}
+/* Tips open to the right of the column. */
+.shell-annotate.is-focus .tool-tip,.shell-annotate.is-focus .tool-tip.start,.shell-annotate.is-focus .tool-tip.end{top:50%;left:calc(100% + 10px);right:auto;transform:translate(-4px,-50%)}
+.shell-annotate.is-focus .wb-tool:hover .tool-tip{transform:translate(0,-50%)}
+/* A short window: labels fold away here too. */
+.shell-annotate.is-focus .annotation-canvas>.shell-tools.compact .wb-tool{height:34px}
+.shell-annotate.is-focus .annotation-canvas>.shell-tools.compact .mode-tag span,.shell-annotate.is-focus .annotation-canvas>.shell-tools.compact .mode-tag{font-size:0;gap:0;padding:6px 0}

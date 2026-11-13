@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// One toolbar button: icon above a short label, and a hover/focus tip that says what it does
+// One toolbar button: icon above a short label, and a hover tip that says what it does
 // and its key. In a compact toolbar the label folds away and the tip carries it.
 import AppIcon from './AppIcon.vue'
 

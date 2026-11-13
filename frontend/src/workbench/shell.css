@@ -135,8 +135,8 @@
 .tool-tip{position:absolute;top:calc(100% + 8px);left:50%;z-index:60;width:max-content;max-width:230px;padding:7px 10px 8px;border-radius:var(--radius-md);background:var(--text);color:var(--surface);box-shadow:var(--shadow-md);text-align:left;font-size:var(--fs-xs);font-weight:500;line-height:1.45;white-space:normal;pointer-events:none;opacity:0;transform:translate(-50%,-4px);transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out)}
 .tool-tip.start{left:0;transform:translate(0,-4px)}
 .tool-tip.end{left:auto;right:0;transform:translate(0,-4px)}
-.wb-tool:hover .tool-tip,.wb-tool:focus-visible .tool-tip{opacity:1;transform:translate(-50%,0);transition-delay:.35s}
-.wb-tool:hover .tool-tip.start,.wb-tool:focus-visible .tool-tip.start,.wb-tool:hover .tool-tip.end,.wb-tool:focus-visible .tool-tip.end{transform:translate(0,0)}
+.wb-tool:hover .tool-tip{opacity:1;transform:translate(-50%,0);transition-delay:.35s}
+.wb-tool:hover .tool-tip.start,.wb-tool:hover .tool-tip.end{transform:translate(0,0)}
 .tool-tip-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .tool-tip b{font-weight:650}
 .tool-tip kbd{font:600 10.5px/1.5 var(--font-mono);padding:0 5px;border-radius:4px;border:1px solid currentColor;background:transparent;color:inherit;opacity:.75}
