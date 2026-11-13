@@ -6,7 +6,7 @@ import type { QueueEntry } from '../annotation/targetQueue'
 import { motionAllowed } from '../utils/motion'
 
 // One target (a whole track) at a time, filling the canvas area: a question, the target
-// cropped from its first, middle and last frame plus an average aligned on the head, and
+// cropped from its first, middle and last frame plus the crop playing through the track, and
 // the answers along the bottom. Only this target's box is drawn, the rest is dimmed; no model scores.
 const props = defineProps<{
   entry: QueueEntry
@@ -63,18 +63,6 @@ onMounted(() => { observer = new ResizeObserver(fit); if (stage.value) observer.
 onBeforeUnmount(() => observer?.disconnect())
 watch(tiles, () => nextTick(fit))
 
-const bitmaps = new Map<number, Promise<ImageBitmap>>()
-watch(() => props.readFrame, () => bitmaps.clear())
-const bitmap = (fi: number) => {
-  let value = bitmaps.get(fi)
-  if (!value) {
-    value = props.readFrame(fi).then(blob => createImageBitmap(blob))
-    value.catch(() => bitmaps.delete(fi))
-    bitmaps.set(fi, value)
-    if (bitmaps.size > 80) bitmaps.delete(bitmaps.keys().next().value!)
-  }
-  return value
-}
 const centre = (fi: number) => { const b = props.boxes.get(fi)!; return [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2, Math.hypot(b[2] - b[0], b[3] - b[1])] as const }
 function drawCrop(ctx: CanvasRenderingContext2D, image: ImageBitmap, fi: number, size: number) {
   const [cx, cy] = centre(fi), r = radius.value
@@ -96,44 +84,84 @@ function mark(ctx: CanvasRenderingContext2D, fi: number, size: number) {
   ctx.strokeRect(x, y, w, h)
   ctx.restore()
 }
+// Each frame is decoded once, cropped (with this target's box) to the tile size and released at
+// once: a decoded 4K frame is about 50 MB, a crop well under 1 MB.
+const crops = new Map<string, Promise<HTMLCanvasElement>>()
+watch(() => [props.readFrame, props.boxes], () => crops.clear())
+function crop(fi: number, size: number) {
+  const key = `${props.entry.objectId}:${fi}:${size}`
+  let value = crops.get(key)
+  if (!value) {
+    value = props.readFrame(fi).then(blob => createImageBitmap(blob)).then(image => {
+      const out = document.createElement('canvas')
+      out.width = out.height = size
+      const ctx = out.getContext('2d')!
+      drawCrop(ctx, image, fi, size); mark(ctx, fi, size)
+      image.close?.()
+      return out
+    })
+    value.catch(() => crops.delete(key))
+    crops.set(key, value)
+    while (crops.size > 160) crops.delete(crops.keys().next().value!)
+  }
+  return value
+}
 const canvases = ref<Record<string, HTMLCanvasElement | null>>({})
 const setCanvas = (key: string) => (el: unknown) => { canvases.value[key] = el as HTMLCanvasElement | null }
+const blit = (key: string, source: HTMLCanvasElement) => {
+  const canvas = canvases.value[key]
+  if (!canvas) return
+  if (canvas.width !== source.width) canvas.width = canvas.height = source.width
+  canvas.getContext('2d')!.drawImage(source, 0, 0)
+}
+
+// The fourth tile plays the crop through the whole track: a tail is easiest to see when it moves.
+// (An average aligned on the head washed the tail out: it swings to a different side every frame.)
+const loopFrames = computed(() => frames.value.length <= 48 ? frames.value : Array.from({ length: 48 }, (_, i) => frames.value[Math.round(i * (frames.value.length - 1) / 47)]))
+const playing = ref(motionAllowed.value)
+const loopFrame = ref<number | null>(null)
+let loopHandle = 0
+const stopLoop = () => { if (loopHandle) cancelAnimationFrame(loopHandle); loopHandle = 0 }
+onBeforeUnmount(stopLoop)
+function startLoop(serial: number, size: number) {
+  stopLoop()
+  const list = loopFrames.value, ready: (HTMLCanvasElement | undefined)[] = new Array(list.length)
+  let index = Math.max(0, list.indexOf(trio.value[1])), last = 0
+  void (async () => {  // One frame after another: many 4K decodes at once would stall the page.
+    for (let k = 0; k < list.length && serial === drawSerial; k++) {
+      const n = (index + k) % list.length
+      try { ready[n] = await crop(list[n], size) } catch { /* that frame is skipped */ }
+      if (k === 0 && ready[n] && serial === drawSerial) { blit('loop', ready[n]!); loopFrame.value = list[n] }
+    }
+  })()
+  const tick = (now: number) => {
+    if (serial !== drawSerial) return
+    loopHandle = requestAnimationFrame(tick)
+    if (!playing.value || document.hidden || now - last < 125) return  // About 8 frames a second.
+    for (let k = 0; k < list.length; k++) { index = (index + 1) % list.length; if (ready[index]) break }
+    if (!ready[index]) return
+    last = now
+    blit('loop', ready[index]!); loopFrame.value = list[index]
+  }
+  loopHandle = requestAnimationFrame(tick)
+}
+
 const loading = ref(false)
 let drawSerial = 0
 async function draw() {
   const serial = ++drawSerial
+  stopLoop()
   await nextTick()
   const dpr = window.devicePixelRatio || 1, size = Math.round(tile.value * dpr)
   const paint = async (key: string, fi: number) => {
-    const canvas = canvases.value[key]
-    if (!canvas) return
-    const image = await bitmap(fi)
-    if (serial !== drawSerial) return
-    canvas.width = canvas.height = size
-    const ctx = canvas.getContext('2d')!
-    drawCrop(ctx, image, fi, size); mark(ctx, fi, size)
+    const source = await crop(fi, size)
+    if (serial === drawSerial) blit(key, source)
   }
   loading.value = true
   try {
     if (step.value === 'what') {
       await Promise.all(trio.value.map((fi, i) => paint(`t${i}`, fi)))
-      // Average aligned on the head over up to 48 frames: a faint tail adds up, passing debris fades.
-      const canvas = canvases.value.avg
-      const pick = frames.value.length <= 48 ? frames.value : Array.from({ length: 48 }, (_, i) => frames.value[Math.round(i * (frames.value.length - 1) / 47)])
-      if (!canvas || !pick.length) return
-      const work = document.createElement('canvas'); work.width = work.height = size
-      const wctx = work.getContext('2d', { willReadFrequently: true })!, sum = new Float32Array(size * size)
-      for (const fi of pick) {
-        const image = await bitmap(fi)
-        if (serial !== drawSerial) return
-        drawCrop(wctx, image, fi, size)
-        const data = wctx.getImageData(0, 0, size, size).data
-        for (let i = 0; i < sum.length; i++) sum[i] += data[i * 4]
-      }
-      canvas.width = canvas.height = size
-      const ctx = canvas.getContext('2d')!, out = ctx.createImageData(size, size)
-      for (let i = 0; i < sum.length; i++) { const v = sum[i] / pick.length; out.data[i * 4] = out.data[i * 4 + 1] = out.data[i * 4 + 2] = v; out.data[i * 4 + 3] = 255 }
-      ctx.putImageData(out, 0, 0); mark(ctx, trio.value[1], size)
+      if (serial === drawSerial) startLoop(serial, size)
     } else {
       await Promise.all(film.value.map(fi => paint(`f${fi}`, fi)))
     }
@@ -173,7 +201,7 @@ defineExpose({ key })
         <div :key="`${entry.objectId}:${entry.repeat}:${step}`" class="tr-tiles" :style="{ '--tile': `${tile}px`, '--cols': columns }">
           <template v-if="step === 'what'">
             <figure v-for="(fi, i) in trio" :key="`t${i}`"><canvas :ref="setCanvas(`t${i}`)" /><figcaption>{{ ['开始', '中间', '结束'][i] }} · 第 {{ fi + 1 }} 帧</figcaption></figure>
-            <figure class="avg"><canvas :ref="setCanvas('avg')" /><figcaption>{{ Math.min(frames.length, 48) }} 帧叠加</figcaption></figure>
+            <figure class="loop" :title="playing ? '点一下暂停' : '点一下播放'" @click="playing = !playing"><canvas :ref="setCanvas('loop')" /><span class="tr-play" aria-hidden="true"><AppIcon :name="playing ? 'pause' : 'play'" :size="13" /></span><figcaption>{{ playing ? '循环播放' : '已暂停' }} · 第 {{ (loopFrame ?? trio[1]) + 1 }} 帧</figcaption></figure>
           </template>
           <template v-else>
             <component :is="step === 'pick' ? 'button' : 'figure'" v-for="fi in film" :key="`f${fi}`" class="tr-film" :class="{ pick: step === 'pick' }" :aria-label="step === 'pick' ? `从第 ${fi + 1} 帧起分开` : undefined" @click="step === 'pick' && fi !== frames[0] && emit('split', fi)">
@@ -216,7 +244,10 @@ defineExpose({ key })
 .tr-tiles { display:grid; grid-template-columns:repeat(var(--cols), var(--tile)); gap:12px; align-items:start; justify-content:center; }
 .tr-tiles figure, .tr-film { margin:0; padding:0; border:0; background:none; display:flex; flex-direction:column; align-items:center; gap:4px; color:#8aa0a8; font-size:var(--fs-xs); }
 .tr-tiles canvas { width:var(--tile); height:var(--tile); border-radius:10px; display:block; background:#7f7f7f; }
-.tr-tiles .avg canvas { box-shadow:0 0 0 1px #ffffff2e; }
+.tr-tiles .loop { position:relative; cursor:pointer; }
+.tr-tiles .loop canvas { box-shadow:0 0 0 1.5px #9ee6e166; }
+.tr-play { position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:50%; display:grid; place-items:center; background:#0009; color:#e6eef0; opacity:.85; transition:opacity var(--dur-fast) var(--ease-out); }
+.tr-tiles .loop:hover .tr-play { opacity:1; }
 .tr-film.pick { cursor:pointer; border-radius:12px; }
 .tr-film.pick:hover canvas, .tr-film.pick:focus-visible canvas { box-shadow:0 0 0 3px #ff8a9e; }
 .tr-foot { padding:10px 20px 16px; display:grid; gap:10px; background:linear-gradient(transparent, #0006); }
