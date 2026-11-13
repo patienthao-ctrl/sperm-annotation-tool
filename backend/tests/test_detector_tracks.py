@@ -69,3 +69,31 @@ def test_extend_follows_weak_boxes_skips_taken_heads_and_stops_after_misses():
     assert [(b['frameIndex'], b['kind']) for b in out] == [(0, 'low'), (1, 'seed'), (3, 'low')]
     taken = dt.extend(detections, 1, box(102, 100, 1)[:4], {0: [box(100, 100, 1)[:4]]}, W, H, .1)
     assert [b['frameIndex'] for b in taken] == [1, 3]  # Frame 0's head already belongs to someone.
+
+
+def test_completion_fills_holes_and_follows_hand_added_heads_with_weak_detections_only():
+    n = 10
+    objects = {
+        1: {0: (box(100, 100, 1)[:4], 'ai'), 3: (box(106, 100, 1)[:4], 'ai')},           # hole at 1, 2
+        2: {5: (box(400, 400, 1)[:4], 'manual')},                                          # one hand-added box
+        3: {0: (box(800, 800, 1)[:4], 'ai'), 2: (box(800, 800, 1)[:4], 'ai')},            # hole at 1, nothing there
+    }
+    detections = {1: [box(102, 100, .03)], 2: [box(500, 500, .5), box(104, 101, .02)],
+                  3: [box(400, 400, .02)], 4: [box(401, 401, .04)], 6: [box(402, 400, .03)], 7: [box(403, 400, .2)],
+                  # Someone else's head next to target 3's hole is already boxed by target 1? No: far away, nothing found.
+                  }
+    detections[1].append(box(100, 100, .9))  # Target 1's own spot is taken by nothing else; nearest wins.
+    out = dt.complete(objects, detections, W, H, n)
+    got = sorted((b['objectId'], b['frameIndex'], b['kind']) for b in out['boxes'])
+    assert (1, 1, 'hole') in got and (1, 2, 'hole') in got
+    assert [g for g in got if g[0] == 2] == [(2, 3, 'chain'), (2, 4, 'chain'), (2, 6, 'chain'), (2, 7, 'chain')]
+    assert out['missing'] == [{'objectId': 3, 'frameIndex': 1}]  # Not guessed: reported instead.
+    # Only frames next to confirmed boxes are detected again.
+    assert dt.completion_frames(objects, n) == [0, 1, 2, 3, 4, 6, 7, 8, 9]
+
+
+def test_completion_never_takes_a_head_another_target_has():
+    objects = {1: {0: (box(100, 100, 1)[:4], 'ai'), 2: (box(100, 100, 1)[:4], 'ai')},
+               2: {1: (box(110, 100, 1)[:4], 'ai')}}
+    out = dt.complete(objects, {1: [box(110, 100, .5)]}, W, H, 3)
+    assert out['boxes'] == [] and out['missing'] == [{'objectId': 1, 'frameIndex': 1}]

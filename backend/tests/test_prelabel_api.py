@@ -124,3 +124,20 @@ def test_check_frames_carry_model_candidates_no_box_covers(imports, fake_detecto
     checks = client.get('/api/prelabel/' + mid).json()['checkFrames']
     # The weak head at (52, 42) never became a target; the confident one is boxed.
     assert all(c['hints'] == [[50.0, 40.0, 54.0, 44.0]] for c in checks)
+
+
+def test_completion_task_publishes_a_proposal_and_writes_no_boxes(imports, fake_detector):
+    client, video = imports
+    mid = upload(client, video).json()['mediaId']
+    assert client.get(f'/api/prelabel/{mid}/complete').json() == {'state': 'none'}
+    _wait(client, client.post('/api/prelabel/' + mid).json()['taskId'])
+    before = client.get(f'/api/track/result/{mid}').json()
+    started = client.post(f'/api/prelabel/{mid}/complete', headers={'Idempotency-Key': 'c1'})
+    assert started.status_code == 202, started.text
+    assert client.post(f'/api/prelabel/{mid}/complete', headers={'Idempotency-Key': 'c1'}).json()['taskId'] == started.json()['taskId']
+    status = _wait(client, started.json()['taskId'])
+    assert status['status'] == 'success' and status['added'] == 0 and status['missing'] == 0, status
+    record = client.get(f'/api/prelabel/{mid}/complete').json()
+    assert record['state'] == 'available' and record['boxes'] == [] and record['frames'] == 0  # No hole, nothing hand-added.
+    assert client.get(f'/api/track/result/{mid}').json() == before
+    assert client.post('/api/prelabel/nope/complete').status_code == 404

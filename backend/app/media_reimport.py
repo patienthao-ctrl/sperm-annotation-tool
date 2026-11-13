@@ -157,7 +157,7 @@ def reset(directory, uid, key, body, tracking_busy):
                 raise ReviewError('DISCARD_CONFIRMATION_REQUIRED', '请确认舍弃旧标注', 422)
             files = [p for p in directory.iterdir() if p.is_file() and (
                 p.name in {'workspace_state.json', 'tracker_results.json', annotation_state.RESULT_META_FILE, 'tracker_overlay.mp4',
-                           'detections.json', 'detector_tracks.json'}
+                           'detections.json', 'detector_tracks.json', 'detector_complete.json'}
                 or (p.name.startswith('annotations_frame_') and p.suffix == '.json'))]
             folder = directory.parent / '_annotation_resets' / uuid.uuid4().hex
             folder.mkdir(parents=True)

@@ -97,6 +97,13 @@ export interface TrackingRestartResponse {
 }
 
 
+export interface CompletionResult {
+  state: 'available' | 'none'
+  workspaceRevision?: number
+  boxes: { objectId: number; frameIndex: number; bbox: number[]; score: number; kind: 'hole' | 'chain' }[]
+  missing: { objectId: number; frameIndex: number }[]
+}
+
 export interface TrackStatusResponse {
   jointTracking?: {state:'checked'|'failed';checkedFrames?:number;changedObjects?:number}
   endpointVerification?: {state:'checked'|'failed'|'insufficient';matches:Record<string,number>;checkedFrames:number}
@@ -287,6 +294,16 @@ export const trackApi = {
     jsonRequest<PrelabelSummary>(`/prelabel/${encodeURIComponent(mediaId)}/scans/${encodeURIComponent(frameIndex)}`, {method:'PUT'}),
   extendHead: (mediaId: string, frameIndex: number, x: number, y: number, signal?: AbortSignal) =>
     jsonRequest<{frameIndex:number;width:number;height:number;confidence:number;boxes:{frameIndex:number;bbox:number[];kind:string}[]}>(`/prelabel/${encodeURIComponent(mediaId)}/extend`, {method:'POST', body:JSON.stringify({frameIndex,x,y}), signal}),
+  async startCompletion(mediaId: string, requestKey: string) {
+    const result = await jsonRequest<{taskId:string;status:string}>(`/prelabel/${encodeURIComponent(mediaId)}/complete`, {method:'POST', headers:{'Idempotency-Key':requestKey}})
+    if (typeof result.taskId !== 'string' || !result.taskId) throw new Error('服务器未返回有效的补全任务，请重试')
+    return result
+  },
+  async completionResult(mediaId: string) {
+    const result = await jsonRequest<CompletionResult>(`/prelabel/${encodeURIComponent(mediaId)}/complete`)
+    if (result.state === 'available' && (!Array.isArray(result.boxes) || !Array.isArray(result.missing))) throw new Error('补全结果结构无效，请重试')
+    return result
+  },
   async uploadVideo(file: File): Promise<TrackUploadResponse> {
     const form = new FormData()
     form.append('file', file, file.name)

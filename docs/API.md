@@ -87,6 +87,7 @@
 | `POST /api/prelabel/{mediaId}` | 自动预标：202 `{taskId,status,frameCount}`，状态用 `/api/track/status/{taskId}`（`stage: queued/detecting/linking/completed/failed`）。`Idempotency-Key` 同键返回原任务、用于其他请求 409；已有 AI 结果 409 `PRELABEL_EXISTS`（重新预标须先清空标注）；不需要 SAM3 |
 | `GET /api/prelabel/{mediaId}` | 无预标为 `{state:'none'}`；否则 `{state:'available',…摘要,checkFrames:[{frame,reason,scannedBy?,scannedByName?,scannedAt?}]}`，摘要含模型、阈值、轨迹数与轨迹标记；每个查漏帧另有 `hints:[[x1,y1,x2,y2]]`，是模型在该帧检到、当前没有任何框覆盖的位置（原图像素），页面画成虚线圈 |
 | `PUT /api/prelabel/{mediaId}/scans/{frameIndex}` | 记录“这张查漏帧看完了”，只接受 `checkFrames` 中的帧，无预标 409；返回同上的摘要 |
+| `POST /api/prelabel/{mediaId}/complete`；`GET` 同路径 | 审查前补全：202 `{taskId,status}`，状态用 `/api/track/status/{taskId}`（成功时含 `added`、`missing`），`Idempotency-Key` 同预标；运行中锁定该视频的编辑。GET 无结果为 `{state:'none'}`，否则 `{state:'available',workspaceRevision,frames,boxes:[{objectId,frameIndex,bbox,score,kind:'hole'|'chain'}],missing:[{objectId,frameIndex}]}`；不写工作区，页面自己加框 |
 | `POST /api/prelabel/{mediaId}/extend` | `{frameIndex,x,y}`（原图像素）：点击处的头加上其他帧里同一个头，返回 `{frameIndex,width,height,confidence,boxes:[{frameIndex,bbox:[x1,y1,x2,y2],kind}]}`；不写数据，页面作为同一个新目标的人工框保存。点击处已有框 409 `ALREADY_BOXED`，找不到头 422，模型不可用 503 |
 
 `AnnotationObject` 定义在 [annotation.ts](../frontend/src/types/annotation.ts)：界面 `id` 与稳定 `objectId` 不等价，`frameIndex` 为实际 0 起帧号；工作区 bbox 为百分比 `{x,y,width,height}`。seed / Tracking / B/C 使用原图像素 xyxy，转换不能重复进行。追踪结果文件虽后缀 `.json`，实际逐行 JSONL。

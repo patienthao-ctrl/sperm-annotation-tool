@@ -5,7 +5,7 @@ import { trackApi, type PrelabelSummary } from '../../api/trackApi'
 import { createRequestId } from '../../utils/browserCompat'
 import { useAuth } from '../auth'
 import {
-  annotationsByMedia, currentFrame, currentMediaId, deletedFrameObjects, editingBlocked, getNextObjectId, maxFrameIndex, mediaAssets,
+  annotationsByMedia, currentFrame, currentMediaId, deletedFrameObjects, deletedObjectIds, editingBlocked, getNextObjectId, isObjectDeleted, maxFrameIndex, mediaAssets,
   messageOf, objectNameInput, runtime, selectedObjectId, showToast, statusMessage, trackingFinishedByMedia,
   trackingMedia, trackingProgressByMedia, trackingResultState, trackingStatusByMedia,
 } from './state'
@@ -187,6 +187,78 @@ export const redoTrackAdd = (mediaId: string) => {
   statusMessage.value = '已重做补上的目标'
   scheduleWorkspaceStateSave(mediaId)
   return true
+}
+
+// Before review: look again, at a low threshold, only next to boxes people have confirmed (holes
+// inside a target, frames around a hand-added head). Found boxes are added as one undoable step;
+// frames where nothing is found stay empty and the review card points at them.
+export type CompletionState = { state: 'running' | 'done' | 'failed'; done?: number; total?: number; added?: number; missing?: number; error?: string }
+export const completionByMedia = ref<Record<string, CompletionState>>({})
+export const currentCompletion = computed(() => completionByMedia.value[currentMediaId.value] ?? null)
+const completionJobs = new Map<string, { key: string; taskId?: string }>()
+const setCompletion = (mediaId: string, value: CompletionState) => { completionByMedia.value = { ...completionByMedia.value, [mediaId]: value } }
+// Boxes added or removed since the last completion are what can open new holes; moving a box cannot.
+const completionStamps = new Map<string, string>()
+const contentStamp = (mediaId: string) => `${(annotationsByMedia.value[mediaId] ?? []).length}:${(deletedFrameObjects.value[mediaId] ?? []).length}:${(deletedObjectIds.value[mediaId] ?? []).length}`
+export const completionFresh = (mediaId: string) => completionByMedia.value[mediaId]?.state === 'done' && completionStamps.get(mediaId) === contentStamp(mediaId)
+
+export const runCompletion = async (mediaId: string): Promise<boolean> => {
+  const media = mediaAssets.value.find((item) => item.id === mediaId)
+  if (!media?.serverMediaId || media.type !== 'video' || trackingMedia.has(mediaId)) return false
+  const actor = useAuth().user.value?.id
+  setCompletion(mediaId, { state: 'running' })
+  try {
+    const { persistWorkspaceState } = await import('./save')
+    await persistWorkspaceState(mediaId, true)
+    trackingMedia.add(mediaId)
+    let job = completionJobs.get(mediaId)
+    if (!job) { job = { key: createRequestId() }; completionJobs.set(mediaId, job) }
+    if (!job.taskId) job.taskId = (await trackApi.startCompletion(media.serverMediaId, job.key)).taskId
+    for (;;) {
+      const status = await trackApi.getStatus(job.taskId)
+      if (actor !== useAuth().user.value?.id) return false
+      setCompletion(mediaId, { state: 'running', done: status.processedFrames ?? 0, total: (status as { totalFrames?: number }).totalFrames ?? 0 })
+      if (status.status === 'success') break
+      if (status.status === 'failed') { completionJobs.delete(mediaId); throw new Error(status.message || '补全失败') }
+      await sleep(400)
+    }
+    completionJobs.delete(mediaId)
+    const result = await trackApi.completionResult(media.serverMediaId)
+    trackingMedia.delete(mediaId)
+    const list = annotationsByMedia.value[mediaId] ?? []
+    const has = new Set(list.map((item) => `${item.objectId}:${item.frameIndex}`))
+    const names = new Map(list.map((item) => [item.objectId, item.name]))
+    const width = media.width || 1, height = media.height || 1, fps = media.fps || 0, stamp = Date.now()
+    const objects: AnnotationObject[] = []
+    for (const item of result.state === 'available' ? result.boxes : []) {
+      const [x1, y1, x2, y2] = item.bbox
+      if (has.has(`${item.objectId}:${item.frameIndex}`) || isObjectDeleted(mediaId, item.objectId, item.frameIndex)) continue
+      if (![x1, y1, x2, y2].every(Number.isFinite) || x2 <= x1 || y2 <= y1) continue
+      const creationId = `complete-${stamp}-${item.objectId}-${item.frameIndex}`
+      objects.push({
+        id: creationId, creationId, objectId: item.objectId, name: names.get(item.objectId) ?? numberedObjectName('rare sperm', item.objectId), source: 'manual',
+        bbox: { x: x1 / width * 100, y: y1 / height * 100, width: (x2 - x1) / width * 100, height: (y2 - y1) / height * 100 },
+        frameIndex: item.frameIndex, timestampMs: fps > 0 ? Math.round(item.frameIndex * 1000 / fps) : 0,
+      })
+      has.add(`${item.objectId}:${item.frameIndex}`)
+    }
+    if (objects.length) {
+      annotationsByMedia.value = { ...annotationsByMedia.value, [mediaId]: [...(annotationsByMedia.value[mediaId] ?? []), ...objects] }
+      trackAdds.value = { ...trackAdds.value, [mediaId]: { objectId: objects[0].objectId!, objects, sequence: ++runtime.historySequence, undone: false } }
+      await persistWorkspaceState(mediaId, true)
+    }
+    const missing = (result.state === 'available' ? result.missing : []).filter((item) => !has.has(`${item.objectId}:${item.frameIndex}`) && !isObjectDeleted(mediaId, item.objectId, item.frameIndex)).length
+    setCompletion(mediaId, { state: 'done', added: objects.length, missing })
+    completionStamps.set(mediaId, contentStamp(mediaId))
+    return true
+  } catch (error) {
+    if (Number((error as { status?: number })?.status) === 404) completionJobs.delete(mediaId)
+    setCompletion(mediaId, { state: 'failed', error: messageOf(error, '补全没完成，请重试') })
+    console.error('[annotation.completion_failed]', { mediaId, error })
+    return false
+  } finally {
+    trackingMedia.delete(mediaId)
+  }
 }
 
 // Videos labelled with the old SAM3 flow keep their boxes until someone explicitly starts over.

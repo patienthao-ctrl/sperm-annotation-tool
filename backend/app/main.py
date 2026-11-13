@@ -1572,6 +1572,87 @@ def start_prelabel(media_id: str, user: dict[str, Any] = Depends(current_user), 
     return {'taskId': task_id, 'status': 'queued', 'frameCount': info['frameCount']}
 
 
+def _object_boxes(directory: Path, workspace: dict[str, Any], info: dict[str, Any]) -> dict[int, dict[int, tuple[list[float], str]]]:
+    """Every live box per target and frame in source pixels; a manual box replaces the AI one."""
+    out: dict[int, dict[int, tuple[list[float], str]]] = {}
+    for row in annotation_state.read_rows(directory):
+        fi = int(row.get('source_frame_index', row.get('frame_index', 0)))
+        for obj in row.get('objects', []):
+            oid = int(obj.get('object_id', 0))
+            if isinstance(obj.get('bbox'), list) and len(obj['bbox']) == 4 and not annotation_state.is_deleted(workspace, fi, oid):
+                out.setdefault(oid, {})[fi] = ([float(v) for v in obj['bbox']], 'ai')
+    for obj in workspace.get('manualAnnotations', []) or []:
+        box = obj.get('bbox') if isinstance(obj, dict) else None
+        try:
+            fi, oid = int(obj.get('frameIndex')), int(obj.get('objectId'))
+            if not isinstance(box, dict) or annotation_state.is_deleted(workspace, fi, oid):
+                continue
+            x, y = float(box['x']) * info['width'] / 100, float(box['y']) * info['height'] / 100
+            out.setdefault(oid, {})[fi] = ([x, y, x + float(box['width']) * info['width'] / 100, y + float(box['height']) * info['height'] / 100], 'manual')
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out
+
+
+def _run_completion_task(task_id: str, media_id: str, directory: Path, video: Path, info: dict[str, Any]) -> None:
+    from . import detector_tracks
+    began = time.perf_counter()
+    log = logging.getLogger('review.prelabel')
+    _set_task(task_id, status='running', stage='detecting', message='正在补全', processedFrames=0)
+    try:
+        workspace = annotation_state.read_state(directory)
+        objects = _object_boxes(directory, workspace, info)
+        record = detector_tracks.run_completion(
+            directory, video, info, objects, int(workspace.get('revision') or 0),
+            progress=lambda **patch: _set_task(task_id, elapsedSeconds=round(time.perf_counter() - began, 1), **patch))
+        _set_task(task_id, status='success', stage='completed', message='completed', added=len(record['boxes']), missing=len(record['missing']),
+                  elapsedSeconds=round(time.perf_counter() - began, 1))
+        log.info('complete.done task=%s media=%s frames=%s added=%s missing=%s seconds=%.1f', task_id, media_id, record['frames'],
+                 len(record['boxes']), len(record['missing']), time.perf_counter() - began)
+    except Exception as exc:  # The page keeps the boxes it has; it shows the failure and can retry.
+        message = str(exc) if isinstance(exc, (RuntimeError, head_click.ProposalError)) else '补全失败，请重试'
+        log.exception('complete.failed task=%s media=%s', task_id, media_id)
+        _set_task(task_id, status='failed', stage='failed', message=message)
+
+
+@app.post("/api/prelabel/{media_id}/complete", status_code=202)
+def start_completion(media_id: str, user: dict[str, Any] = Depends(current_user), idempotency_key: str = Header(default='')) -> dict[str, Any]:
+    """Look again, at a low threshold, only next to confirmed boxes. Proposes boxes, writes none."""
+    request_key = idempotency_key if isinstance(idempotency_key, str) else ''
+    if len(request_key) > 128:
+        raise HTTPException(422, '补全请求重试标识过长')
+    if request_key:
+        with TASK_LOCK:
+            prior = next((t for t in TASKS.values() if t.get('userId') == user['uid'] and t.get('requestKey') == request_key), None)
+        if prior:
+            if prior.get('kind') != 'complete' or prior.get('mediaId') != media_id:
+                raise HTTPException(409, '同一重试标识不能用于不同请求')
+            return {'taskId': prior['taskId'], 'status': prior['status']}
+    if tracking_is_busy(media_id):
+        raise HTTPException(409, '该视频已有 AI 任务在排队或运行，请等待完成')
+    directory = media_dir(media_id)
+    video = find_video(directory)
+    if not video:
+        raise HTTPException(404, '视频不存在')
+    source = source_media_info(directory)
+    info = {'width': int(source['width']), 'height': int(source['height']), 'frameCount': int(source['frameCount'])}
+    task_id = uuid.uuid4().hex
+    _set_task(task_id, taskId=task_id, kind='complete', status='queued', stage='queued', message='queued', mediaId=media_id,
+              startFrame=0, maxFrames=info['frameCount'], totalFrames=0, userId=user['uid'], requestKey=request_key, requestHash='complete')
+    TRACK_EXECUTOR.submit(_run_completion_task, task_id, media_id, directory, video, info)
+    return {'taskId': task_id, 'status': 'queued'}
+
+
+@app.get("/api/prelabel/{media_id}/complete")
+def completion_result(media_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    from . import detector_tracks
+    directory = media_dir(media_id)
+    if not find_video(directory):
+        raise HTTPException(404, '视频不存在')
+    record = detector_tracks.read_completion(directory)
+    return {'state': 'none'} if record is None else {'state': 'available', **record}
+
+
 @app.get("/api/prelabel/{media_id}")
 def prelabel_summary(media_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     from . import detector_tracks

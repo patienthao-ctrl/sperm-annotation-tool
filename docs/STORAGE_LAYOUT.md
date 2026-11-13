@@ -47,6 +47,7 @@ storage/
     tracker_results.json         # JSONL：逐行原始视频帧（SAM3 追踪或自动预标）
     detections.json              # 自动预标的逐帧原始检测（低阈值，原图像素），点选补框复用
     detector_tracks.json         # 预标摘要：策略、模型、阈值、轨迹标记、查漏帧
+    detector_complete.json       # 最近一次审查前补全的提议（补到的框、仍缺的帧）；清空标注时一并移走
     tracker_results.meta.json    # 已生成结果的持久标记；文件丢失不能变成未追踪
     tracker_overlay.mp4          # 按需生成的带框预览，不属于追踪完成条件
     tracker_overlay.meta.json    # 派生预览的输入签名，可重新生成

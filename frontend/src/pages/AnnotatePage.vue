@@ -33,8 +33,8 @@ import { useAnnotationReview } from '../stores/annotationReview'
 import type { MergeChoice, MergeEntry } from '../annotation/workspaceWrites'
 import '../annotation/annotation.css'
 import '../annotation/annotation-shell.css'
-import { splitTrack, cancelExtend, checkFrames, currentCheckFrame, currentPrelabel, extendBusy, markFrameScanned, nextUnscannedFrame, prelabelErrors, reprelabelBusy, reprelabelCurrent, retryPrelabel, scanBusy, scanComplete, scannedCount } from '../stores/workspace/prelabel'
-import { enhancedView, trackingResultState } from '../stores/workspace/state'
+import { completionFresh, currentCompletion, runCompletion, splitTrack, cancelExtend, checkFrames, currentCheckFrame, currentPrelabel, extendBusy, markFrameScanned, nextUnscannedFrame, prelabelErrors, reprelabelBusy, reprelabelCurrent, retryPrelabel, scanBusy, scanComplete, scannedCount } from '../stores/workspace/prelabel'
+import { enhancedView, isObjectDeleted, trackingResultState } from '../stores/workspace/state'
 const {
   collaborationConflict, collaborationBusy, resolveCollaboration, syncWorkspace, downloadWorkspaceBackup, currentRemoteTracking, lastEditors, discardLocalDraft, storageWarning, headBoxBusy, headBoxError, cancelHeadBox, mediaAssets, selectedMediaId, submissionBusy, mediaImportBusy, importError, duplicateImport, reimportSaving, cancelDuplicateImport, confirmDuplicateImport, restoreImportIntent, activeTool, selectedObjectId, currentFrame, currentTime, frameInput, isPlaying,
   refreshLibrary, isAiBusy, statusMessage, toast, showToast, dismissToast, imageRef, videoRef, exactFrameImageRef, exactFrameUrl, exactFrameLoading, videoPlaybackFallback, annotationHitRef, fileInputRef, videoInputRef, packageInputRef, packageImportReport, importPackage,
@@ -123,6 +123,13 @@ const entryBoxes = computed(() => {
     const b = o.bbox, w = media.width, h = media.height
     out.set(o.frameIndex ?? 0, [b.x / 100 * w, b.y / 100 * h, (b.x + b.width) / 100 * w, (b.y + b.height) / 100 * h])
   }
+  return out
+})
+// Frames inside the target with no box that nobody deleted on purpose: completion found nothing there.
+const entryMissing = computed(() => {
+  const frames = [...entryBoxes.value.keys()].sort((a, b) => a - b), entry = currentEntry.value, out: number[] = []
+  if (!entry || frames.length < 2) return out
+  for (let f = frames[0] + 1; f < frames[frames.length - 1]; f++) if (!entryBoxes.value.has(f) && !isObjectDeleted(currentMediaId.value, entry.objectId, f)) out.push(f)
   return out
 })
 const cardFrameReader = computed(() => { const id = selectedMedia.value?.serverMediaId, enhanced = enhancedView.value; return (fi: number) => readFrame(id!, fi, enhanced) })
@@ -277,8 +284,19 @@ const prelabelRunning = computed(() => currentTrackingProgress.value?.steps[0]?.
 async function finishScan() {
   if (!currentCheckFrame.value || currentCheckFrame.value.scannedAt || scanBusy.value || editingBlocked.value) return
   await flushWorkspace().catch(() => undefined)
+  const id = currentMediaId.value
   const next = await markFrameScanned()
   if (next != null) await seekFrame(next)
+  else if (scanComplete.value && id === currentMediaId.value) void runCompletion(id)
+}
+// Every way into review from here first fills what it can next to confirmed boxes.
+const completionRunning = computed(() => currentCompletion.value?.state === 'running')
+async function goReview() {
+  const id = currentMediaId.value
+  if (isVideo.value && selectedMedia.value?.serverMediaId && !completionFresh(id)) {
+    if (!(await runCompletion(id))) return
+  }
+  if (id === currentMediaId.value) router.push('/review')
 }
 function goNextCheck() { if (nextUnscannedFrame.value != null) void seekFrame(nextUnscannedFrame.value) }
 const frameManualCount = computed(() => currentObjects.value.filter(object => object.source === 'manual').length)
@@ -853,7 +871,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <TrackingProgress v-if="!inspectorVisible || reviewing" variant="compact" :view="currentTrackingProgress" :finished="currentTrackingFinished" />
         <button class="icon-button" title="快捷键 (?)" aria-label="快捷键" @click="help=true"><AppIcon name="keyboard" :size="17" /></button>
         <span v-if="reviewMediaId && review.status.value" class="review-chip" :class="review.status.value" title="这段视频的审查进度，不是当前页面的模式"><small>本视频</small><span data-testid="header-review-status">{{ review.label(reviewMediaId,review.status.value) }}</span></span>
-        <button v-if="!reviewing && reviewMediaId && review.status.value!=='passed'" class="btn-secondary" data-testid="go-review" @click="router.push('/review')">去审查</button>
+        <button v-if="!reviewing && reviewMediaId && review.status.value!=='passed'" class="btn-secondary" data-testid="go-review" :disabled="completionRunning" @click="goReview">{{ completionRunning ? '补全中…' : '去审查' }}</button>
         <button v-if="reviewing" class="quiet-button" @click="router.push('/annotate')">回到标注</button>
         <AnnotationDatasetExport />
         <template v-if="focused && isVideo && !reviewing && checkFrames.length && !scanComplete"><span class="shell-meta">查漏 {{ scannedCount }} / {{ checkFrames.length }}</span><button class="quiet-button" :disabled="nextUnscannedFrame==null" @click="goNextCheck">下一张要看的</button><button class="btn-primary" :disabled="!currentCheckFrame||!!currentCheckFrame.scannedAt||scanBusy||editingBlocked" @click="finishScan">这张看完了</button></template>
@@ -886,7 +904,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
               <AnnotationOverlay :objects="displayObjects" :selected="selectedObjectId" :width="stageSize.w" :height="stageSize.h" :draft="tempBbox" :labels="labels" :hidden="hiddenBoxes || (!!frameError && !exactFrameUrl)" />
             </div>
           </div>
-          <TargetReviewCard v-if="cardVisible && currentEntry && !reviewEnd" ref="reviewCard" :entry="currentEntry" :remaining="Math.max(1,openTargets)" :can-go-back="queueIndex>0" :boxes="entryBoxes" :media-width="selectedMedia?.width||1" :media-height="selectedMedia?.height||1" :read-frame="cardFrameReader" :answer="currentEntry.repeat?(reviewRound?.repeats?.[currentEntry.objectId]??null):(reviewRound?.results?.[currentEntry.objectId]??null)" :busy="cardBusy||review.busy.value" @answer="answerCard" @split="splitCard" @fix="fixInCanvas" @prev="prevCard" />
+          <TargetReviewCard v-if="cardVisible && currentEntry && !reviewEnd" ref="reviewCard" :entry="currentEntry" :remaining="Math.max(1,openTargets)" :can-go-back="queueIndex>0" :boxes="entryBoxes" :missing="entryMissing" :media-width="selectedMedia?.width||1" :media-height="selectedMedia?.height||1" :read-frame="cardFrameReader" :answer="currentEntry.repeat?(reviewRound?.repeats?.[currentEntry.objectId]??null):(reviewRound?.results?.[currentEntry.objectId]??null)" :busy="cardBusy||review.busy.value" @answer="answerCard" @split="splitCard" @fix="fixInCanvas" @prev="prevCard" />
           <Transition name="tr-end" :css="motionAllowed"><div v-if="cardVisible && reviewEnd && reviewEnd!=='passed' && reviewEnd!=='start'" class="review-end" data-testid="review-end">
             <template v-if="reviewEnd==='unknown'"><AppIcon name="alert" :size="28" /><h2>第 {{ (firstUnknownFrame??0)+1 }} 帧没有任何标注</h2><p>这一帧确实没有精子吗？</p><div class="review-end-actions"><button class="btn-secondary" @click="reviewView='canvas';seekFrame(firstUnknownFrame??0)">去这一帧补框</button><button class="btn-primary" :disabled="review.busy.value" @click="confirmUnknownEmpty">确认没有</button></div></template>
             <template v-else-if="reviewEnd==='playthrough'"><AppIcon name="play" :size="28" /><h2>最后一步</h2><p>快速播放一遍全片，看看有没有明显漏掉的。</p><div class="review-end-actions"><button class="btn-primary" data-testid="review-playthrough" :disabled="isAiBusy" @click="startPlaythrough">开始播放</button></div></template>
@@ -980,7 +998,14 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
           <div v-else-if="checkFrames.length" key="scan" class="task-body" data-testid="scan-task">
             <div class="task-eyebrow"><span>第 1 步 · 标注</span><span class="num">{{ scannedCount }} / {{ checkFrames.length }}</span></div>
             <h3 class="task-title">{{ scanComplete ? '都看完了' : '找漏掉的精子' }}</h3>
-            <p class="shell-card-note">{{ scanComplete ? '接下来去审查，逐个确认找到的目标。' : '看这一块，没框到的头点一下就补上。黄色虚线圈是模型拿不准的地方。' }}</p>
+            <p v-if="!scanComplete" class="shell-card-note">看这一块，没框到的头点一下就补上。黄色虚线圈是模型拿不准的地方。</p>
+            <template v-else-if="completionRunning">
+              <p class="shell-card-note">正在补全：在已有框的前后帧里再找一遍…</p>
+              <div class="completion-bar" role="progressbar" :aria-valuenow="currentCompletion?.done||0" :aria-valuemax="currentCompletion?.total||0"><i :style="{ width: `${currentCompletion?.total ? Math.round(100 * (currentCompletion.done||0) / currentCompletion.total) : 8}%` }" /></div>
+            </template>
+            <p v-else-if="currentCompletion?.state==='failed'" class="shell-card-note task-warn" role="alert">{{ currentCompletion.error }}</p>
+            <p v-else-if="currentCompletion?.state==='done'" class="shell-card-note">{{ currentCompletion.added ? `自动补上了 ${currentCompletion.added} 帧。` : '没有需要补的帧。' }}{{ currentCompletion.missing ? `还有 ${currentCompletion.missing} 帧没找到，审查时会标出来。` : '' }}</p>
+            <p v-else class="shell-card-note">接下来去审查，逐个确认找到的目标。</p>
             <div class="check-steps" role="group" aria-label="要查漏的帧">
               <button v-for="(item,i) in checkFrames" :key="item.frame" class="check-step" :class="{done:!!item.scannedAt,current:item.frame===currentFrame}" :aria-current="item.frame===currentFrame?'step':undefined" :title="`第 ${item.frame+1} 帧${item.scannedAt?` · ${item.scannedByName||''}已看`:''}`" :aria-label="`第 ${i+1} 张，第 ${item.frame+1} 帧${item.scannedAt?'，已看':''}`" :disabled="isAiBusy" @click="seekFrame(item.frame)"><AppIcon v-if="item.scannedAt" name="check" :size="12" /><template v-else>{{ i+1 }}</template></button>
             </div>
@@ -990,7 +1015,9 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             </div>
             <button v-if="!scanComplete && currentCheckFrame && !currentCheckFrame.scannedAt" class="btn-primary shell-wide task-primary" data-testid="scan-done" :disabled="scanBusy||editingBlocked" @click="scanNext">{{ lastBlock ? '这张看完了' : '下一块' }}<kbd>Enter</kbd></button>
             <button v-else-if="!scanComplete" class="btn-primary shell-wide task-primary" :disabled="isAiBusy" @click="goNextCheck">回到要看的那张</button>
-            <button v-else class="btn-primary shell-wide task-primary" @click="router.push('/review')">去审查<AppIcon name="next" :size="14" /></button>
+            <button v-else-if="currentCompletion?.state==='failed'" class="btn-primary shell-wide task-primary" @click="runCompletion(currentMediaId)">重试补全</button>
+            <button v-else class="btn-primary shell-wide task-primary" :disabled="completionRunning" @click="goReview">{{ completionRunning ? '补全中…' : '去审查' }}<AppIcon v-if="!completionRunning" name="next" :size="14" /></button>
+            <button v-if="scanComplete && currentCompletion?.state==='failed'" class="quiet-button shell-wide" @click="router.push('/review')">不补了，直接去审查</button>
             <div v-if="!scanComplete" class="task-how" aria-hidden="true"><span><AppIcon name="cursor" :size="15" />点一下 补框</span><span><AppIcon name="box" :size="15" />拖动 画框</span><span><kbd>Del</kbd>删除</span></div>
           </div>
           <div v-else-if="legacyResult" key="legacy" class="task-body">
@@ -1066,6 +1093,9 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
 .task-eyebrow .num { font-variant-numeric:tabular-nums; color:var(--muted); font-weight:500; }
 .task-title { margin:0; font-size:var(--fs-xl); line-height:1.25; letter-spacing:-.01em; }
 .check-steps { display:flex; flex-wrap:wrap; gap:5px; }
+.completion-bar { height:6px; border-radius:3px; background:var(--accent-soft); overflow:hidden; }
+.completion-bar i { display:block; height:100%; background:var(--accent); transition:width var(--dur-base,.2s) var(--ease-out,ease); }
+.task-warn { color:var(--danger, #c0392b); }
 .scan-grid { display:grid; grid-template-columns:repeat(var(--cols), 22px); gap:3px; align-items:center; }
 .scan-cell { width:22px; height:16px; padding:0; border-radius:3px; border:1px solid var(--line-strong, #9bb); background:var(--surface); cursor:pointer; transition:background-color var(--dur-fast,.12s) var(--ease-out,ease), box-shadow var(--dur-fast,.12s) var(--ease-out,ease); }
 .scan-cell.done { background:var(--accent); border-color:var(--accent); }

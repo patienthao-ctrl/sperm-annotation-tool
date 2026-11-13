@@ -19,6 +19,8 @@ const props = defineProps<{
   /** Blob of one source frame, in the view the canvas currently shows (raw or enhanced). */
   readFrame: (frameIndex: number) => Promise<Blob>
   answer: TargetResult | null
+  /** Frames inside the target that still have no box. */
+  missing?: number[]
   canGoBack: boolean
   busy: boolean
 }>()
@@ -146,6 +148,10 @@ const answers: { value: TargetResult; label: string; hint?: string }[] = [
   { value: 'no', label: '不是', hint: '杂质等，整条删除' }, { value: 'unsure', label: '看不清', hint: '拿不准就选它' },
 ]
 const question = computed(() => step.value === 'same' ? '黄框里一直是同一个精子吗？' : step.value === 'pick' ? '从哪一张起黄框里换了？点那一张' : '黄框里是精子吗？')
+const missingText = computed(() => {
+  const list = props.missing ?? []
+  return list.length <= 4 ? `第 ${list.map(f => f + 1).join('、')} 帧` : `第 ${list.slice(0, 3).map(f => f + 1).join('、')} 等 ${list.length} 帧`
+})
 function key(k: string) {
   if (props.busy) return false
   if (step.value === 'same') { if (k === '1') { step.value = 'what'; return true } if (k === '2') { step.value = 'pick'; return true } return false }
@@ -178,6 +184,7 @@ defineExpose({ key })
       </Transition>
     </div>
     <footer class="tr-foot">
+      <p v-if="missing?.length" class="tr-missing" role="status"><AppIcon name="alert" :size="14" />{{ missingText }}没有框<button class="quiet-button" @click="emit('fix', missing[0])">去补</button></p>
       <div v-if="step === 'what'" class="tr-answers">
         <button v-for="(item, i) in answers" :key="item.value" class="tr-answer" :class="[item.value, { on: answer === item.value }]" :disabled="busy" :data-testid="`answer-${item.value}`" @click="emit('answer', item.value)">
           <i class="dot" aria-hidden="true" /><span><b>{{ item.label }}</b><small v-if="item.hint">{{ item.hint }}</small></span><kbd>{{ i + 1 }}</kbd>
@@ -224,6 +231,9 @@ defineExpose({ key })
 .tr-answer .dot { width:9px; height:9px; border-radius:50%; flex:none; }
 .tr-answer.tail .dot { background:#3ddc84; } .tr-answer.head .dot { background:#5cc8c2; } .tr-answer.no .dot { background:#ff6b85; } .tr-answer.unsure .dot { background:#efc372; }
 .tr-answer.on { border-color:#9ee6e1; background:#173033; }
+.tr-missing { margin:0 auto; display:flex; align-items:center; gap:8px; padding:6px 12px; border-radius:999px; background:#3a2c10; color:#ffd78a; font-size:var(--fs-sm); }
+.tr-missing .quiet-button { color:#ffd78a; display:inline-flex; align-items:center; gap:6px; }
+.tr-missing kbd { font-size:var(--fs-2xs); opacity:.7; border:1px solid currentColor; border-radius:4px; padding:0 4px; }
 .tr-links { display:flex; justify-content:space-between; max-width:980px; width:100%; margin:0 auto; }
 .tr-links .quiet-button { color:#8aa0a8; display:inline-flex; align-items:center; gap:6px; }
 .tr-links kbd { font-size:var(--fs-2xs); opacity:.7; border:1px solid currentColor; border-radius:4px; padding:0 4px; }

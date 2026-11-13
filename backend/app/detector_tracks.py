@@ -363,3 +363,124 @@ def extend(detections: list[list[list[float]]], seed_frame: int, seed_box: list[
                 misses += 1
             f += direction
     return [{'frameIndex': f, 'bbox': [round(v, 3) for v in found[f]], 'kind': kinds[f]} for f in sorted(found)]
+
+
+# ---------------------------------------------------------------- completion before review
+# Once people have confirmed boxes, a much lower threshold is safe *next to them*: a hole between
+# two boxes of a target, or the frames around a head someone added by hand. Only real detections
+# near the expected place are taken; frames where nothing is found stay empty and are reported.
+COMPLETE_CONF = float(os.getenv('HEAD_DETECTOR_COMPLETE_CONF', '0.01'))
+COMPLETE_FILE = 'detector_complete.json'
+MAX_HOLE = 8
+CHAIN_RANGE = 30
+
+
+def _inside(row: list[float], boxes: list[list[float]], pad: float = 4.0) -> bool:
+    cx, cy = (row[0] + row[2]) / 2, (row[1] + row[3]) / 2
+    return any(b[0] - pad <= cx <= b[2] + pad and b[1] - pad <= cy <= b[3] + pad for b in boxes)
+
+
+def completion_frames(objects: dict[int, dict[int, tuple[list[float], str]]], frame_count: int) -> list[int]:
+    """Frames worth detecting again: holes inside targets and the reach of hand-added targets."""
+    need: set[int] = set()
+    for frames in objects.values():
+        keys = sorted(frames)
+        for a, b in zip(keys, keys[1:]):
+            if 1 < b - a <= MAX_HOLE + 1:
+                need.update(range(a + 1, b))
+        if keys and all(source == 'manual' for _, source in frames.values()):
+            need.update(range(max(0, keys[0] - CHAIN_RANGE), keys[0]))
+            need.update(range(keys[-1] + 1, min(frame_count, keys[-1] + CHAIN_RANGE + 1)))
+    return sorted(need)
+
+
+def complete(objects: dict[int, dict[int, tuple[list[float], str]]], detections: dict[int, list[list[float]]],
+             width: int, height: int, frame_count: int) -> dict[str, list[dict[str, Any]]]:
+    """objects[objectId][frame] = (xyxy, 'manual'|'ai'); detections[frame] = rows at COMPLETE_CONF.
+
+    Returns {'boxes': [{objectId, frameIndex, bbox, score, kind}], 'missing': [{objectId, frameIndex}]}.
+    """
+    gate = gate_for(width, height)
+    taken: dict[int, list[list[float]]] = {}
+    for frames in objects.values():
+        for f, (box, _) in frames.items():
+            taken.setdefault(f, []).append(box)
+    boxes, missing = [], []
+
+    def take(oid: int, f: int, row: list[float], kind: str) -> None:
+        bbox = [round(float(v), 3) for v in row[:4]]
+        taken.setdefault(f, []).append(bbox)
+        boxes.append({'objectId': oid, 'frameIndex': f, 'bbox': bbox, 'score': round(float(row[4]), 4), 'kind': kind})
+
+    for oid in sorted(objects):
+        frames = objects[oid]
+        keys = sorted(frames)
+        for a, b in zip(keys, keys[1:]):
+            if not 1 < b - a <= MAX_HOLE + 1:
+                continue
+            for f in range(a + 1, b):
+                w = (f - a) / (b - a)
+                guess = [(1 - w) * u + w * v for u, v in zip(frames[a][0], frames[b][0])]
+                gx, gy = _center(guess)
+                limit = gate * (1 + 0.5 * (min(f - a, b - f) - 1))
+                best = None
+                for row in detections.get(f, []):
+                    if len(row) != 5 or row[4] < COMPLETE_CONF or _inside(row, taken.get(f, [])):
+                        continue
+                    cx, cy = _center(row)
+                    d = math.hypot(cx - gx, cy - gy)
+                    if d <= limit and (best is None or d < best[0]):
+                        best = (d, row)
+                if best:
+                    take(oid, f, best[1], 'hole')
+                else:
+                    missing.append({'objectId': oid, 'frameIndex': f})
+        if keys and all(source == 'manual' for _, source in frames.values()):
+            rows = [detections.get(f, []) for f in range(frame_count)]
+            for seed, keep in ((keys[0], lambda f: f < keys[0]), (keys[-1], lambda f: f > keys[-1])):
+                occupied = {f: list(v) for f, v in taken.items()}
+                for item in extend(rows, seed, frames[seed][0], occupied, width, height, COMPLETE_CONF):
+                    f = item['frameIndex']
+                    if keep(f) and not _inside(item['bbox'] + [0], taken.get(f, [])):
+                        score = next((r[4] for r in detections.get(f, []) if [round(v, 3) for v in r[:4]] == item['bbox']), COMPLETE_CONF)
+                        take(oid, f, item['bbox'] + [score], 'chain')
+    return {'boxes': boxes, 'missing': missing}
+
+
+def run_completion(directory: Path, video: Path, info: dict[str, Any], objects: dict[int, dict[int, tuple[list[float], str]]],
+                   revision: int, progress: Callable[..., None] | None = None) -> dict[str, Any]:
+    """Detect the needed frames again at COMPLETE_CONF and publish the proposal; writes no boxes."""
+    n = int(info['frameCount'])
+    need = completion_frames(objects, n)
+    wanted, detections, batch = set(need), {}, []
+
+    def flush() -> None:
+        for (f, _), rows in zip(batch, head_click.detect_batch([img for _, img in batch], conf=COMPLETE_CONF, caller='complete')):
+            detections[f] = [[float(v) for v in r] for r in rows]
+        batch.clear()
+        if progress:
+            progress(stage='detecting', processedFrames=len(detections), totalFrames=len(need),
+                     lastProcessedFrame=max(detections) if detections else None)
+    if need:
+        for f, frame in enumerate(read_frames(video, max(need) + 1)):
+            if f in wanted:
+                batch.append((f, frame))
+                if len(batch) == BATCH:
+                    flush()
+        if batch:
+            flush()
+    result = complete(objects, detections, int(info['width']), int(info['height']), n)
+    record = {'version': 1, 'conf': COMPLETE_CONF, 'workspaceRevision': revision, 'frames': len(need), **result}
+    path = directory / COMPLETE_FILE
+    tmp = path.with_suffix('.tmp')
+    tmp.write_text(json.dumps(record), encoding='utf-8')
+    os.replace(tmp, path)
+    return record
+
+
+def read_completion(directory: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads((directory / COMPLETE_FILE).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) and isinstance(value.get('boxes'), list) else None
