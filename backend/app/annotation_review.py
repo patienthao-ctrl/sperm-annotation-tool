@@ -419,6 +419,11 @@ def status(media_id, directory, info):
         return dict(mediaId=media_id, status="none", stage=stage(directory), currentRevision=None, unknownFrames=info["frameCount"],
                     review=None, lastPassed=None, notReady=e.message)
     current = revision(frames_list)
+    gaps = scan_gaps(media_id, directory)
+    if gaps:  # Review comes after the scan; an earlier round waits, untouched, until it is done.
+        return dict(mediaId=media_id, status="none", stage="scanning", currentRevision=current, unknownFrames=sum(f is None for f in frames_list),
+                    review=None, lastPassed=None, scanRemaining=len(gaps),
+                    notReady=f"标注阶段还有 {len(gaps)} 张查漏帧没看，查完提交后才能审查")
     with closing(connect()) as c, c:
         row = upgrade(c, latest(c, media_id), frames_list)
         passed = last_passed(c, media_id)
@@ -443,6 +448,8 @@ def status(media_id, directory, info):
 def stage(directory):
     """How far a video without a review round has got; only a hint for the media list."""
     from .annotation_state import read_state
+    if scan_gaps(directory.name, directory):
+        return "scanning"  # Prelabelled, check frames not all looked at: review cannot start yet.
     try:
         if (directory / "tracker_results.json").exists():
             return "ready"
@@ -463,8 +470,8 @@ def summary(media_dirs):
     with closing(connect()) as c:
         for media_id, directory in media_dirs:
             row = latest(c, media_id)
-            if row is None:
-                out[media_id] = "none"
+            if row is None or (row["state"] == "open" and scan_gaps(media_id, directory)):
+                out[media_id] = "none"  # A round opened before the scan was finished still waits for it.
             elif row["state"] == "open":
                 out[media_id] = "open"
             else:
@@ -504,6 +511,9 @@ def people(media_dirs, statuses):
 
 
 def start(media_id, directory, info, actor):
+    gaps = scan_gaps(media_id, directory)
+    if gaps:
+        raise ReviewError("REVIEW_SCAN_INCOMPLETE", f"标注阶段还有 {len(gaps)} 张查漏帧没看，查完提交后才能审查", 409)
     frames_list = load_cached(media_id, directory, info)
     with closing(connect()) as c, c:
         c.execute("BEGIN IMMEDIATE")

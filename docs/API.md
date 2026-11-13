@@ -13,7 +13,7 @@
 | 方法与路径 | 作用 |
 | --- | --- |
 | `GET /api/annotation-review/media/{id}` | `status: none/open/passed/stale`、`currentRevision`（逐帧内容摘要）、`unknownFrames`（个数）、`stage`（`status=none` 时为 `unstarted/annotating/ready`）、当前或最近一轮 `review`、`lastPassed`。目标轮次（`policy:'target-review-v1'`）的 `review` 为 `{reviewId,round,state,policy,targets:[objectId],results:{objectId:'tail'|'head'|'unsure'|'no'},changedTargets,checked,total,unknownFrames:[[start,end]],emptyFrames:[[start,end]],playthroughBy,playthroughAt,repeats,consistency:{pairs,same},lastActorId,lastActorName,lastActivityAt,passedBy,passedAt,changes}`；`targets` 是本轮要回答的目标（首轮全部，重审只含与上次通过相比有变化的目标及审查中新出现的目标），`changedTargets` 是答过后又被改动、需要重答的目标。旧帧字段 `frames/checkedFrames/changedFrames` 在目标轮次为空。读取时，进行中的旧逐帧轮次归档后改建为目标轮次。从未保存工作区时返回 `none` 与 `notReady` 说明，不报错。Tracking 运行中也可读取 |
-| `POST /api/annotation-review/media/{id}/start` | 已有进行中的轮次则原样返回；已通过且内容未变返回 409 `REVIEW_ALREADY_PASSED`；Tracking 运行中 409 `SOURCE_BUSY` |
+| `POST /api/annotation-review/media/{id}/start` | 预标视频查漏帧没看完 409 `REVIEW_SCAN_INCOMPLETE`（此时状态接口为 `status:'none', stage:'scanning', scanRemaining`）；已有进行中的轮次则原样返回；已通过且内容未变返回 409 `REVIEW_ALREADY_PASSED`；Tracking 运行中 409 `SOURCE_BUSY` |
 | `PUT /api/annotation-review/media/{id}/targets/{objectId}` | `{reviewId,result:'tail'|'head'|'unsure'|'no',repeat?:boolean}`，回答一个目标，可重答（以最后一次为准）。答案绑定该目标当前全部帧的框摘要；`no` 之后页面整条删除该目标。`repeat:true` 是复判卡片，只计一致率，不影响通过。目标不在本轮 404 `ITEM_NOT_FOUND`，轮次已结束 409 `REVIEW_CLOSED`，不是当前轮次 409 `REVIEW_NOT_CURRENT` |
 | `PUT /api/annotation-review/media/{id}/frames/{frameIndex}` | `{reviewId,result:'empty'}`：目标轮次只用于确认没有任何标注的未知帧无目标 |
 | `POST /api/annotation-review/media/{id}/playthrough` | `{reviewId}`，记录本轮已快速浏览全片（页面播到最后一帧才发送），返回最新状态 |

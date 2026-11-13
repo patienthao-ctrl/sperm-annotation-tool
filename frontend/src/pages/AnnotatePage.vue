@@ -181,6 +181,15 @@ async function splitCard(frame: number) {
   finally { cardBusy.value = false }
 }
 function prevCard() { if (queueIndex.value > 0) queueIndex.value-- }
+/** Next card still to answer, without answering this one. */
+function skipCard() { const next = nextOpen(reviewQueue.value, answeredEntry, queueIndex.value); if (next >= 0 && next !== queueIndex.value) queueIndex.value = next }
+// Review toolbar: cards need no editing tools; the picture view adds a way back to the card's target.
+const cardTools = computed(() => cardVisible.value && !!reviewRound.value)
+async function locateTarget() {
+  const frames = [...entryBoxes.value.keys()].sort((a, b) => a - b)
+  if (!frames.length) return
+  await fixInCanvas(entryBoxes.value.has(currentFrame.value) ? currentFrame.value : frames[Math.floor(frames.length / 2)])
+}
 function jumpTarget(objectId: number) {
   const i = reviewQueue.value.findIndex(e => e.objectId === objectId && !e.repeat)
   if (i >= 0) { queueIndex.value = i; reviewView.value = 'cards' }
@@ -595,6 +604,7 @@ onMounted(() => { toolbarObserver = new ResizeObserver(measureToolbar); if (tool
 onUnmounted(() => toolbarObserver?.disconnect())
 const remeasureToolbar = async () => { toolbarCompact.value = false; await nextTick(); measureToolbar() }
 watch(() => [props.mode, focused.value], remeasureToolbar)
+watch(cardTools, remeasureToolbar)
 let pointerActive = false
 let normalView: { mediaId: string; zoom: number; base: {w:number;h:number}; left: number; top: number; pageY: number } | null = null
 let priorOverflow = '', priorHeaderInert = false
@@ -684,6 +694,9 @@ function restorePage() {
   const header = document.querySelector<HTMLElement>('.app-header')
   if (header) header.inert = priorHeaderInert
 }
+// While scanning, Enter means "next block" even if a toolbar button kept keyboard focus from a click
+// (or 退出专注 after pressing F); other buttons, links and fields keep their own Enter.
+const enterForScan = (target: EventTarget | null) => { const hit = (target as HTMLElement | null)?.closest?.('button,a,summary'); return !hit || hit.classList.contains('wb-tool') }
 async function toggleFocus() {
   cancelPointer(); spaceHeld.value = false
   const scroller = scrollContainerRef.value
@@ -716,7 +729,9 @@ async function toggleFocus() {
     window.scrollTo(0, normalView?.pageY || 0)
   }
   if (pausedView) await settlePauseView(pausedView, viewSerial)
-  focusButton.value?.focus({preventScroll:true})
+  // Entering focus: no button keeps keyboard focus, so Enter goes to the scan and not to 退出专注.
+  if (focused.value) (document.activeElement as HTMLElement | null)?.blur?.()
+  else focusButton.value?.focus({preventScroll:true})
 }
 function fit() {
   pauseStageMargins.value=null
@@ -813,7 +828,7 @@ function keys(e:KeyboardEvent){
       if(e.key==='ArrowRight'){e.preventDefault();return}
     }
   }
-  if(!reviewing.value&&e.key==='Enter'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat&&currentCheckFrame.value&&!currentCheckFrame.value.scannedAt&&!(e.target as HTMLElement)?.closest('button,a,summary')){e.preventDefault();void scanNext();return}
+  if(!reviewing.value&&e.key==='Enter'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat&&currentCheckFrame.value&&!currentCheckFrame.value.scannedAt&&enterForScan(e.target)){e.preventDefault();void scanNext();return}
   if(e.key==='Escape'){e.preventDefault();if(pointerActive||pan){cancelPointer();return}if(focused.value){void toggleFocus();return}cancelPointer();hiddenBoxes.value=false;clearSelection();return}
   if(e.key.toLowerCase()==='f'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat){e.preventDefault();void toggleFocus();return}
   if(mediaBusy.value||workspaceRestoring.value)return
@@ -911,7 +926,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <TrackingProgress v-if="!inspectorVisible || reviewing" variant="compact" :view="currentTrackingProgress" :finished="currentTrackingFinished" />
         <span class="ctx-actions">
           <!-- Focus mode: the minimap shrinks to a thumbnail in this bar instead of covering the picture. -->
-          <AnnotationMinimap v-if="focused && selectedMedia && minimapOn" class="focus-map" docked :width="50" :source="minimapSource" :scroller="scrollContainerRef" :stage="stageRef" :media-width="selectedMedia.width||4" :media-height="selectedMedia.height||3" :redraw-key="`${currentMediaId}:${currentFrame}:${exactFrameUrl}:${stageSize.w}`" />
+          <AnnotationMinimap v-if="focused && selectedMedia && minimapOn && !reviewing" class="focus-map" docked :width="50" :source="minimapSource" :scroller="scrollContainerRef" :stage="stageRef" :media-width="selectedMedia.width||4" :media-height="selectedMedia.height||3" :redraw-key="`${currentMediaId}:${currentFrame}:${exactFrameUrl}:${stageSize.w}`" />
           <!-- Focus mode hides the task card: the same scan step, compact, so the flow is unchanged. -->
           <template v-if="focused && isVideo && !reviewing && checkFrames.length">
             <span v-if="!scanComplete" class="focus-scan" data-testid="focus-scan">
@@ -922,7 +937,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             </span>
             <span v-else-if="completionRunning" class="shell-meta">正在补全…</span>
           </template>
-          <button v-if="!reviewing && reviewMediaId && review.status.value!=='passed' && (!checkFrames.length || scanComplete)" class="btn-secondary ctx-step" data-testid="go-review" :disabled="completionRunning" @click="goReview">{{ completionRunning ? '补全中…' : '去审查' }}<AppIcon v-if="!completionRunning" name="next" :size="14" /></button>
+          <button v-if="!reviewing && reviewMediaId && review.status.value!=='passed' && (!checkFrames.length || scanComplete)" class="btn-secondary ctx-step" data-testid="go-review" :disabled="completionRunning" @click="goReview">{{ completionRunning ? '补全中…' : '提交审查' }}<AppIcon v-if="!completionRunning" name="next" :size="14" /></button>
           <button v-if="reviewing" class="btn-secondary ctx-step" @click="router.push('/annotate')"><AppIcon name="prev" :size="14" />回到标注</button>
           <AnnotationDatasetExport />
           <button v-if="focused" class="header-help" title="使用说明和快捷键 (?)" @click="openHelp"><AppIcon name="help" :size="16" /><span>帮助</span></button>
@@ -967,21 +982,35 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
               <ToolButton icon="cards" label="逐个确认" hint="一个目标一张卡片，回答是不是精子" keys="Tab" tip-align="start" :selected="reviewView==='cards'" :pressed="reviewView==='cards'" data-testid="view-cards" @click="reviewView='cards'" />
               <ToolButton icon="image" label="看画面" hint="回到整幅画面查看和修改" keys="Tab" :selected="reviewView==='canvas'" :pressed="reviewView==='canvas'" data-testid="view-canvas" @click="reviewView='canvas'" />
             </span>
-            <i class="shell-tools-sep" />
-            <span class="tool-seg" :style="{'--n':2,'--i':activeTool==='select'?1:0}" role="group" aria-label="画框工具"><i class="tool-seg-thumb" aria-hidden="true" />
-              <ToolButton icon="box" label="标注" hint="点一下精子头补框（其他帧检到的同一个头一起加上）；按住拖动画框" keys="B" :tip-align="reviewing?'center':'start'" :selected="activeTool==='smart'" :pressed="activeTool==='smart'" :disabled="editingBlocked" @click="selectTool('smart')" />
-              <ToolButton icon="cursor" label="选择" hint="只选中、移动和缩放已有的框，不会新加框" keys="V" :selected="activeTool==='select'" :pressed="activeTool==='select'" :disabled="editingBlocked" @click="selectTool('select')" />
-            </span>
-            <i class="shell-tools-sep" />
-            <ToolButton icon="undo" label="撤销" hint="撤回上一步" keys="Ctrl/⌘ Z" aria-label="撤销本帧操作" :disabled="editingBlocked||!!objectDeletionPendingAction||trackingFeedbackPending||!canUndo" @click="undo" />
-            <ToolButton icon="redo" label="重做" hint="恢复刚撤回的一步" keys="Ctrl/⌘ ⇧ Z" aria-label="重做本帧操作" :disabled="editingBlocked||!!objectDeletionPendingAction||trackingFeedbackPending||!canRedo" @click="redo" />
-            <ToolButton icon="trash" label="删除" hint="删掉本帧选中的框；整条删除在右侧对象里" keys="Del" class="delete-frame-tool" aria-label="删除本帧选中对象" :disabled="editingBlocked||!selectedObject||!!objectDeletionPendingAction||trackingFeedbackPending" @click="deleteSelectedFrame" />
-            <i class="shell-tools-sep" />
+            <template v-if="!cardTools">
+              <i class="shell-tools-sep" />
+              <span class="tool-seg" :style="{'--n':2,'--i':activeTool==='select'?1:0}" role="group" aria-label="画框工具"><i class="tool-seg-thumb" aria-hidden="true" />
+                <ToolButton icon="box" label="标注" hint="点一下精子头补框（其他帧检到的同一个头一起加上）；按住拖动画框" keys="B" :tip-align="reviewing?'center':'start'" :selected="activeTool==='smart'" :pressed="activeTool==='smart'" :disabled="editingBlocked" @click="selectTool('smart')" />
+                <ToolButton icon="cursor" label="选择" hint="只选中、移动和缩放已有的框，不会新加框" keys="V" :selected="activeTool==='select'" :pressed="activeTool==='select'" :disabled="editingBlocked" @click="selectTool('select')" />
+              </span>
+              <i class="shell-tools-sep" />
+              <ToolButton icon="undo" label="撤销" hint="撤回上一步" keys="Ctrl/⌘ Z" aria-label="撤销本帧操作" :disabled="editingBlocked||!!objectDeletionPendingAction||trackingFeedbackPending||!canUndo" @click="undo" />
+              <ToolButton icon="redo" label="重做" hint="恢复刚撤回的一步" keys="Ctrl/⌘ ⇧ Z" aria-label="重做本帧操作" :disabled="editingBlocked||!!objectDeletionPendingAction||trackingFeedbackPending||!canRedo" @click="redo" />
+              <ToolButton icon="trash" label="删除" hint="删掉本帧选中的框；整条删除在右侧对象里" keys="Del" class="delete-frame-tool" aria-label="删除本帧选中对象" :disabled="editingBlocked||!selectedObject||!!objectDeletionPendingAction||trackingFeedbackPending" @click="deleteSelectedFrame" />
+              <i class="shell-tools-sep" />
+            </template>
+            <i v-else class="shell-tools-sep" />
             <ToolButton icon="contrast" label="增强" hint="去掉背景、加强对比，尾巴更清楚；只影响显示" keys="E" :on="enhancedView" :pressed="enhancedView" data-testid="enhance-toggle" @click="enhancedView=!enhancedView" />
-            <ToolButton icon="zoom" label="放大镜" hint="鼠标下方放大显示一小块" keys="L" aria-label="局部放大镜" :on="magnifier" :pressed="magnifier" @click="magnifier=!magnifier" />
-            <ToolButton :icon="hiddenBoxes?'eye-off':'eye'" label="藏框" hint="暂时藏起所有框，看清原图" keys="H" aria-label="显示或隐藏标注" :on="hiddenBoxes" :pressed="hiddenBoxes" @click="hiddenBoxes=!hiddenBoxes" />
-            <ToolButton icon="hash" label="编号" hint="在框旁显示目标编号" aria-label="显示对象编号" :on="labels" :pressed="labels" @click="labels=!labels" />
-            <ToolButton icon="map" label="小地图" hint="在右侧面板显示全图和当前视野，点一下就能移过去" :on="minimapOn" :pressed="minimapOn" @click="minimapOn=!minimapOn" />
+            <template v-if="cardTools">
+              <i class="shell-tools-sep" />
+              <ToolButton icon="prev" label="上一个" hint="回到上一张卡片" keys="←" :disabled="queueIndex===0" @click="prevCard" />
+              <ToolButton icon="next" label="下一个" hint="先跳过这张，看下一张没答的" :disabled="openCards<=1" @click="skipCard" />
+            </template>
+            <template v-else>
+              <ToolButton icon="zoom" label="放大镜" hint="鼠标下方放大显示一小块" keys="L" aria-label="局部放大镜" :on="magnifier" :pressed="magnifier" @click="magnifier=!magnifier" />
+              <ToolButton :icon="hiddenBoxes?'eye-off':'eye'" label="藏框" hint="暂时藏起所有框，看清原图" keys="H" aria-label="显示或隐藏标注" :on="hiddenBoxes" :pressed="hiddenBoxes" @click="hiddenBoxes=!hiddenBoxes" />
+              <ToolButton icon="hash" label="编号" hint="在框旁显示目标编号" aria-label="显示对象编号" :on="labels" :pressed="labels" @click="labels=!labels" />
+              <ToolButton v-if="!reviewing" icon="map" label="小地图" hint="在右侧面板显示全图和当前视野，点一下就能移过去" :on="minimapOn" :pressed="minimapOn" @click="minimapOn=!minimapOn" />
+              <template v-if="reviewing && reviewRound && currentEntry">
+                <i class="shell-tools-sep" />
+                <ToolButton icon="point" label="当前目标" hint="跳到当前卡片的目标并选中它" @click="locateTarget" />
+              </template>
+            </template>
             <span class="shell-tools-fill" />
             <Transition name="notice-chip"><button v-if="collapsedCount" class="notice-chip" data-testid="notice-chip" title="展开未处理的提示" @click="expandNotices"><AppIcon name="alert" :size="14" /><span>{{ collapsedCount }} 条未处理</span></button></Transition>
             <ToolButton :ref="setFocusButton" icon="fit" :label="focused?'退出专注':'专注'" :hint="focused?'恢复两侧面板':'收起两侧面板，画面铺满窗口'" :keys="focused?'F / Esc':'F'" tip-align="end" :aria-label="focused?'退出专注':'专注'" :on="focused" :pressed="focused" @click="toggleFocus" />
@@ -1061,7 +1090,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             </template>
             <p v-else-if="currentCompletion?.state==='failed'" class="shell-card-note task-warn" role="alert">{{ currentCompletion.error }}</p>
             <p v-else-if="currentCompletion?.state==='done'" class="shell-card-note">{{ currentCompletion.added ? `自动补上了 ${currentCompletion.added} 帧。` : '没有需要补的帧。' }}{{ currentCompletion.missing ? `还有 ${currentCompletion.missing} 帧没找到，审查时会标出来。` : '' }}</p>
-            <p v-else class="shell-card-note">接下来去审查，逐个确认找到的目标。</p>
+            <p v-else class="shell-card-note">看完了，点“提交审查”交给审查员。</p>
             <div class="check-steps" role="group" aria-label="要查漏的帧">
               <button v-for="(item,i) in checkFrames" :key="item.frame" class="check-step" :class="{done:!!item.scannedAt,current:item.frame===currentFrame}" :aria-current="item.frame===currentFrame?'step':undefined" :title="`第 ${item.frame+1} 帧${item.scannedAt?` · ${item.scannedByName||''}已看`:''}`" :aria-label="`第 ${i+1} 张，第 ${item.frame+1} 帧${item.scannedAt?'，已看':''}`" :disabled="isAiBusy" @click="seekFrame(item.frame)"><AppIcon v-if="item.scannedAt" name="check" :size="12" /><template v-else>{{ i+1 }}</template></button>
             </div>
@@ -1072,7 +1101,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
             <button v-if="!scanComplete && currentCheckFrame && !currentCheckFrame.scannedAt" class="btn-primary shell-wide task-primary" data-testid="scan-done" :disabled="scanBusy||editingBlocked" @click="scanNext">{{ lastBlock ? '这张看完了' : '下一块' }}<kbd>Enter</kbd></button>
             <button v-else-if="!scanComplete" class="btn-primary shell-wide task-primary" :disabled="isAiBusy" @click="goNextCheck">回到要看的那张</button>
             <button v-else-if="currentCompletion?.state==='failed'" class="btn-primary shell-wide task-primary" @click="runCompletion(currentMediaId)">重试补全</button>
-            <button v-else class="btn-primary shell-wide task-primary" :disabled="completionRunning" @click="goReview">{{ completionRunning ? '补全中…' : '去审查' }}<AppIcon v-if="!completionRunning" name="next" :size="14" /></button>
+            <button v-else class="btn-primary shell-wide task-primary" :disabled="completionRunning" @click="goReview">{{ completionRunning ? '补全中…' : '提交审查' }}<AppIcon v-if="!completionRunning" name="next" :size="14" /></button>
             <button v-if="scanComplete && currentCompletion?.state==='failed'" class="quiet-button shell-wide" @click="router.push('/review')">不补了，直接去审查</button>
             <div v-if="!scanComplete" class="task-how" aria-hidden="true"><span><AppIcon name="cursor" :size="15" />点一下 补框</span><span><AppIcon name="box" :size="15" />拖动 画框</span><span><kbd>Del</kbd>删除</span></div>
           </div>
@@ -1091,7 +1120,7 @@ onUnmounted(()=>{if(reviewRefresh)clearTimeout(reviewRefresh);cancelHeadBox();ca
         <details v-if="trackingCalibrationSummary.length" class="tracking-calibration"><summary>已保存的正常确认（{{ trackingCalibrationSummary.length }} 个对象）</summary><div v-for="item in trackingCalibrationSummary" :key="item.objectId" :data-calibration-object-id="item.objectId"><span>对象 {{ item.objectId }}<template v-if="item.sampleCount"> · {{ item.sampleCount }} 次正常运动确认</template><template v-if="item.geometryFrame!=null"> · 第 {{ item.geometryFrame+1 }} 帧尺寸已确认</template><template v-if="item.overlapCount"> · {{ item.overlapCount }} 个重叠组合已确认（{{ item.overlapPartnerIds.map(id=>'对象 '+id).join('、') }}）</template></span><button class="quiet-button" :disabled="feedbackBlocked||trackingFeedbackPending" @click="resetTrackingCalibration(item.objectId)">恢复默认判断</button></div></details>
         <div v-if="trackingFeedbackError && trackingFeedbackPendingAction?.decision==='reset'" class="tracking-feedback-error" role="alert">{{ trackingFeedbackError }}<button class="quiet-button" :disabled="trackingFeedbackBusy" @click="retryTrackingAnomalyFeedback">重试恢复默认判断</button></div>
       </section>
-      <Transition name="map-card"><section v-if="selectedMedia && minimapOn && !focused" v-show="!(cardVisible && reviewRound)" class="shell-card annot-map" aria-label="小地图">
+      <Transition name="map-card"><section v-if="selectedMedia && minimapOn && !focused && !reviewing" v-show="!(cardVisible && reviewRound)" class="shell-card annot-map" aria-label="小地图">
         <div class="shell-card-head"><strong>小地图</strong><span class="annot-count">点一下或拖动，移动视野</span></div>
         <AnnotationMinimap docked :width="240" :source="minimapSource" :scroller="scrollContainerRef" :stage="stageRef" :media-width="selectedMedia.width||4" :media-height="selectedMedia.height||3" :redraw-key="`${currentMediaId}:${currentFrame}:${exactFrameUrl}:${stageSize.w}`" />
       </section></Transition>

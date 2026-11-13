@@ -183,14 +183,23 @@ def test_unknown_frames_still_block_until_confirmed_empty(source):
     assert e.value.code == "UNKNOWN_FRAMES"
 
 
-def test_check_frames_of_the_prelabel_must_be_scanned(source):
+def test_review_waits_until_every_check_frame_was_looked_at(source):
+    checks = [{"frame": 0}, {"frame": 1}]
+    # A round someone opened before the prelabel scan existed (older behaviour).
+    early = review.start(MID, source, INFO, 1)
     (source / "detector_tracks.json").write_text(json.dumps({"policy": "detector-track-v1", "checkFrames": [{"frame": 0, "kind": "fixed"}, {"frame": 1, "kind": "fixed"}], "tracks": []}))
-    state = finish(source, answer_all(source, review.start(MID, source, INFO, 1)))
     with pytest.raises(ReviewError) as e:
-        review.pass_review(MID, source, INFO, state["reviewId"], 1)
+        review.start(MID, source, INFO, 1)
     assert e.value.code == "REVIEW_SCAN_INCOMPLETE" and "2 张" in e.value.message
-    for frame in (0, 1):
-        review.record_scan(MID, frame, 1, [{"frame": 0}, {"frame": 1}])
+    state = review.status(MID, source, INFO)
+    assert state["status"] == "none" and state["stage"] == "scanning" and state["scanRemaining"] == 2 and state["review"] is None
+    assert review.summary([(MID, source)])[MID] == "none"  # Listed as 查漏中, not 审查中.
+    review.record_scan(MID, 0, 1, checks)
+    assert review.status(MID, source, INFO)["scanRemaining"] == 1
+    review.record_scan(MID, 1, 1, checks)
+    resumed = review.status(MID, source, INFO)
+    assert resumed["status"] == "open" and resumed["review"]["reviewId"] == early["reviewId"]  # The early round is kept.
+    state = finish(source, answer_all(source, review.start(MID, source, INFO, 1)))
     assert review.pass_review(MID, source, INFO, state["reviewId"], 1)["state"] == "passed"
 
 

@@ -88,10 +88,10 @@ export function useAnnotationReview() {
 export const reviewStatusLabel: Record<ReviewStatus, string> = {
   none: '待审查', open: '审查中', passed: '审查通过', stale: '需重新审查',
 }
-const stageLabel: Record<ReviewStage, string> = { unstarted: '未开始', annotating: '标注中', ready: reviewStatusLabel.none }
+const stageLabel: Record<ReviewStage, string> = { unstarted: '未开始', annotating: '标注中', scanning: '查漏中', ready: reviewStatusLabel.none }
 export type ReviewFilterKey = ReviewStage | 'open' | 'passed' | 'stale'
 export const reviewFilterOptions: { key: ReviewFilterKey; label: string }[] = [
-  { key: 'unstarted', label: '未开始' }, { key: 'annotating', label: '标注中' }, { key: 'ready', label: '待审查' },
+  { key: 'unstarted', label: '未开始' }, { key: 'annotating', label: '标注中' }, { key: 'scanning', label: '查漏中' }, { key: 'ready', label: '待审查' },
   { key: 'open', label: '审查中' }, { key: 'passed', label: '审查通过' }, { key: 'stale', label: '需重新审查' },
 ]
 /** One key per video for filters and folder counts. */

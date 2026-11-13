@@ -74,7 +74,13 @@ async function perform(kind: 'start' | 'pass') {
     <p v-if="!mediaId" class="review-note">选择一个视频开始审查。</p>
     <p v-else-if="!state && !error" class="review-note">正在读取…</p>
     <template v-else-if="state">
-      <div v-if="status === 'none' || status === 'stale'" class="review-task">
+      <div v-if="status === 'none' && state.stage === 'scanning'" class="review-task" data-testid="review-waits-scan">
+        <div class="review-eyebrow">第 1 步还没做完</div>
+        <h3>还在查漏</h3>
+        <p class="review-note">还有 {{ state.scanRemaining }} 张查漏帧没看。查完、点“提交审查”后才能开始审查。</p>
+        <button class="btn-primary review-wide review-big" @click="emit('toAnnotate')">回到标注查漏</button>
+      </div>
+      <div v-else-if="status === 'none' || status === 'stale'" class="review-task">
         <div class="review-eyebrow">第 2 步 · 审查</div>
         <h3>{{ status === 'stale' ? '有改动，需要重新确认' : '逐个确认目标' }}</h3>
         <p class="review-note">{{ status === 'stale' ? '只需确认改动过的目标。' : '每个目标看一次，回答“这是精子吗？”' }}</p>

@@ -6,7 +6,7 @@ export type CheckResult = 'ok' | 'empty'
 /** One answer per target (a whole track). 'no' is followed by deleting the track. */
 export type TargetResult = 'tail' | 'head' | 'unsure' | 'no'
 /** How far a video without a review round has got. */
-export type ReviewStage = 'unstarted' | 'annotating' | 'ready'
+export type ReviewStage = 'unstarted' | 'annotating' | 'scanning' | 'ready'
 /** Who the list shows beside a video, and who passed it. */
 export interface ReviewPerson { actorId: number | null; actorName: string | null; passedBy: number | null; passedAt: string | null }
 export interface ReviewChanges {
@@ -29,7 +29,7 @@ export interface ReviewRound {
   repeats?: Record<string, TargetResult>; consistency?: { pairs: number; same: number }
 }
 export interface ReviewState {
-  mediaId: string; status: ReviewStatus; stage?: ReviewStage | null; currentRevision: string | null; unknownFrames: number; notReady?: string
+  mediaId: string; status: ReviewStatus; stage?: ReviewStage | null; currentRevision: string | null; unknownFrames: number; notReady?: string; scanRemaining?: number
   review: ReviewRound | null
   lastPassed: { reviewId: string; round: number; passedBy: number; passedAt: string } | null
 }

@@ -93,12 +93,18 @@ def test_check_frames_record_who_scanned_them(imports, fake_detector):
     assert client.put(f'/api/prelabel/{mid}/scans/1').status_code == 404  # Not a check frame.
 
 
-def test_review_can_start_on_a_prelabelled_video_nobody_edited(imports, fake_detector):
+def test_review_opens_on_a_prelabelled_video_once_the_scan_is_done(imports, fake_detector):
     client, video = imports
     mid = upload(client, video).json()['mediaId']
     _wait(client, client.post('/api/prelabel/' + mid).json()['taskId'])
     state = client.get('/api/annotation-review/media/' + mid).json()
-    assert state.get('notReady') is None and state['unknownFrames'] == 0
+    assert state['stage'] == 'scanning' and state['scanRemaining'] == 2 and '查漏帧' in state['notReady']
+    assert client.get('/api/annotation-review/summary').json()['stages'][mid] == 'scanning'
+    for check in client.get('/api/prelabel/' + mid).json()['checkFrames']:
+        assert client.put(f"/api/prelabel/{mid}/scans/{check['frame']}").status_code == 200
+    state = client.get('/api/annotation-review/media/' + mid).json()
+    # Nobody edited the workspace: still readable, nothing unknown.
+    assert state.get('notReady') is None and state['unknownFrames'] == 0 and state.get('stage') == 'ready'
 
 
 def test_reset_annotations_discards_the_prelabel_and_its_scans(imports, fake_detector):
