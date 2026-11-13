@@ -20,13 +20,15 @@ Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前�
 | 仓库与容器验收 | `scripts/check_repository.py`、`scripts/docker_smoke.py`、`.github/workflows/` |
 | 固定浏览器回归与执行记录 | `scripts/run_browser_regression.py`；`frontend/tests/critical-workflows-browser.mjs` 从真实登录/上传走完整用户流程；测试专用模拟模型只在 `backend/tests/browser_server.py` |
 | 输入完整性、读取竞态与登录恢复 | `annotation/trackingResult.ts`、`stores/workspace/restore.ts` / `trackingResult.ts`、`stores/auth.ts`；`test_independent_integrity_audit.py`、`test_integrity_recovery.py` 及固定 `independent-integrity-browser.mjs` |
+| 登录页 | `pages/LoginPage.vue`（表单与布局）、`components/LoginScene.vue`（开场动画：视野打开、对焦、点状轨迹、扫描锁定黄框后定格；纯时间函数，缩放或换主题时重画定格画面，减少动效时直接显示定格画面） |
+| 确认框 | `components/ConfirmDialog.vue`（挂在 `App.vue`）与 `utils/confirmDialog.ts` 的 `askConfirm()`；删除素材、放弃本机修改、删除导出 ZIP 使用 |
 | 路由/认证/布局/主题 | `frontend/src/router/index.ts`、`stores/auth.ts`、`layouts/AppLayout.vue`、`stores/appearance.ts`、`style.css` |
 | 观看快捷键/平移 | `workbench/viewTransform.ts`；观看不写业务 |
 | 共享工作台 | `components/WorkbenchShell.vue`、`workbench/shell.css`；站点顶栏上下文、视频抽屉、画布与可收起检查面板；帧条 `components/WorkbenchFrameStrip.vue`（审查模式显示待查/已查帧），布局约束见 WORKFLOW |
 | 标注工作区 store | `stores/workspace.ts` 只组装 `useWorkspace()` 的对外接口；实现按职责在 `stores/workspace/`：`state.ts`（共享状态与派生值，含跨模块计数器 `runtime`）、`history.ts`（撤销/重做）、`editing.ts`（画布手势、点选头部、对象增删改、采用审查轨迹）、`frames.ts`（精确帧读取/缓存、定位与播放）、`save.ts`（本机草稿、构建工作区、写入队列与重试）、`collaboration.ts`（观看状态、三方合并应用、冲突解决、stamp 轮询）、`trackingActions.ts`（较早帧重追、整视频删除、异常确认反馈）、`media.ts`（素材列表/导入/删除）、`restore.ts`（切换素材/账号时恢复）、`trackingResult.ts`（追踪结果加载与暂停说明）、`tracking.ts`（启动/轮询/续追 SAM3）、`results.ts`（JSON 导出与效果预览）、`prelabel.ts`（自动预标、查漏帧、点选补整条、拆分目标）；合并/重放协议在 `annotation/workspaceWrites.ts` |
 | 人工标注 UI / 状态 | `pages/AnnotatePage.vue`、`stores/workspace/editing.ts`、`annotation/annotation.css` / `annotation-shell.css`；缩放小地图 `components/AnnotationMinimap.vue` |
 | 框绘制/坐标/缓存 | `components/AnnotationOverlay.vue`、`annotation/geometry.ts`、`annotation/frameCache.ts` |
-| 审查 | `pages/AnnotatePage.vue`（`mode="review"`，卡片/画面两种视图）、`components/TargetReviewCard.vue`（目标卡片：同一个吗/是精子吗、裁图与平均图）、`components/AnnotationReviewPanel.vue`（进度环、计数、目标清单、通过）、`annotation/targetQueue.ts`（卡片顺序与复判）、`stores/annotationReview.ts`、`api/annotationReviewApi.ts`；后端 `annotation_review.py`（目标清单、目标判定、快速浏览、查漏记录、通过与修改记录、导出门槛）与 `annotation_review_routes.py`；共享请求与日志 `api_common.py` |
+| 审查 | `pages/AnnotatePage.vue`（`mode="review"`，卡片/画面两种视图）、`components/TargetReviewCard.vue`（目标卡片：同一个吗/是精子吗、裁图与循环播放）、`components/AnnotationReviewPanel.vue`（进度环、计数、目标清单、通过）、`annotation/targetQueue.ts`（卡片顺序与复判）、`stores/annotationReview.ts`、`api/annotationReviewApi.ts`；后端 `annotation_review.py`（目标清单、目标判定、快速浏览、查漏记录、通过与修改记录、导出门槛）与 `annotation_review_routes.py`；共享请求与日志 `api_common.py` |
 | 素材文件夹与批量导入 | `components/MediaLibrary.vue`（抽屉、树、筛选、确认窗）、`components/FolderOrganizer.vue`、`stores/importQueue.ts`；后端 `backend/app/media_library.py` |
 | 批量选择导出 | `components/AnnotationDatasetExport.vue`（选视频、固定快照、任务列表）→ `components/TrainingDatasetExport.vue`（设置） |
 | 重复视频与覆盖重新标注 | `stores/workspace/media.ts`、`backend/app/media_reimport.py`、`main.py`；文件恢复日志与轮次保护见 STORAGE_LAYOUT |

@@ -5,6 +5,7 @@ import { useRouter } from '../router'
 import { useAuth } from '../stores/auth'
 import { useAppearance } from '../stores/appearance'
 import AppIcon from '../components/AppIcon.vue'
+import LoginScene from '../components/LoginScene.vue'
 const { theme, toggleTheme } = useAppearance()
 
 const router = useRouter()
@@ -66,25 +67,16 @@ const submit = async () => {
 
 <template>
   <div class="login-page">
-    <button class="quiet-button login-theme" @click="toggleTheme"><AppIcon :name="theme==='light'?'moon':'sun'"/>{{ theme==='light'?'深色模式':'浅色模式' }}</button>
-    <main class="login-shell">
-      <header class="login-intro">
-        <span class="login-mark"><AppIcon name="layers" :size="29" /></span>
-        <div><h1>微流控标注工作台</h1><p class="login-subject">稀有精子识别与提取</p></div>
-        <p class="login-purpose">AI 自动预标，人工查漏和确认，<br>审查通过后导出训练数据。</p>
-        <ol class="login-flow" aria-label="数据制作流程">
-          <li><AppIcon name="box" :size="17" /><strong>标注</strong><small>AI 预标，人工补上漏掉的</small></li>
-          <li><AppIcon name="check" :size="17" /><strong>审查</strong><small>逐个确认目标，有错直接改</small></li>
-          <li><AppIcon name="upload" :size="17" /><strong>导出</strong><small>审查通过的视频生成训练集</small></li>
-        </ol>
-      </header>
-      <section class="panel login-card" aria-labelledby="login-title">
-        <div class="login-card-heading">
-          <h2 id="login-title">{{ isRegisterMode ? '注册账号' : '登录系统' }}</h2>
-          <p>
-            {{ isRegisterMode ? '注册后自动登录，进入稀有精子识别与标注工作台。' : '登录后进入稀有精子识别与标注工作台。' }}
-          </p>
-        </div>
+    <LoginScene :theme="theme" />
+    <header class="login-brand">
+      <span class="login-mark"><AppIcon name="layers" :size="22" /></span>
+      <div><h1>微流控标注工作台</h1><p>稀有精子识别与提取</p></div>
+    </header>
+    <button class="icon-button login-theme" :aria-label="theme==='light'?'切换到深色':'切换到浅色'" :title="theme==='light'?'深色':'浅色'" @click="toggleTheme"><AppIcon :name="theme==='light'?'moon':'sun'" :size="18" /></button>
+    <main class="login-main">
+      <div class="login-spacer" aria-hidden="true" />
+      <section class="login-card" aria-labelledby="login-title">
+        <h2 id="login-title">{{ isRegisterMode ? '注册' : '登录' }}</h2>
         <form class="login-form" @submit.prevent="submit">
           <label>
             <span>账号</span>
@@ -99,58 +91,49 @@ const submit = async () => {
             <input v-model="confirmPassword" class="input w-full" :type="showPassword ? 'text' : 'password'" autocomplete="new-password" placeholder="请再次输入密码" />
           </label>
           <p v-if="error" class="error-banner login-error" role="alert">{{ error }}</p>
-          <button class="btn-primary w-full" :disabled="loading || !canSubmit">
-            {{ loading ? '处理中…' : isRegisterMode ? '注册并登录' : '登录' }}
+          <button class="btn-primary w-full login-submit" :disabled="loading || !canSubmit">
+            {{ loading ? '请稍候…' : isRegisterMode ? '注册并登录' : '登录' }}
           </button>
         </form>
-
         <div class="login-mode">
           <span>{{ isRegisterMode ? '已有账号？' : '还没有账号？' }}</span>
-          <button type="button" @click="toggleMode">
-            {{ isRegisterMode ? '去登录' : '立即注册' }}
-          </button>
+          <button type="button" @click="toggleMode">{{ isRegisterMode ? '去登录' : '注册' }}</button>
         </div>
-
-        <p class="login-support">标注记录会关联当前账号。忘记密码请联系管理员。</p>
+        <p v-if="!isRegisterMode" class="login-support">忘记密码请联系管理员</p>
       </section>
     </main>
   </div>
 </template>
 
 <style scoped>
-/* Faint microfluidic channels behind the page; pure CSS so it works offline. */
-.login-page{position:relative;min-height:100vh;padding:80px 28px 40px;background:var(--app-bg);color:var(--text);overflow:hidden}
-.login-page::before{content:'';position:absolute;inset:0;pointer-events:none;opacity:.55;background:
-  radial-gradient(circle at 12% 18%,var(--accent-soft) 0,transparent 38%),
-  radial-gradient(circle at 88% 82%,var(--accent-soft) 0,transparent 34%),
-  repeating-linear-gradient(172deg,transparent 0 46px,var(--line) 46px 47px,transparent 47px 120px)}
-.login-page::after{content:'';position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,transparent 0,var(--app-bg) 62%)}
-.login-shell{position:relative;z-index:1;min-height:calc(100vh - 120px);width:100%;max-width:960px;margin:auto;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,400px);align-items:center;gap:72px}
-.login-intro{display:grid;grid-template-columns:52px minmax(0,1fr);align-items:center;gap:14px;min-width:0}
-.login-intro>*{animation:rise-in .5s var(--ease-out) both}
-.login-intro>:nth-child(2){animation-delay:.05s}.login-intro>:nth-child(3){animation-delay:.1s}.login-intro>:nth-child(4){animation-delay:.16s}
-.login-mark{display:grid;place-items:center;width:52px;height:52px;border-radius:14px;color:var(--on-accent);background:linear-gradient(140deg,var(--accent-hover),var(--accent));box-shadow:inset 0 1px 0 #ffffff30,0 8px 20px -6px var(--accent-ring)}
-.login-intro h1{font-size:25px;font-weight:700;line-height:1.4;letter-spacing:.02em;margin:0}
-.login-subject{margin:4px 0 0;font-size:13px;line-height:1.6;color:var(--muted);letter-spacing:.06em}
-.login-purpose{grid-column:1/-1;font-size:21px;font-weight:500;line-height:1.8;margin:30px 0 14px;letter-spacing:.02em}
-.login-flow{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none;counter-reset:login-step}
-.login-flow li{position:relative;display:flex;flex-direction:column;gap:4px;padding:14px 14px 13px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface);box-shadow:var(--shadow-sm);counter-increment:login-step}
-.login-flow li::before{content:counter(login-step,decimal-leading-zero);position:absolute;right:12px;top:12px;font-family:var(--font-mono);font-size:11px;color:var(--muted);opacity:.7}
-.login-flow svg{color:var(--accent);margin-bottom:6px}
-.login-flow strong{font-size:14px;font-weight:650}
-.login-flow small{font-size:12px;line-height:1.55;color:var(--muted)}
-.login-card{width:100%;padding:32px;border-radius:var(--radius-xl);box-shadow:var(--shadow-lg);animation:dialog-in .5s var(--ease-out) .08s both}
-.login-card-heading{margin-bottom:26px}.login-card-heading h2{font-size:22px;line-height:1.4;font-weight:700;letter-spacing:.02em;margin:0}
-.login-card-heading p{margin:8px 0 0;font-size:13px;line-height:1.7;color:var(--muted)}
-.login-form{display:flex;flex-direction:column;gap:18px}.login-form label{display:flex;flex-direction:column;gap:8px;min-width:0;font-size:13px;font-weight:550;color:var(--text)}
-.login-form .input{min-height:42px;font-size:14px}.login-form>.btn-primary{min-height:44px;font-size:14px;margin-top:4px;letter-spacing:.08em}
+/* The scene is a fixed canvas behind everything; the card sits to its right (below it on narrow screens). */
+.login-page{position:relative;min-height:100vh;color:var(--text);background:var(--app-bg);overflow-x:hidden}
+.login-brand{position:absolute;z-index:2;left:32px;top:28px;display:flex;align-items:center;gap:12px;animation:login-fade .8s var(--ease-out) .25s both}
+.login-mark{display:grid;place-items:center;width:40px;height:40px;border-radius:11px;color:var(--on-accent);background:linear-gradient(140deg,var(--accent-hover),var(--accent));box-shadow:inset 0 1px 0 #ffffff30,0 8px 20px -8px var(--accent-ring)}
+.login-brand h1{margin:0;font-size:17px;font-weight:700;letter-spacing:.04em;line-height:1.35}
+.login-brand p{margin:2px 0 0;font-size:12px;color:var(--muted);letter-spacing:.12em}
+.login-theme{position:absolute;z-index:2;right:24px;top:26px;animation:login-fade .8s var(--ease-out) .25s both}
+.login-main{position:relative;z-index:1;min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,380px);align-items:center;padding:96px max(40px,7vw) 48px 24px}
+.login-card{width:100%;padding:30px 28px 22px;border-radius:var(--radius-xl);border:1px solid var(--line);background:var(--surface);background:color-mix(in srgb,var(--surface) 86%,transparent);-webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2);box-shadow:var(--shadow-lg);animation:login-card .8s var(--ease-out) .55s both}
+.login-card h2{margin:0 0 22px;font-size:22px;font-weight:700;letter-spacing:.06em}
+.login-form{display:flex;flex-direction:column;gap:16px}
+.login-form label{display:flex;flex-direction:column;gap:7px;min-width:0;font-size:13px;font-weight:550}
+.login-form .input{min-height:42px;font-size:14px}
+.login-submit{min-height:44px;font-size:15px;margin-top:6px;letter-spacing:.12em}
 .login-password{position:relative;display:block}.login-password .input{padding-right:44px}
 .login-password .icon-button{position:absolute;right:5px;top:50%;margin-top:-16px}
 .login-error{margin:0;overflow-wrap:anywhere;font-size:13px;line-height:1.6}
-.login-mode{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:5px;margin-top:22px;font-size:13px;color:var(--muted)}
+.login-mode{display:flex;align-items:center;justify-content:center;gap:4px;margin-top:18px;font-size:13px;color:var(--muted)}
 .login-mode button{color:var(--accent);font-weight:600;padding:4px;border-radius:4px}.login-mode button:hover{text-decoration:underline;text-underline-offset:3px}
-.login-support{border-top:1px solid var(--line);padding-top:18px;margin:18px 0 0;color:var(--muted);font-size:12px;line-height:1.7}
-.login-theme{position:absolute;z-index:2;right:24px;top:20px}
-@media(max-width:860px){.login-shell{gap:36px;max-width:760px}.login-intro h1{font-size:21px}.login-purpose{font-size:18px}.login-card{padding:26px}.login-flow{grid-template-columns:minmax(0,1fr)}.login-flow li{flex-direction:row;align-items:center;gap:10px;padding:11px 12px}.login-flow svg{margin:0}.login-flow small{margin-left:auto;text-align:right}.login-flow li::before{display:none}}
-@media(max-width:680px){.login-page{padding:76px 20px 28px}.login-page::after{background:linear-gradient(180deg,transparent 0,var(--app-bg) 40%)}.login-shell{display:flex;flex-direction:column;gap:26px;min-height:0;max-width:400px;align-items:stretch}.login-intro{grid-template-columns:42px minmax(0,1fr);gap:12px}.login-mark{width:42px;height:42px;border-radius:11px}.login-intro h1{font-size:20px}.login-subject{font-size:12px;margin-top:2px}.login-purpose,.login-flow{display:none}.login-card{padding:24px}.login-theme{right:14px;top:16px}}
+.login-support{margin:6px 0 0;text-align:center;color:var(--muted);font-size:12px;opacity:.8}
+@keyframes login-fade{from{opacity:0}to{opacity:1}}
+@keyframes login-card{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}
+@media(max-width:859px){
+  .login-main{display:flex;flex-direction:column;align-items:center;padding:0 20px 32px}
+  .login-spacer{flex:none;height:calc(min(16vh,38vw) * 2 + 116px)}
+  .login-card{max-width:380px}
+  .login-brand{left:20px;top:18px}.login-brand p{display:none}
+  .login-theme{right:14px;top:16px}
+}
+@media(prefers-reduced-motion:reduce){.login-brand,.login-theme,.login-card{animation:none}}
 </style>
