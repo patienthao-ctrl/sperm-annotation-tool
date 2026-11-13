@@ -201,8 +201,14 @@ async function confirmUnknownEmpty() {
 const playthroughRunning = ref(false)
 async function startPlaythrough() {
   reviewView.value = 'canvas'; playthroughRunning.value = true
+  // The whole frame, whatever zoom the scan or a fix left behind: this pass is for what was missed anywhere.
+  await nextTick(); fitView()
   await seekFrame(0); await togglePlayback()
 }
+// Block zoom belongs to the scan: once every check frame is done, or on the way into review, show the whole frame.
+watch(() => [scanComplete.value, reviewing.value] as const, ([done, inReview], [wasDone, wasInReview]) => {
+  if ((done && !wasDone) || (inReview && !wasInReview)) void nextTick(() => fitView())
+})
 watch(isPlaying, async playing => {
   if (playing || !playthroughRunning.value) return
   playthroughRunning.value = false
