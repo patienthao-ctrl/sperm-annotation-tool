@@ -4,6 +4,7 @@ import AppLayout from './layouts/AppLayout.vue'
 import AnnotatePage from './pages/AnnotatePage.vue'
 import ResultsPage from './pages/ResultsPage.vue'
 import LoginPage from './pages/LoginPage.vue'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import { useRouter } from './router'
 import { useAuth } from './stores/auth'
 import { useWorkspace } from './stores/workspace'
@@ -51,6 +52,7 @@ watch(isAuthenticated, syncRoute)
     <AnnotatePage v-if="currentPath === '/annotate' || currentPath === '/review'" :mode="currentPath === '/review' ? 'review' : 'annotate'" />
     <ResultsPage v-else-if="currentPath === '/results'" />
   </AppLayout>
+  <ConfirmDialog />
 </template>
 
 <style scoped>

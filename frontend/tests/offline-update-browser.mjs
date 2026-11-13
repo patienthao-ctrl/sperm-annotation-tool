@@ -31,9 +31,9 @@ try {
   }
   await upload()
   console.log('PASS compiled offline frontend uploads and displays a real frame over HTTP without modern APIs')
-  page.once('dialog', d => d.accept())
   const row = () => page.locator('.asset-card').filter({ hasText: name })
   await row().getByRole('button', { name: `删除素材 ${name}`, exact: true }).click()
+  await page.getByTestId('confirm-ok').click()
   await row().waitFor({ state: 'detached' })
   await page.reload()
   await page.locator('.asset-list').waitFor()

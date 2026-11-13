@@ -1,4 +1,5 @@
 // 多人协作同步：个人观看状态、应用共享工作区、冲突解决、stamp 轮询同步、放弃本机草稿。
+import { askConfirm } from '../../utils/confirmDialog'
 import type { AnnotationObject } from '../../types/annotation'
 import { trackApi } from '../../api/trackApi'
 import { WorkspaceMergeConflict, sharedWorkspace, workspaceEqual, type MergeChoice, type WorkspaceDraft } from '../../annotation/workspaceWrites'
@@ -121,7 +122,7 @@ export const syncWorkspace=async()=>{
 export const discardLocalDraft = async () => {
   const mediaId=currentMediaId.value,serverId=selectedMedia.value?.serverMediaId
   if(!serverId||collaborationBusy.value)return
-  if(!window.confirm('放弃本机尚未保存的修改，改用服务器上的最新标注？此操作不能撤销，可先“导出本地备份”。'))return
+  if(!(await askConfirm({title:'放弃本机的修改？',body:'改用服务器上的最新标注，放弃后找不回来。',confirm:'放弃修改',danger:true})))return
   draftSuppressed.add(mediaId);collaborationBusy.value=true
   try{
     cancelScheduledSave(mediaId)

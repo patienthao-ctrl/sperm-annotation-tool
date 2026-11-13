@@ -21,9 +21,16 @@ async function loaded() {
   await page.getByRole('button', { name: '完成标注并送审', exact: true }).waitFor()
   await page.waitForFunction(() => !document.querySelector('.annotation-stage-status .btn-primary')?.disabled)
 }
+async function answerDialog(accept, expected) {
+  const dialog = page.getByTestId('confirm-dialog')
+  await dialog.waitFor()
+  if (expected) check((await dialog.innerText()).includes(expected), `confirmation says: ${expected}`)
+  await dialog.getByTestId(accept ? 'confirm-ok' : 'confirm-cancel').click()
+  await dialog.waitFor({ state: 'detached' })
+}
 async function deleteClick(accept = true) {
-  page.once('dialog', async dialog => { check(dialog.message().includes('不能撤销'), 'deletion explains its effect'); await (accept ? dialog.accept() : dialog.dismiss()) })
   await row().getByRole('button', { name: '删除素材 compat-upload.avi', exact: true }).click()
+  await answerDialog(accept, '其他人也看不到了')
 }
 try {
   await useLegacyBrowserAPIs(page)
@@ -37,11 +44,11 @@ try {
   await localRow.waitFor()
   check(await page.getByRole('button', { name: /关闭素材/ }).count() === 0, 'media list exposes deletion only')
   const localDelete = localRow.getByRole('button', { name: '删除素材 microfluidic-sample.svg', exact: true })
-  page.once('dialog', async d => { check(d.message().includes('电脑原文件和已保存到服务器的标注记录会保留'), 'local deletion explains its distinct scope'); await d.dismiss() })
   await localDelete.click()
+  await answerDialog(false, '原文件不受影响')
   check(await localRow.count() === 1 && deletes.length === 0, 'cancel preserves local image without server deletion')
-  page.once('dialog', d => d.accept())
   await localDelete.click()
+  await answerDialog(true)
   await localRow.waitFor({ state: 'detached' })
   check(deletes.length === 0, 'local image deletion sends no server DELETE')
   check(await page.evaluate(() => !JSON.parse(localStorage.getItem('annotationsByMedia') || '{}')['img-demo-001']), 'local image annotations are removed')
@@ -98,8 +105,8 @@ try {
   await dialog.getByRole('status').waitFor()
   check(keys.length === 2 && keys[0] === keys[1] && /^[a-f0-9-]{36}$/.test(keys[0]), 'HTTP send-to-review retries the original UUID without duplicate submission')
   await dialog.getByRole('button', { name: '关闭', exact: true }).click()
-  page.once('dialog', d => d.accept())
   await page.getByRole('button', { name: '删除素材 review-fixture.avi', exact: true }).click()
+  await answerDialog(true)
   await page.getByRole('alert').filter({ hasText: '审查基准' }).waitFor()
   check(await page.locator('.asset-card').filter({ hasText: 'review-fixture.avi' }).count() === 1, 'submitted original video remains protected')
   // A slow initial list must not prune an upload which finishes after its snapshot.

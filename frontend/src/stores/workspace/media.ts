@@ -1,4 +1,5 @@
 // 素材管理：服务器素材列表、导入（重复视频确认、标注包）、文件选择与删除素材。
+import { askConfirm } from '../../utils/confirmDialog'
 import { createRequestId } from '../../utils/browserCompat'
 import { computed, nextTick, ref } from 'vue'
 import type { MediaAsset } from '../../types/annotation'
@@ -21,10 +22,12 @@ export const deleteMedia = async (mediaId: string) => {
   const media = mediaAssets.value.find(item => item.id === mediaId)
   if (!media || segmentBusy.value || isTrackingMedia(mediaId) || deletingMediaId.value || workspaceRestoring.value || objectDeletionBusy.value || trackingFeedbackBusy.value || pendingDeletion.value || pendingFeedback.value) return
   mediaDeleteError.value = ''
-  const message = media.serverMediaId
-    ? `将从共享素材库删除「${media.name}」的原视频、工作区和追踪文件，其他使用者也将无法访问。此操作在页面上不能撤销，需要时可由维护者从服务器回收目录恢复；已有历史审查记录的视频不能删除。是否继续？`
-    : `将删除「${media.name}」在本机工作区中的素材和标注，不能撤销。电脑原文件和已保存到服务器的标注记录会保留。是否继续？`
-  if (!window.confirm(message)) return
+  const ok = await askConfirm({
+    title: `删除「${media.name}」？`,
+    body: media.serverMediaId ? '视频和它的标注一起删除，其他人也看不到了。' : '只删除这台电脑上的记录，原文件不受影响。',
+    confirm: '删除', danger: true,
+  })
+  if (!ok || deletingMediaId.value || !mediaAssets.value.some(item => item.id === mediaId)) return
   deletingMediaId.value = mediaId
   pausePlayback(); cancelAnnotationGesture()
   const pendingTimer = workspaceSaveTimers.get(mediaId)

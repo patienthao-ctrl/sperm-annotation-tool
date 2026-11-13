@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { askConfirm } from '../utils/confirmDialog'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { addLeaveGuard } from '../router'
 import { useWorkspace } from '../stores/workspace'
@@ -120,7 +121,7 @@ async function download(job: ExportListItem) {
   } catch (e: any) { jobError.value = e?.message || '下载失败，请重试'; console.error('[dataset.download_failed]', e) }
 }
 async function remove(job: ExportListItem) {
-  if (!window.confirm('删除服务器上这个 ZIP？已下载到电脑的文件不受影响。')) return
+  if (!(await askConfirm({ title: '删除这个 ZIP？', body: '已下载到电脑的文件不受影响。', confirm: '删除', danger: true }))) return
   try { await trainingExportApi.remove(job.exportId); await loadJobs() }
   catch (e: any) { jobError.value = e?.message || '删除失败，请重试'; console.error('[dataset.delete_failed]', e) }
 }
