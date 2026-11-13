@@ -56,7 +56,7 @@
 .shell-tool:hover:not(:disabled){background:var(--surface-hover);color:var(--text)}
 .shell-tool.active{background:var(--accent);color:var(--on-accent);box-shadow:inset 0 1px 0 #ffffff24,0 1px 3px var(--accent-ring)}
 .shell-tool kbd{border-color:currentColor;color:inherit;opacity:.7;padding:0 3px}
-.shell-tools-sep{width:1px;height:20px;margin:0 3px;background:var(--line)}
+.shell-tools-sep{flex:none;width:1px;height:26px;margin:0 5px;background:var(--line)}
 .shell-zoom{position:absolute;right:12px;bottom:12px;z-index:33;display:flex;align-items:center;gap:1px;padding:2px;background:#122232e8;border:1px solid #47627b;border-radius:9px;color:#e7edf6;box-shadow:var(--shadow-md)}
 .shell-zoom button{display:grid;place-items:center;min-width:30px;height:30px;padding:0 6px;font-size:12px;border-radius:6px;font-variant-numeric:tabular-nums;color:inherit}
 .shell-zoom button:hover:not(:disabled){background:#294155}
@@ -113,3 +113,36 @@
   .shell-tools{flex-wrap:wrap;max-width:calc(100% - 24px)}
   .shell-jump input{width:38px}
 }
+
+/* Toolbar buttons (components/ToolButton.vue): icon above a short label, one look for every tool.
+   Tools that are chosen one at a time sit in a segmented group with a sliding highlight; toggles
+   light up in place. The tip says what the tool does and its key, after a short hover. */
+.wb-tool{position:relative;flex:none;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:48px;height:44px;padding:4px 7px 3px;border-radius:var(--radius-md);color:var(--muted);font-size:var(--fs-2xs);font-weight:550;line-height:1.1;white-space:nowrap;transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.wb-tool:hover:not(:disabled){background:var(--surface-hover);color:var(--text)}
+.wb-tool:disabled{opacity:.4;cursor:default}
+.wb-tool:focus-visible{outline:2px solid var(--accent-ring);outline-offset:1px}
+.tool-ic{flex:none;transition:transform var(--dur-fast) var(--ease-out)}
+.wb-tool:active:not(:disabled) .tool-ic{transform:scale(.88)}
+.wb-tool.on{background:var(--accent-soft);color:var(--accent)}
+.wb-tool.on:hover:not(:disabled){background:var(--accent-soft);color:var(--accent-hover)}
+.wb-tool.on .tool-ic,.tool-seg .wb-tool.selected .tool-ic{animation:tool-pop var(--dur-slow) var(--ease-out)}
+@keyframes tool-pop{0%{transform:scale(.78)}55%{transform:scale(1.14)}100%{transform:scale(1)}}
+.tool-seg{position:relative;flex:none;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:2px;padding:2px;border-radius:calc(var(--radius-md) + 2px);background:var(--surface-subtle);box-shadow:inset 0 0 0 1px var(--line)}
+.tool-seg-thumb{position:absolute;left:2px;top:2px;bottom:2px;width:calc((100% - 4px - (var(--n) - 1) * 2px) / var(--n));border-radius:var(--radius-md);background:var(--accent);box-shadow:var(--shadow-sm);transform:translateX(calc(var(--i) * (100% + 2px)));transition:transform var(--dur-slow) var(--ease-glide),background-color var(--dur-slow) var(--ease-standard)}
+.tool-seg .wb-tool{z-index:1}
+.tool-seg .wb-tool.selected,.tool-seg .wb-tool.selected:hover:not(:disabled){background:transparent;color:var(--on-accent)}
+.tool-seg .wb-tool:hover:not(:disabled):not(.selected){background:transparent;color:var(--text)}
+.tool-tip{position:absolute;top:calc(100% + 8px);left:50%;z-index:60;width:max-content;max-width:230px;padding:7px 10px 8px;border-radius:var(--radius-md);background:var(--text);color:var(--surface);box-shadow:var(--shadow-md);text-align:left;font-size:var(--fs-xs);font-weight:500;line-height:1.45;white-space:normal;pointer-events:none;opacity:0;transform:translate(-50%,-4px);transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out)}
+.tool-tip.start{left:0;transform:translate(0,-4px)}
+.tool-tip.end{left:auto;right:0;transform:translate(0,-4px)}
+.wb-tool:hover .tool-tip,.wb-tool:focus-visible .tool-tip{opacity:1;transform:translate(-50%,0);transition-delay:.35s}
+.wb-tool:hover .tool-tip.start,.wb-tool:focus-visible .tool-tip.start,.wb-tool:hover .tool-tip.end,.wb-tool:focus-visible .tool-tip.end{transform:translate(0,0)}
+.tool-tip-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.tool-tip b{font-weight:650}
+.tool-tip kbd{font:600 10.5px/1.5 var(--font-mono);padding:0 5px;border-radius:4px;border:1px solid currentColor;background:transparent;color:inherit;opacity:.75}
+.tool-tip small{display:block;margin-top:2px;opacity:.8;font-size:var(--fs-2xs)}
+.shell-tools-fill{flex:1 1 0;min-width:0}
+/* Too narrow for labels: icons only, the tip still names each tool. */
+.shell-tools.compact .tool-label{display:none}
+.shell-tools.compact .wb-tool{min-width:36px;height:36px;padding:0 6px}
+@media(prefers-reduced-motion:reduce){.tool-tip,.tool-seg-thumb{transition:none}.wb-tool .tool-ic{animation:none!important}}

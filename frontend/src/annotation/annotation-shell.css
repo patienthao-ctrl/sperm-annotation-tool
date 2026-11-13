@@ -1,17 +1,32 @@
 /* Annotation-only content inside the shared WorkbenchShell (workbench/shell.css):
    canvas internals, enhancement popover, per-frame object chips. */
-.annot-context{display:flex;align-items:center;gap:12px;min-width:0}
+.annot-context{flex:1;display:flex;align-items:center;gap:10px;min-width:0}
+/* Header context: which video (and whether it is saved), its review status, then this stage's actions on the right. */
+.ctx-file{display:inline-flex;align-items:center;gap:8px;min-width:0;height:32px;padding:0 11px 0 9px;border-radius:var(--radius-md);background:var(--surface-subtle);border:1px solid var(--line)}
+.mode-review .ctx-file{background:var(--surface)}
+.ctx-file-icon{flex:none;color:var(--muted)}
+.ctx-file strong{min-width:0;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-sm);font-weight:650;color:var(--text);letter-spacing:.01em}
+.ctx-file .save-indicator{flex:none;font-size:var(--fs-2xs);padding-left:8px;border-left:1px solid var(--line)}
+.ctx-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+.ctx-step{display:inline-flex;align-items:center;gap:6px}
+@media(max-width:1280px){.ctx-file .save-indicator>span{display:none}.ctx-file .save-indicator{padding-left:6px}}
+@media(max-width:1100px){.ctx-file strong{max-width:150px}}
 .shell-annotate .annotation-view-body{flex:1;min-height:0}
 .shell-annotate .annotation-canvas{flex:1;min-height:0;display:flex;flex-direction:column;align-items:flex-start}
 /* The image gets its own area below the toolbar: no control floats over the picture. */
 .shell-annotate .canvas-scroll{position:relative;inset:auto;flex:1;width:100%;min-height:0;padding:12px}
-.shell-annotate .loupe{right:auto;top:auto;left:12px;bottom:12px}
+.shell-annotate .loupe{right:auto;bottom:auto;left:0;top:0;width:202px;will-change:transform}
+.shell-annotate .loupe span{padding:4px 6px;font-variant-numeric:tabular-nums}
+.annot-map{flex:none}
+.map-card-enter-active,.map-card-leave-active{transition:opacity var(--dur-base) var(--ease-out)}
+.map-card-enter-from,.map-card-leave-to{opacity:0}
 .shell-annotate .canvas-status{top:auto;bottom:14px}
 /* Toolbar and enhancement popover are rows above the image, in normal flow. */
-.shell-annotate .annotation-canvas>.shell-tools{order:-2;position:relative;left:auto;top:auto;margin:0;width:100%;flex:none;flex-wrap:wrap;border:0;border-bottom:1px solid var(--line);border-radius:0;box-shadow:none;padding:4px 8px}
+.shell-annotate .annotation-canvas>.shell-tools{order:-2;position:relative;left:auto;top:auto;margin:0;width:100%;flex:none;flex-wrap:nowrap;gap:3px;border:0;border-bottom:1px solid var(--line);border-radius:0;box-shadow:none;padding:5px 10px}
+.shell-annotate .annotation-canvas>.shell-tools.compact{flex-wrap:wrap}
 .annot-enhance{order:-1;position:relative;left:auto;top:auto;margin:6px 12px 12px;width:fit-content;max-width:calc(100% - 24px);min-height:48px;max-height:160px;flex:0 1 auto;overflow:auto;overscroll-behavior:contain;z-index:34;border:1px solid var(--line);border-radius:var(--radius-md);box-shadow:var(--shadow-lg);background:var(--surface);animation:none}
 /* The current stage, right above the image and still there in focus mode. */
-.mode-tag{animation:rise-in var(--dur-base) var(--ease-out);flex:none;display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px 0 8px;margin-right:2px;border-radius:var(--radius-sm);background:var(--accent);color:var(--on-accent);font-size:var(--fs-xs);font-weight:650;letter-spacing:.04em;white-space:nowrap}
+.mode-tag{animation:rise-in var(--dur-base) var(--ease-out);flex:none;display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 11px 0 9px;margin-right:4px;border-radius:var(--radius-sm);background:var(--accent);color:var(--on-accent);font-size:var(--fs-xs);font-weight:650;letter-spacing:.04em;white-space:nowrap}
 /* Review also tints the toolbar and rims the whole canvas, so the stage shows from the corner of the eye. */
 .shell-annotate .annotation-canvas>.shell-tools{transition:background-color var(--dur-slow) var(--ease-standard),border-color var(--dur-slow) var(--ease-standard)}
 .review-mode .shell-annotate .annotation-canvas>.shell-tools{background:var(--accent-soft);border-bottom-color:var(--accent)}
@@ -113,4 +128,4 @@
 .annot-ai .annot-tracking-hint{margin-top:-4px;font-size:11px}
 /* While the header carries tracking progress, the frame count (also in the bottom bar) gives way. */
 .annot-context.is-tracking .shell-meta{display:none}
-@media(max-width:1000px){.annot-context.is-tracking>strong{max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+@media(max-width:1000px){.annot-context.is-tracking .ctx-file strong{max-width:96px}}

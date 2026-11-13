@@ -1,6 +1,13 @@
 <script setup lang="ts">
 defineProps<{ name: string; size?: number }>()
 const paths: Record<string, string> = {
+  map: 'M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Zm0 0v14m6-12v14',
+  contrast: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM12 3v18m0-13h5.5M12 12h8.5M12 16h6',
+  'eye-off': 'm3 3 18 18M10.6 5.1Q11.3 5 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 3.9M6.6 6.6C3.8 8.3 2 12 2 12s4 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2',
+  records: 'M9 3h6v3H9V3ZM7 4.5H5V21h14V4.5h-2M8.5 11h7m-7 3.5h7M8.5 18h4',
+  cards: 'M4 8h12v12H4V8Zm4-4h12v12',
+  image: 'M3 5h18v14H3V5Zm0 11 5-5 4 4 3-3 6 6M15.5 9.5h.01',
+  film: 'M4 4h16v16H4V4Zm4 0v16m8-16v16M4 8h4m-4 4h4m-4 4h4m8-8h4m-4 4h4m-4 4h4',
   cursor: 'm4 3 7 17 2-7 7-2L4 3Z', box: 'M5 3H3v2m16-2h2v2M3 19v2h2m16-2v2h-2M7 3h10M7 21h10M3 7v10M21 7v10',
   point: 'M12 3v4m0 10v4M3 12h4m10 0h4M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
   upload: 'M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5', folder: 'M3 7V4h6l2 3h10v13H3V7Z',

@@ -10,9 +10,12 @@ const props = defineProps<{
   mediaWidth: number
   mediaHeight: number
   redrawKey: string
+  /** In the side panel: always shown, stretched to the panel width. Otherwise it floats over the canvas. */
+  docked?: boolean
+  width?: number
 }>()
 
-const WIDTH = 176
+const WIDTH = props.width ?? 176
 const canvas = ref<HTMLCanvasElement | null>(null)
 const view = ref({ x: 0, y: 0, w: 1, h: 1 })
 const height = computed(() => Math.max(40, Math.round(WIDTH * (props.mediaHeight || 3) / (props.mediaWidth || 4))))
@@ -79,14 +82,17 @@ defineExpose({ refresh: schedule })
 </script>
 
 <template>
-  <div v-show="zoomedIn" class="annot-minimap" data-testid="annotation-minimap" :style="{ width: `${WIDTH + 2}px` }">
+  <div v-show="docked || zoomedIn" class="annot-minimap" :class="{ docked }" data-testid="annotation-minimap" :style="docked ? undefined : { width: `${WIDTH + 2}px` }">
     <canvas ref="canvas" :width="WIDTH" :height="height" aria-label="全图小地图，点击或拖动移动视野" role="img" @pointerdown.prevent="down" @pointermove="move" @pointerup="up" @pointercancel="up" />
     <i :style="{ left: `${view.x * 100}%`, top: `${view.y * 100}%`, width: `${view.w * 100}%`, height: `${view.h * 100}%` }" />
   </div>
 </template>
 
 <style scoped>
-.annot-minimap{position:absolute;right:12px;top:12px;z-index:32;border:1px solid #6b8290;border-radius:6px;overflow:hidden;background:#0b1218;box-shadow:0 6px 20px #0006}
+.annot-minimap{position:absolute;right:12px;bottom:12px;z-index:32;border:1px solid #6b8290;border-radius:6px;overflow:hidden;background:#0b1218;box-shadow:0 6px 20px #0006}
 .annot-minimap canvas{display:block;cursor:crosshair;touch-action:none}
+.annot-minimap.docked{position:relative;right:auto;bottom:auto;z-index:auto;margin:0 12px 12px;box-shadow:none;border-color:var(--line-strong)}
+.annot-minimap.docked canvas{width:100%;height:auto}
+.annot-minimap.docked.focus-map{width:52px;margin:0;border-radius:4px;flex:none}
 .annot-minimap i{position:absolute;border:1.5px solid #ffd36d;background:#ffd36d22;pointer-events:none;box-sizing:border-box}
 </style>

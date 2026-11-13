@@ -38,7 +38,8 @@ Vue 3 + TypeScript + Vite；FastAPI + SQLite；SAM3 在后端按需加载。前�
 | 三路综合标注 | `backend/app/joint_tracking.py`：已有身份内关联、连续路径选择、统一几何与不确定片段；`head_click.detect_regions` 批量ROI推理；新首尾请求 combineResults=true |
 | 历史 A/B/C/F 数据（只读） | `review_workflow.py`、`review_repository.py`、`confirmation_workflow.py`、`concentrated_review.py`、`review_schema.py` 仅保留表结构迁移与数据层，供统计/审计导出读取；页面与路由已删除，说明见 `docs/archive/旧审查与对比确认流程_2026-11-01前.md` |
 | 帧条 | 标注模式展示人工/AI/无框及追踪提示；审查模式展示清单待查/已查帧；浏览不改变审查状态 |
-| 用户使用说明 | `components/UserGuide.vue`；`help/user-guide.md` 为页面阅读和下载的唯一内容源，`AppLayout.vue` 提供入口 |
+| 用户使用说明 | `components/HelpDialog.vue`（一屏帮助）+ `help/guide.ts`（解析“三步上手”“快捷键速查”、打开状态）；`help/user-guide.md` 为窗口和下载的唯一内容源，`AppLayout.vue` 的“帮助”按钮与 ? 键打开 |
+| 工具条按钮 | `components/ToolButton.vue`（图标 + 文字 + 悬停提示）；样式 `.wb-tool` / `.tool-seg` 在 `workbench/shell.css`，`AnnotatePage.vue` 的 `measureToolbar` 在放不下时收起文字 |
 | 训练集导出 | `components/TrainingDatasetExport.vue`、`api/trainingExportApi.ts`、`backend/app/training_export.py` 与 `_routes.py` |
 | 自动质量审计与只读提取 | `backend/app/quality_audit.py` / `audit_export.py`、根 `export-audit.sh`；统计仓库单独检出到 `标注统计/`，不纳入主仓库或镜像 |
 | 全量流程统计 ZIP | `components/StatisticsDataExport.vue`、`api/statisticsExportApi.ts`、`backend/app/statistics_export.py`、`statistics_export_jobs.py` 与 `statistics_export_routes.py`；入口在标注记录页，兼容外部 export_statistics_data.py 的格式，生产代码不放 tests |
